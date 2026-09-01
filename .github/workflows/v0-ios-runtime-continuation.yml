@@ -1,0 +1,93 @@
+name: V0 iOS Runtime Continuation
+
+on:
+  push:
+    branches:
+      - codex/prototype-yydra-v0-ios-validation
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: v0-ios-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 26.8.1
+  IOS_BUILD_RUN_ID: 33486724699
+  IOS_BUILD_GIT_SHA: 88e53a04f96103437854f753b0914972f12cbbb2
+
+jobs:
+  ios-runtime:
+    name: iOS simulator runtime - reference continuation
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact runtime harness revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Select and verify pinned Apple toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+          test "$(pod --version)" = 1.17.0
+      - name: Install exact PostgreSQL
+        run: |
+          evidence="$RUNNER_TEMP/ios-runtime-reference"
+          mkdir -p "$evidence"
+          if brew tap | grep -Fxq aws/tap; then
+            brew untap aws/tap 2>&1 | tee "$evidence/homebrew-untap.log"
+          else
+            printf '%s\n' 'aws/tap was not present' | tee "$evidence/homebrew-untap.log"
+          fi
+          brew update 2>&1 | tee "$evidence/homebrew-update.log"
+          brew install postgresql@18 2>&1 | tee "$evidence/postgresql-install.log"
+          postgres_version=$("$(brew --prefix postgresql@18)/bin/postgres" --version)
+          printf '%s\n' "$postgres_version" | tee "$evidence/postgresql-version.txt"
+          test "$postgres_version" = 'postgres (PostgreSQL) 18.6 (Homebrew)'
+      - name: Install exact Maestro CLI
+        run: |
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/maestro.zip" \
+            https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.7.0/maestro.zip
+          echo 'a4ccab6b604617e7aef6db4f885666056eabe5cfa32befaa3bc994041b8fcbb5  '"$RUNNER_TEMP/maestro.zip" \
+            | shasum -a 256 --check
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+          echo "$RUNNER_TEMP/maestro/maestro/bin" >>"$GITHUB_PATH"
+      - name: Install exact frontend graph
+        run: npm ci --ignore-scripts --prefix prototype/reading-queue-reference/frontend
+      - name: Download identified macOS build evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-reference-macos
+          path: ${{ runner.temp }}/reference-macos
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.IOS_BUILD_RUN_ID }}
+      - name: Exercise Reading Queue on a fresh iOS simulator
+        env:
+          YYDRA_IOS_BUILD_RUN_ID: ${{ env.IOS_BUILD_RUN_ID }}
+          YYDRA_IOS_BUILD_GIT_SHA: ${{ env.IOS_BUILD_GIT_SHA }}
+        run: |
+          archive=$(find "$RUNNER_TEMP/reference-macos" -type f -name '*.app.zip' -print -quit)
+          test -n "$archive"
+          mkdir -p "$RUNNER_TEMP/runtime-application"
+          ditto -x -k "$archive" "$RUNNER_TEMP/runtime-application"
+          application=$(find "$RUNNER_TEMP/runtime-application" -type d -name '*.app' -print -quit)
+          test -n "$application"
+          prototype/ios-validation/run-ios-runtime.sh \
+            prototype/reading-queue-reference \
+            "$application" \
+            "$RUNNER_TEMP/ios-runtime-reference"
+      - name: Upload iOS runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-runtime-reference
+          path: ${{ runner.temp }}/ios-runtime-reference
+          if-no-files-found: error
+          retention-days: 14

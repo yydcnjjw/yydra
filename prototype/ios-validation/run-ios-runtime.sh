@@ -24,7 +24,7 @@ mkdir -p "$evidence/maestro-output" "$evidence/maestro-debug"
 postgres_bin="$(brew --prefix postgresql@18)/bin"
 export PATH="$postgres_bin:$PATH"
 test "$(postgres --version)" = "postgres (PostgreSQL) 18.6 (Homebrew)"
-maestro --version | tee "$evidence/maestro-version.txt"
+MAESTRO_CLI_NO_ANALYTICS=1 maestro --version | tee "$evidence/maestro-version.txt"
 grep -Eq '(^|[^0-9])2\.7\.0([^0-9]|$)' "$evidence/maestro-version.txt"
 
 database_directory="${RUNNER_TEMP:?}/yydra-ios-postgres"
@@ -72,11 +72,12 @@ createdb -h 127.0.0.1 -p 5432 -U postgres yydra_reading_queue
 database_url=postgres://postgres@127.0.0.1:5432/yydra_reading_queue
 (
   cd "$workspace"
-  DATABASE_URL="$database_url" cargo run --locked --bin migrate
+  DATABASE_URL="$database_url" SQLX_OFFLINE=true cargo run --locked --bin migrate
 ) >"$evidence/migrate.log" 2>&1
 (
   cd "$workspace"
   DATABASE_URL="$database_url" \
+    SQLX_OFFLINE=true \
     YYDRA_BIND_ADDRESS=127.0.0.1:4000 \
     RUST_LOG=info \
     cargo run --locked --bin server
@@ -160,6 +161,9 @@ jq -n \
   --arg maestro "$(tr -d '\n' <"$evidence/maestro-version.txt")" \
   --arg distribution "$(sed -n 's/^distribution_version = "\([^"]*\)"/\1/p' "$workspace/.yydra/origin.toml")" \
   --arg originSha256 "$(shasum -a 256 "$workspace/.yydra/origin.toml" | awk '{print $1}')" \
+  --arg buildRunId "${YYDRA_IOS_BUILD_RUN_ID:-${GITHUB_RUN_ID:?}}" \
+  --arg buildGitSha "${YYDRA_IOS_BUILD_GIT_SHA:-${GITHUB_SHA:?}}" \
+  --arg harnessGitSha "${GITHUB_SHA:?}" \
   '{
     schemaVersion: 1,
     status: "pass",
@@ -182,6 +186,11 @@ jq -n \
     },
     distribution: $distribution,
     originSha256: $originSha256,
+    provenance: {
+      buildRunId: $buildRunId,
+      buildGitSha: $buildGitSha,
+      harnessGitSha: $harnessGitSha
+    },
     coldLaunch: "pass-on-fresh-simulator",
     lifecycle: ["list-empty", "create-queued", "complete", "reopen-queued"],
     realBackendRowVerified: true,

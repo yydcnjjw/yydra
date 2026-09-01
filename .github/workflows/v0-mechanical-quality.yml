@@ -2,9 +2,6 @@ name: V0 Mechanical Quality Contract
 
 on:
   pull_request:
-  push:
-    branches:
-      - codex/prototype-yydra-v0-ios-validation
   workflow_dispatch:
 
 permissions:

@@ -22,6 +22,11 @@ Product-owned `ios.infoPlist` input so its local HTTP API is explicit. The
 prototype never hand-edits or commits the generated `ios/` tree. No physical
 device claim is made.
 
+Harness-only retries use the `V0 iOS Runtime Continuation` workflow. It consumes
+one explicitly identified `quality-reference-macos` artifact from the full
+quality run instead of rebuilding the application, and the runtime result
+records the build run, build commit, and runtime-harness commit separately.
+
 Pinned external grader inputs:
 
 - GitHub `macos-26` runner image and Xcode 26.6
