@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "generate-openapi"
 path = "src/bin/generate-openapi.rs"
 
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+
 [dependencies]
 axum.workspace = true
 product-application = { package = "__PRODUCT_ID__-application", path = "../application" }

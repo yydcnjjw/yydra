@@ -25,7 +25,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = router
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
-    let address: SocketAddr = "127.0.0.1:4000".parse()?;
+    let address: SocketAddr = env::var("YYDRA_BIND_ADDRESS")
+        .unwrap_or_else(|_| "127.0.0.1:4000".to_owned())
+        .parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     info!(%address, "serving Product Workspace");
     axum::serve(listener, app)

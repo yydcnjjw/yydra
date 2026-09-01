@@ -22,23 +22,31 @@ Golden Stack.
 
 The core vertical slice works, but the complete V0 claim does not yet pass.
 
-- The final embedded template is 676 KiB, creates offline and atomically, and
-  produced two byte-identical 37-file Workspaces with template digest
-  `98e2cfd04a4cdddd22fef12c497b1a291282cb78041ca47c56b74e9654810cee`.
+- The final embedded template is 704 KiB, creates offline and atomically, and
+  has 41 authored files with template digest
+  `fad420ccb216e14f1b79a61d17bb2bcdc7db0e4dd9c4a4a1490d5f88f8490248`.
 - The Reading Queue reference validates Product Domain transitions, SQLx/
   PostgreSQL persistence and migration state, Axum code-first OpenAPI,
   Orval/Zod generation behind a Framework façade, H5 E2E, and Android runtime.
 - `yydra generate api` closes the CLI/API orchestration gap found during the
-  prototype. `yydra check` now protects Baseline Skill snapshots, `.ts`/`.tsx`
-  generated boundaries, and source/generated drift; the negative fixture
-  proves four independent failures without fail-fast masking.
+  prototype. `yydra check` now executes the Distribution-owned Mechanical
+  Quality Contract as Linux, macOS, and aggregate profiles, while preserving
+  per-node logs, artifact digests, and explicit non-execution reasons. The
+  negative fixture proves four independent failures without fail-fast masking.
 - Clean Android and iOS CNG runs are deterministic. Android release build and a
   create/complete/reopen emulator flow pass. iOS build/runtime are not run
   because this WSL2 host has no macOS/Xcode toolchain.
-- The campaign preflight returns `campaign-invalid` before any Agent slot: the
-  current check graph is local-applicable rather than aggregate, required
-  database/H5 E2E/native nodes remain `not-run`, the grader host lacks Xcode,
-  and the hidden acceptance grader is not implemented.
+- On this Linux host, both a newly generated Workspace and the Reading Queue
+  reference pass every Linux-owned node, including a running PostgreSQL/API
+  smoke test, H5 E2E, and Android release assembly. A Linux-only aggregate
+  remains fail-closed because iOS is `not-run`; the CI workflow supplies the
+  required macOS/Xcode shard before an aggregate can pass.
+- The frozen campaign preflight remains `campaign-invalid`: it predates this
+  graph, the current host still lacks Xcode, and the hidden acceptance grader
+  is not implemented. No Agent Eval outcome is inferred from the quality-graph
+  result.
 
-See `prototype/reading-queue-reference/evidence/` and
-`prototype/eval-v0/eval-manifest.json` for frozen primary-source evidence.
+See `prototype/quality-check/README.md` for the current graph contract and
+verified result hashes. The earlier `prototype/reading-queue-reference/evidence/`
+and `prototype/eval-v0/eval-manifest.json` remain frozen primary-source
+evidence from the initial prototype run.

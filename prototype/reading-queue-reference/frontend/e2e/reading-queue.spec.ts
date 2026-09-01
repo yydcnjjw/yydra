@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('create, filter, complete, and reopen a reading entry', async ({ page }) => {
+test('create, filter, complete, and reopen a reading entry', async ({ page }, testInfo) => {
   const title = `Golden Stack ${Date.now()}`;
   const sourceUrl = `https://example.com/golden-stack/${Date.now()}`;
 
@@ -20,7 +20,7 @@ test('create, filter, complete, and reopen a reading entry', async ({ page }) =>
   await expect(entry).toContainText('Completed');
   await page.screenshot({
     fullPage: true,
-    path: '../evidence/h5-reading-queue-completed.png',
+    path: testInfo.outputPath('h5-reading-queue-completed.png'),
   });
 
   await entry.getByRole('button', { name: `Reopen ${title}` }).click();

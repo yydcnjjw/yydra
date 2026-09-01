@@ -8,9 +8,14 @@ use clap::{Parser, Subcommand};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
-const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
-const TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../template/product-workspace");
-const BASELINE_SKILL_FILES: &[&str] = &[
+mod check_graph;
+
+use check_graph::{CheckProfile, CheckRequest};
+
+pub(crate) const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const TEMPLATE: Dir<'_> =
+    include_dir!("$CARGO_MANIFEST_DIR/../../template/product-workspace");
+pub(crate) const BASELINE_SKILL_FILES: &[&str] = &[
     "yydra-diagnose/SKILL.md",
     "yydra-diagnose/references/rule-routing.md",
     "yydra-product-change/SKILL.md",
@@ -49,6 +54,15 @@ enum Command {
     Check {
         #[arg(default_value = ".")]
         workspace: PathBuf,
+        /// Select local execution, one CI host shard, or shard aggregation.
+        #[arg(long, value_enum, default_value_t = CheckProfile::Local)]
+        profile: CheckProfile,
+        /// New directory for the evidence manifest and raw node logs.
+        #[arg(long)]
+        evidence_dir: Option<PathBuf>,
+        /// Host-shard manifest to merge; valid only with `--profile aggregate`.
+        #[arg(long = "shard", value_name = "MANIFEST")]
+        shards: Vec<PathBuf>,
     },
 }
 
@@ -72,7 +86,17 @@ fn main() -> Result<()> {
         Command::Generate { command } => match command {
             GenerateCommand::Api { workspace } => generate_api(&workspace),
         },
-        Command::Check { workspace } => check(&workspace),
+        Command::Check {
+            workspace,
+            profile,
+            evidence_dir,
+            shards,
+        } => check_graph::check(CheckRequest {
+            workspace,
+            profile,
+            evidence_dir,
+            shards,
+        }),
     }
 }
 
@@ -82,6 +106,13 @@ fn exact_workspace(start: &Path) -> Result<PathBuf> {
     if recorded_version != DISTRIBUTION_VERSION {
         bail!(
             "distribution mismatch; install exactly with: cargo install yydra-cli --version {recorded_version} --locked"
+        );
+    }
+    let recorded_template = origin_template_sha256(&root)?;
+    let expected_template = template_digest();
+    if recorded_template != expected_template {
+        bail!(
+            "Workspace Origin Record template digest does not match Distribution {DISTRIBUTION_VERSION}"
         );
     }
     Ok(root)
@@ -308,6 +339,9 @@ struct RenderContext<'a> {
 
 fn materialize(directory: &Dir<'_>, destination: &Path, render: &RenderContext<'_>) -> Result<()> {
     for entry in directory.entries() {
+        if !embedded_template_path(entry.path()) {
+            continue;
+        }
         match entry {
             DirEntry::Dir(child) => {
                 let output = destination.join(child.path());
@@ -358,11 +392,23 @@ fn template_digest() -> String {
 
 fn collect_files<'a>(directory: &'a Dir<'a>, files: &mut Vec<&'a File<'a>>) {
     for entry in directory.entries() {
+        if !embedded_template_path(entry.path()) {
+            continue;
+        }
         match entry {
             DirEntry::Dir(child) => collect_files(child, files),
             DirEntry::File(file) => files.push(file),
         }
     }
+}
+
+fn embedded_template_path(path: &Path) -> bool {
+    !path.components().any(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("target" | "node_modules" | ".expo" | "dist" | "test-results" | "android" | "ios")
+        )
+    })
 }
 
 fn doctor(workspace: &Path) -> Result<()> {
@@ -382,20 +428,28 @@ fn doctor(workspace: &Path) -> Result<()> {
 }
 
 fn origin_distribution(root: &Path) -> Result<String> {
+    origin_field(root, "distribution_version")
+}
+
+fn origin_template_sha256(root: &Path) -> Result<String> {
+    origin_field(root, "template_sha256")
+}
+
+fn origin_field(root: &Path, field: &str) -> Result<String> {
     let origin_path = root.join(".yydra/origin.toml");
     let origin = fs::read_to_string(&origin_path)
         .with_context(|| format!("read Workspace Origin Record '{}'", origin_path.display()))?;
     let recorded_version = origin
         .lines()
         .find_map(|line| {
-            line.strip_prefix("distribution_version = \"")?
+            line.strip_prefix(&format!("{field} = \""))?
                 .strip_suffix('"')
         })
-        .context("Workspace Origin Record has no distribution_version")?;
+        .with_context(|| format!("Workspace Origin Record has no {field}"))?;
     Ok(recorded_version.to_owned())
 }
 
-fn find_workspace_root(start: &Path) -> Result<PathBuf> {
+pub(crate) fn find_workspace_root(start: &Path) -> Result<PathBuf> {
     let start = start
         .canonicalize()
         .with_context(|| format!("resolve workspace path '{}'", start.display()))?;
@@ -410,121 +464,7 @@ fn find_workspace_root(start: &Path) -> Result<PathBuf> {
     )
 }
 
-fn check(workspace: &Path) -> Result<()> {
-    let root = exact_workspace(workspace)?;
-
-    println!("profile=local-prototype");
-    println!("workspace={}", root.display());
-    let mut failed = false;
-    report("origin.exact-distribution", Ok(()), &mut failed);
-    report(
-        "ownership.baseline-skills",
-        check_baseline_skills(&root),
-        &mut failed,
-    );
-    report(
-        "ownership.generated-boundaries",
-        check_generated_ownership(&root),
-        &mut failed,
-    );
-    report(
-        "rust.format",
-        run(&root, "cargo", &["fmt", "--all", "--check"], &[]),
-        &mut failed,
-    );
-    report(
-        "rust.compile",
-        run(
-            &root,
-            "cargo",
-            &[
-                "check",
-                "--locked",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-            ],
-            &[("SQLX_OFFLINE", "true")],
-        ),
-        &mut failed,
-    );
-    report(
-        "rust.clippy",
-        run(
-            &root,
-            "cargo",
-            &[
-                "clippy",
-                "--locked",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--",
-                "-D",
-                "warnings",
-            ],
-            &[("SQLX_OFFLINE", "true")],
-        ),
-        &mut failed,
-    );
-    report(
-        "rust.test",
-        run(
-            &root,
-            "cargo",
-            &["test", "--locked", "--workspace", "--all-features"],
-            &[("SQLX_OFFLINE", "true")],
-        ),
-        &mut failed,
-    );
-    report("api.openapi-drift", check_openapi_drift(&root), &mut failed);
-    report(
-        "api.generated-client-drift",
-        check_generated_client_drift(&root),
-        &mut failed,
-    );
-
-    let frontend = root.join("frontend");
-    report(
-        "frontend.expo-dependencies",
-        run(
-            &frontend,
-            "npm",
-            &["exec", "--", "expo", "install", "--check"],
-            &[],
-        ),
-        &mut failed,
-    );
-    report(
-        "frontend.advisories",
-        run(&frontend, "npm", &["audit", "--audit-level=low"], &[]),
-        &mut failed,
-    );
-    report(
-        "frontend.typecheck",
-        run(&frontend, "npm", &["run", "typecheck"], &[]),
-        &mut failed,
-    );
-    report(
-        "frontend.test",
-        run(&frontend, "npm", &["test"], &[]),
-        &mut failed,
-    );
-    report(
-        "h5.production-export",
-        run(&frontend, "npm", &["run", "export:web"], &[]),
-        &mut failed,
-    );
-
-    println!("not-run=database.running-service,h5.e2e,android.release,ios.simulator-release");
-    if failed {
-        bail!("prototype check failed; see stable rule identifiers above");
-    }
-    println!("status=pass-local-applicable");
-    Ok(())
-}
-
-fn check_baseline_skills(root: &Path) -> Result<()> {
+pub(crate) fn check_baseline_skills(root: &Path) -> Result<()> {
     let skills = root.join(".agents/skills");
     let actual_files = tree_files(&skills)?
         .into_iter()
@@ -563,16 +503,6 @@ fn check_baseline_skills(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn report(id: &str, result: Result<()>, failed: &mut bool) {
-    match result {
-        Ok(()) => println!("PASS {id}"),
-        Err(error) => {
-            *failed = true;
-            eprintln!("FAIL {id}: {error:#}");
-        }
-    }
-}
-
 fn run(root: &Path, program: &str, arguments: &[&str], environment: &[(&str, &str)]) -> Result<()> {
     let status = ProcessCommand::new(program)
         .args(arguments)
@@ -592,79 +522,7 @@ fn run(root: &Path, program: &str, arguments: &[&str], environment: &[(&str, &st
     Ok(())
 }
 
-fn check_openapi_drift(root: &Path) -> Result<()> {
-    let generated = root
-        .join("contracts")
-        .join(format!(".openapi-yydra-check-{}.json", std::process::id()));
-    if generated.exists() {
-        bail!(
-            "temporary OpenAPI path already exists: {}",
-            generated.display()
-        );
-    }
-    let generated_arg = generated.to_string_lossy().into_owned();
-    let run_result = run(
-        root,
-        "cargo",
-        &[
-            "run",
-            "--locked",
-            "--bin",
-            "generate-openapi",
-            "--",
-            &generated_arg,
-        ],
-        &[("SQLX_OFFLINE", "true")],
-    );
-    let result = run_result.and_then(|()| {
-        compare_files(&root.join("contracts/openapi.json"), &generated).with_context(
-            || "OpenAPI drift detected; run the exact Distribution's `yydra generate api`",
-        )
-    });
-    if generated.exists() {
-        fs::remove_file(&generated)
-            .with_context(|| format!("remove temporary OpenAPI '{}'", generated.display()))?;
-    }
-    result
-}
-
-fn check_generated_client_drift(root: &Path) -> Result<()> {
-    let frontend = root.join("frontend");
-    let temporary = frontend.join("src/.yydra-check/public-api");
-    if temporary.exists() {
-        bail!(
-            "temporary Generated Client path already exists: {}; remove it and retry",
-            temporary.display()
-        );
-    }
-    let run_result = run(
-        &frontend,
-        "npm",
-        &["run", "generate:api"],
-        &[("YYDRA_GENERATED_API_ROOT", "./src/.yydra-check/public-api")],
-    );
-    let result = run_result.and_then(|()| {
-        compare_trees(&frontend.join("src/generated/public-api"), &temporary).with_context(
-            || "Generated Client drift detected; run the exact Distribution's `yydra generate api`",
-        )
-    });
-    if temporary.exists() {
-        fs::remove_dir_all(&temporary).with_context(|| {
-            format!(
-                "remove temporary Generated Client '{}'",
-                temporary.display()
-            )
-        })?;
-        if let Some(parent) = temporary.parent()
-            && parent.read_dir()?.next().is_none()
-        {
-            fs::remove_dir(parent)?;
-        }
-    }
-    result
-}
-
-fn check_generated_ownership(root: &Path) -> Result<()> {
+pub(crate) fn check_generated_ownership(root: &Path) -> Result<()> {
     let source = root.join("frontend/src");
     let generated = source.join("generated/public-api");
     for file in tree_files(&generated)? {
@@ -706,14 +564,14 @@ fn check_generated_ownership(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compare_files(expected: &Path, actual: &Path) -> Result<()> {
+pub(crate) fn compare_files(expected: &Path, actual: &Path) -> Result<()> {
     if fs::read(expected)? != fs::read(actual)? {
         bail!("{} differs from {}", expected.display(), actual.display());
     }
     Ok(())
 }
 
-fn compare_trees(expected: &Path, actual: &Path) -> Result<()> {
+pub(crate) fn compare_trees(expected: &Path, actual: &Path) -> Result<()> {
     let expected_files = relative_inventory(expected)?;
     let actual_files = relative_inventory(actual)?;
     if expected_files != actual_files {
@@ -734,7 +592,7 @@ fn relative_inventory(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     Ok(inventory)
 }
 
-fn tree_files(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn tree_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_tree_files(root, &mut files)?;
     files.sort();

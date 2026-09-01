@@ -2,7 +2,7 @@
 name: yydra-product-change
 description: Implement an end-to-end Product Domain change in a Yydra Product Workspace across domain rules, use cases, persistence, code-first API, generated client, presentation, and checks. Use for product behavior changes, not Distribution upgrades or Framework internals.
 metadata:
-  yydra-distribution: "0.0.1-prototype"
+  yydra-distribution: "0.0.2-prototype"
 ---
 
 # Yydra Product Change

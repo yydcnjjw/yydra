@@ -1,0 +1,177 @@
+name: V0 Mechanical Quality Contract
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v0-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 26.8.1
+
+jobs:
+  linux-shard:
+    name: Linux shard - ${{ matrix.workspace }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [clean, reference]
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Set up exact Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21.0.8
+          cache: gradle
+      - name: Build the exact prototype Distribution
+        run: |
+          cargo build --release --locked --bin yydra
+          cp target/release/yydra "$RUNNER_TEMP/yydra"
+      - name: Prepare Product Workspace
+        run: |
+          if [[ "${{ matrix.workspace }}" == clean ]]; then
+            "$RUNNER_TEMP/yydra" new target/quality-ci/clean \
+              --product-name "Clean Quality Fixture" \
+              --product-id clean-quality-fixture
+            workspace=target/quality-ci/clean
+          else
+            workspace=prototype/reading-queue-reference
+          fi
+          echo "YYDRA_WORKSPACE=$workspace" >>"$GITHUB_ENV"
+          echo "YYDRA_EVIDENCE=$RUNNER_TEMP/${{ matrix.workspace }}-linux" >>"$GITHUB_ENV"
+      - name: Install exact frontend graph and Chromium
+        run: |
+          npm ci --ignore-scripts --prefix "$YYDRA_WORKSPACE/frontend"
+          npm exec --prefix "$YYDRA_WORKSPACE/frontend" -- playwright install --with-deps chromium
+      - name: Execute Linux host shard
+        run: |
+          "$RUNNER_TEMP/yydra" check "$YYDRA_WORKSPACE" \
+            --profile linux-ci \
+            --evidence-dir "$YYDRA_EVIDENCE"
+      - name: Upload Linux evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-${{ matrix.workspace }}-linux
+          path: ${{ env.YYDRA_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-shard:
+    name: macOS shard - ${{ matrix.workspace }}
+    runs-on: macos-26
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [clean, reference]
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Select and verify pinned Apple toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+          test "$(pod --version)" = 1.17.0
+      - name: Build the exact prototype Distribution
+        run: |
+          cargo build --release --locked --bin yydra
+          cp target/release/yydra "$RUNNER_TEMP/yydra"
+          cargo clean
+      - name: Prepare Product Workspace
+        run: |
+          if [[ "${{ matrix.workspace }}" == clean ]]; then
+            "$RUNNER_TEMP/yydra" new target/quality-ci/clean \
+              --product-name "Clean Quality Fixture" \
+              --product-id clean-quality-fixture
+            workspace=target/quality-ci/clean
+          else
+            workspace=prototype/reading-queue-reference
+          fi
+          echo "YYDRA_WORKSPACE=$workspace" >>"$GITHUB_ENV"
+          echo "YYDRA_EVIDENCE=$RUNNER_TEMP/${{ matrix.workspace }}-macos" >>"$GITHUB_ENV"
+      - name: Install exact frontend graph
+        run: npm ci --ignore-scripts --prefix "$YYDRA_WORKSPACE/frontend"
+      - name: Execute macOS host shard
+        run: |
+          "$RUNNER_TEMP/yydra" check "$YYDRA_WORKSPACE" \
+            --profile macos-ci \
+            --evidence-dir "$YYDRA_EVIDENCE"
+      - name: Upload macOS evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-${{ matrix.workspace }}-macos
+          path: ${{ env.YYDRA_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate - ${{ matrix.workspace }}
+    needs: [linux-shard, macos-shard]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [clean, reference]
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the exact prototype Distribution
+        run: cargo build --release --locked --bin yydra
+      - name: Prepare aggregate Product Workspace
+        run: |
+          if [[ "${{ matrix.workspace }}" == clean ]]; then
+            target/release/yydra new target/quality-ci/clean \
+              --product-name "Clean Quality Fixture" \
+              --product-id clean-quality-fixture
+            workspace=target/quality-ci/clean
+          else
+            workspace=prototype/reading-queue-reference
+          fi
+          echo "YYDRA_WORKSPACE=$workspace" >>"$GITHUB_ENV"
+      - name: Download Linux shard
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-${{ matrix.workspace }}-linux
+          path: ${{ runner.temp }}/${{ matrix.workspace }}-linux
+      - name: Download macOS shard
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-${{ matrix.workspace }}-macos
+          path: ${{ runner.temp }}/${{ matrix.workspace }}-macos
+      - name: Merge host evidence fail-closed
+        run: |
+          target/release/yydra check "$YYDRA_WORKSPACE" \
+            --profile aggregate \
+            --shard "$RUNNER_TEMP/${{ matrix.workspace }}-linux/manifest.json" \
+            --shard "$RUNNER_TEMP/${{ matrix.workspace }}-macos/manifest.json" \
+            --evidence-dir "$RUNNER_TEMP/${{ matrix.workspace }}-aggregate"
+      - name: Upload aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-${{ matrix.workspace }}-aggregate
+          path: ${{ runner.temp }}/${{ matrix.workspace }}-aggregate
+          if-no-files-found: error
+          retention-days: 14

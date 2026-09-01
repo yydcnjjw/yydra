@@ -36,6 +36,12 @@ expect_status "$create_status" 201 create
 entry_id=$(jq -er '.id' "$probe_tmp/create.body")
 jq -e '.status == "queued"' "$probe_tmp/create.body" >/dev/null
 
+second_create_status=$(request second-create -X POST "$api_base/reading-entries" \
+  -H 'content-type: application/json' \
+  --data "{\"title\":\"Live API second $unique\",\"sourceUrl\":\"https://example.com/live-api/$unique/second\"}")
+expect_status "$second_create_status" 201 second-create
+jq -e '.status == "queued"' "$probe_tmp/second-create.body" >/dev/null
+
 complete_status=$(request complete -X POST "$api_base/reading-entries/$entry_id/complete")
 expect_status "$complete_status" 200 complete
 jq -e '.status == "completed"' "$probe_tmp/complete.body" >/dev/null

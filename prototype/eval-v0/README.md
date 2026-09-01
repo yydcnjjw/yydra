@@ -16,6 +16,11 @@ hidden acceptance grader can yet prove implementation-independent task
 behavior. The planned 3+3 run order is retained in `eval-manifest.json`, with
 every slot marked `not-started`.
 
+This paragraph and `eval-manifest.json` are frozen evidence from the initial
+prototype run. The subsequent aggregate graph implementation is documented in
+`prototype/quality-check/README.md`; it does not retroactively change the
+campaign result or start any Agent slot.
+
 Run the frozen preflight with:
 
 ```sh

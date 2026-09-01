@@ -1,5 +1,7 @@
+use std::env;
 use std::net::SocketAddr;
 
+use sqlx::postgres::PgPoolOptions;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 
@@ -9,11 +11,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let database_url = env::var("DATABASE_URL")?;
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&database_url)
+        .await?;
+    product_persistence_postgres::check_migration_state(&pool).await?;
+
     let (router, _) = product_transport_http::router().split_for_parts();
     let app = router
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
-    let address: SocketAddr = "127.0.0.1:4000".parse()?;
+    let address: SocketAddr = env::var("YYDRA_BIND_ADDRESS")
+        .unwrap_or_else(|_| "127.0.0.1:4000".to_owned())
+        .parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     info!(%address, "serving Product Workspace");
     axum::serve(listener, app)
