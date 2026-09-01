@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${API_BASE_URL:?API_BASE_URL is required}"
+: "${EVIDENCE_DIR:?EVIDENCE_DIR is required}"
+
+request() {
+  local name=$1
+  shift
+  curl --silent --show-error \
+    --dump-header "$EVIDENCE_DIR/$name.headers" \
+    --output "$EVIDENCE_DIR/$name.body" \
+    --write-out '%{http_code}' "$@"
+}
+
+expect_status() {
+  local name=$1
+  local actual=$2
+  local expected=$3
+  if [[ "$actual" != "$expected" ]]; then
+    echo "$name: expected HTTP $expected, got $actual" >&2
+    sed -n '1,120p' "$EVIDENCE_DIR/$name.body" >&2 || true
+    exit 1
+  fi
+}
+
+expect_problem() {
+  local name=$1
+  local status=$2
+  local type=$3
+  grep -Eiq '^content-type: application/problem\+json' "$EVIDENCE_DIR/$name.headers"
+  jq -e --arg type "$type" --argjson status "$status" '
+    .type == $type and .status == $status and
+    (.title | type == "string" and length > 0) and
+    (.detail | type == "string" and length > 0) and
+    (.traceId | type == "string" and length > 0)
+  ' "$EVIDENCE_DIR/$name.body" >/dev/null
+}
+
+unique=$(date +%s%N)
+ids=()
+for index in 1 2 3 4; do
+  name="create-$index"
+  code=$(request "$name" -X POST "$API_BASE_URL/reading-entries" \
+    -H 'content-type: application/json' \
+    --data "{\"title\":\"Hidden $index $unique\",\"sourceUrl\":\"https://example.com/$unique/$index\"}")
+  expect_status "$name" "$code" 201
+  jq -e --arg title "Hidden $index $unique" --arg url "https://example.com/$unique/$index" '
+    has("id") and has("sourceUrl") and has("status") and has("title") and
+    .title == $title and .sourceUrl == $url and .status == "queued" and
+    (.id | type == "string" and length > 0)
+  ' "$EVIDENCE_DIR/$name.body" >/dev/null
+  ids+=("$(jq -er '.id' "$EVIDENCE_DIR/$name.body")")
+  sleep 0.01
+done
+
+code=$(request blank-title -X POST "$API_BASE_URL/reading-entries" \
+  -H 'content-type: application/json' \
+  --data '{"title":"  ","sourceUrl":"https://example.com/blank"}')
+expect_status blank-title "$code" 400
+expect_problem blank-title 400 'https://yydra.dev/problems/invalid-input'
+
+code=$(request invalid-url -X POST "$API_BASE_URL/reading-entries" \
+  -H 'content-type: application/json' \
+  --data '{"title":"Bad URL","sourceUrl":"file:///etc/passwd"}')
+expect_status invalid-url "$code" 400
+expect_problem invalid-url 400 'https://yydra.dev/problems/invalid-input'
+
+code=$(request unknown-field -X POST "$API_BASE_URL/reading-entries" \
+  -H 'content-type: application/json' \
+  --data '{"title":"Unknown","sourceUrl":"https://example.com/unknown","extra":true}')
+expect_status unknown-field "$code" 400
+expect_problem unknown-field 400 'https://yydra.dev/problems/invalid-input'
+
+first_id=${ids[0]}
+code=$(request complete -X POST "$API_BASE_URL/reading-entries/$first_id/complete")
+expect_status complete "$code" 200
+jq -e '.status == "completed"' "$EVIDENCE_DIR/complete.body" >/dev/null
+
+code=$(request repeat-complete -X POST "$API_BASE_URL/reading-entries/$first_id/complete")
+expect_status repeat-complete "$code" 409
+expect_problem repeat-complete 409 'https://yydra.dev/problems/invalid-reading-entry-transition'
+
+code=$(request completed-filter "$API_BASE_URL/reading-entries?status=completed&limit=50")
+expect_status completed-filter "$code" 200
+jq -e --arg id "$first_id" '
+  (.items | length) == 1 and .items[0].id == $id and
+  (.items | all(.status == "completed")) and .nextCursor == null
+' "$EVIDENCE_DIR/completed-filter.body" >/dev/null
+
+code=$(request queued-filter "$API_BASE_URL/reading-entries?status=queued&limit=50")
+expect_status queued-filter "$code" 200
+jq -e --arg id "$first_id" '
+  (.items | length) == 3 and (.items | all(.status == "queued")) and
+  (.items | all(.id != $id)) and .nextCursor == null
+' "$EVIDENCE_DIR/queued-filter.body" >/dev/null
+
+code=$(request page-one "$API_BASE_URL/reading-entries?limit=2")
+expect_status page-one "$code" 200
+jq -e '(.items | length) == 2 and (.nextCursor | type == "string" and length > 0)' \
+  "$EVIDENCE_DIR/page-one.body" >/dev/null
+cursor=$(jq -er '.nextCursor' "$EVIDENCE_DIR/page-one.body")
+encoded_cursor=$(jq -rn --arg value "$cursor" '$value|@uri')
+
+code=$(request page-two "$API_BASE_URL/reading-entries?limit=2&cursor=$encoded_cursor")
+expect_status page-two "$code" 200
+jq -e '(.items | length) == 2 and .nextCursor == null' "$EVIDENCE_DIR/page-two.body" >/dev/null
+jq -s -e '
+  ([.[0].items[].id] + [.[1].items[].id]) as $ids |
+  ($ids | length) == 4 and ($ids | unique | length) == 4
+' "$EVIDENCE_DIR/page-one.body" "$EVIDENCE_DIR/page-two.body" >/dev/null
+
+code=$(request cursor-filter-mismatch \
+  "$API_BASE_URL/reading-entries?status=queued&limit=2&cursor=$encoded_cursor")
+expect_status cursor-filter-mismatch "$code" 400
+expect_problem cursor-filter-mismatch 400 'https://yydra.dev/problems/invalid-cursor'
+
+code=$(request malformed-cursor "$API_BASE_URL/reading-entries?cursor=not-opaque")
+expect_status malformed-cursor "$code" 400
+expect_problem malformed-cursor 400 'https://yydra.dev/problems/invalid-cursor'
+
+for query in 'status=other' 'limit=0' 'limit=51'; do
+  safe_name=$(printf '%s' "$query" | tr '=&' '_-')
+  code=$(request "invalid-$safe_name" "$API_BASE_URL/reading-entries?$query")
+  expect_status "invalid-$safe_name" "$code" 400
+  expect_problem "invalid-$safe_name" 400 'https://yydra.dev/problems/invalid-input'
+done
+
+code=$(request reopen -X POST "$API_BASE_URL/reading-entries/$first_id/reopen")
+expect_status reopen "$code" 200
+jq -e '.status == "queued"' "$EVIDENCE_DIR/reopen.body" >/dev/null
+
+code=$(request repeat-reopen -X POST "$API_BASE_URL/reading-entries/$first_id/reopen")
+expect_status repeat-reopen "$code" 409
+expect_problem repeat-reopen 409 'https://yydra.dev/problems/invalid-reading-entry-transition'
+
+missing_id='018f47a0-7b89-7000-8000-000000000000'
+code=$(request missing -X POST "$API_BASE_URL/reading-entries/$missing_id/complete")
+expect_status missing "$code" 404
+expect_problem missing 404 'https://yydra.dev/problems/reading-entry-not-found'
+
+jq -n --argjson checks 18 '{schemaVersion: 1, status: "pass", checks: $checks}'

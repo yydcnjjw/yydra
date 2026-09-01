@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: $0 <candidate-workspace> <new-evidence-directory>" >&2
+  exit 64
+fi
+
+workspace=$(cd "$1" && pwd)
+evidence=$2
+grader_dir=$(cd "$(dirname "$0")" && pwd)
+
+if [[ -e "$evidence" ]]; then
+  echo "evidence path already exists: $evidence" >&2
+  exit 65
+fi
+mkdir -p "$evidence/http"
+evidence=$(cd "$evidence" && pwd)
+
+for command in cargo curl docker jq node npm; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "required grader command unavailable: $command" >&2
+    exit 69
+  }
+done
+
+port_seed=$(printf '%s' "$workspace" | sha256sum | cut -c1-4)
+postgres_port=$((56000 + 16#$port_seed % 4000))
+api_port=$((41000 + 16#$port_seed % 4000))
+web_port=$((45000 + 16#$port_seed % 4000))
+compose_project="yydraeval$(printf '%s' "$port_seed" | tr '[:upper:]' '[:lower:]')"
+database_url="postgres://postgres:postgres@127.0.0.1:${postgres_port}/yydra_reading_queue"
+api_base="http://127.0.0.1:${api_port}"
+web_base="http://127.0.0.1:${web_port}"
+server_pid=
+web_pid=
+
+cleanup() {
+  local exit_status=$?
+  if [[ -n "$web_pid" ]]; then kill "$web_pid" >/dev/null 2>&1 || true; fi
+  if [[ -n "$server_pid" ]]; then kill "$server_pid" >/dev/null 2>&1 || true; fi
+  YYDRA_POSTGRES_PORT="$postgres_port" docker compose \
+    --project-name "$compose_project" \
+    --file "$workspace/compose.yaml" down --volumes --remove-orphans \
+    >>"$evidence/compose.log" 2>&1 || true
+  exit "$exit_status"
+}
+trap cleanup EXIT
+
+YYDRA_POSTGRES_PORT="$postgres_port" docker compose \
+  --project-name "$compose_project" \
+  --file "$workspace/compose.yaml" up --detach --wait \
+  >"$evidence/compose.log" 2>&1
+
+(
+  cd "$workspace"
+  DATABASE_URL="$database_url" cargo run --locked --bin migrate
+) >"$evidence/migrate.log" 2>&1
+
+(
+  cd "$workspace"
+  DATABASE_URL="$database_url" YYDRA_BIND_ADDRESS="127.0.0.1:${api_port}" \
+    cargo run --locked --bin server
+) >"$evidence/server.log" 2>&1 &
+server_pid=$!
+
+for _ in $(seq 1 120); do
+  if curl --silent --show-error --fail "$api_base/health" \
+    >"$evidence/http/health.body" 2>"$evidence/http/health.error"; then
+    break
+  fi
+  if ! kill -0 "$server_pid" >/dev/null 2>&1; then
+    echo "candidate server exited before becoming ready" >&2
+    exit 70
+  fi
+  sleep 1
+done
+jq -e '.status == "ready"' "$evidence/http/health.body" >/dev/null
+
+API_BASE_URL="$api_base" EVIDENCE_DIR="$evidence/http" \
+  "$grader_dir/verify-api" >"$evidence/api-summary.json"
+
+(
+  cd "$workspace/frontend"
+  EXPO_PUBLIC_API_URL="$api_base" npm run web -- --port "$web_port"
+) >"$evidence/web.log" 2>&1 &
+web_pid=$!
+
+for _ in $(seq 1 120); do
+  if curl --silent --show-error --fail "$web_base" \
+    >"$evidence/http/web-index.html" 2>"$evidence/http/web.error"; then
+    break
+  fi
+  if ! kill -0 "$web_pid" >/dev/null 2>&1; then
+    echo "candidate H5 server exited before becoming ready" >&2
+    exit 71
+  fi
+  sleep 1
+done
+
+NODE_PATH="$workspace/frontend/node_modules" \
+  API_BASE_URL="$api_base" WEB_BASE_URL="$web_base" EVIDENCE_DIR="$evidence" \
+  node "$grader_dir/verify-h5.cjs" >"$evidence/h5-summary.json"
+
+jq -n \
+  --arg apiSha256 "$(sha256sum "$evidence/api-summary.json" | cut -d' ' -f1)" \
+  --arg h5Sha256 "$(sha256sum "$evidence/h5-summary.json" | cut -d' ' -f1)" \
+  '{
+    schemaVersion: 1,
+    status: "pass",
+    checks: ["public-api", "accessible-h5"],
+    artifacts: {apiSummarySha256: $apiSha256, h5SummarySha256: $h5Sha256}
+  }' >"$evidence/result.json"
+
+cat "$evidence/result.json"

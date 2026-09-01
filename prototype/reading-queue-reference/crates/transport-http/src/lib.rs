@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -152,8 +153,13 @@ async fn health() -> Json<HealthResponse> {
 )]
 async fn create_entry(
     State(state): State<AppState>,
-    Json(request): Json<CreateReadingEntryRequest>,
+    request: Result<Json<CreateReadingEntryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ReadingEntryResponse>), HttpError> {
+    let Json(request) = request.map_err(|_| {
+        HttpError(AppError::InvalidInput(
+            "The request body does not match the public API contract".to_owned(),
+        ))
+    })?;
     let entry = application::create_entry(
         &state.pool,
         CreateReadingEntry {
