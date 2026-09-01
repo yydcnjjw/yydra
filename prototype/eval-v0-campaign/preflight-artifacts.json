@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "workflowRunId": 33499361946,
+  "workflowRunUrl": "https://github.com/yydcnjjw/yydra/actions/runs/33499361946",
+  "artifacts": [
+    {
+      "id": 9798813516,
+      "name": "quality-clean-aggregate",
+      "releaseAsset": "quality-clean-aggregate-9798813516.zip",
+      "sha256": "b273afbdaef35adfc84a07fbba1e80fb6b869832c8fd420b5a1cd7bff3949028"
+    },
+    {
+      "id": 9798811243,
+      "name": "quality-reference-aggregate",
+      "releaseAsset": "quality-reference-aggregate-9798811243.zip",
+      "sha256": "d8912ccb354bd8e028273fefae9691ae78b52bad982b1ae2b1ab3ad2f1cc1ff7"
+    },
+    {
+      "id": 9798790341,
+      "name": "quality-clean-linux",
+      "releaseAsset": "quality-clean-linux-9798790341.zip",
+      "sha256": "4574377a556c9ba64fbef3a0a1e9f90c79273bfbaae833bad3f6504536f5e30a"
+    },
+    {
+      "id": 9798186246,
+      "name": "ios-runtime-reference",
+      "releaseAsset": "ios-runtime-reference-9798186246.zip",
+      "sha256": "c91c1e3343d5b1e71348c1583f0a3f24a68e66248635e195ba6b856333b458bc"
+    },
+    {
+      "id": 9797776501,
+      "name": "quality-reference-linux",
+      "releaseAsset": "quality-reference-linux-9797776501.zip",
+      "sha256": "4ab44ca31fc9f699e2730656aaaea62c8238337935971aefa603aa78629ff306"
+    },
+    {
+      "id": 9797710976,
+      "name": "quality-clean-macos",
+      "releaseAsset": "quality-clean-macos-9797710976.zip",
+      "sha256": "801219aa9a0e3a64cdf12602a3eb9b35dc2fd12af9dff8299117186e52462f42"
+    },
+    {
+      "id": 9797459563,
+      "name": "quality-reference-macos",
+      "releaseAsset": "quality-reference-macos-9797459563.zip",
+      "sha256": "e68c3d1c3b294e787e9e3e7e73cbe7d17cb921c54ea88478b595a56e978c2a52"
+    }
+  ]
+}
