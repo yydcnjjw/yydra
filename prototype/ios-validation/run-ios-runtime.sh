@@ -26,6 +26,12 @@ export PATH="$postgres_bin:$PATH"
 test "$(postgres --version)" = "postgres (PostgreSQL) 18.6 (Homebrew)"
 MAESTRO_CLI_NO_ANALYTICS=1 maestro --version | tee "$evidence/maestro-version.txt"
 grep -Eq '(^|[^0-9])2\.7\.0([^0-9]|$)' "$evidence/maestro-version.txt"
+# GitHub-hosted Apple runners can take longer than Maestro's default window to
+# compile and launch the XCTest driver on a fresh simulator. Match Maestro's
+# own iOS CI allowance so readiness failures remain infrastructure failures
+# instead of racing the product flow.
+maestro_driver_startup_timeout_ms=240000
+export MAESTRO_DRIVER_STARTUP_TIMEOUT="$maestro_driver_startup_timeout_ms"
 
 database_directory="${RUNNER_TEMP:?}/yydra-ios-postgres"
 database_log="$evidence/postgres.log"
@@ -159,6 +165,7 @@ jq -n \
   --arg cocoapods "$(pod --version)" \
   --arg postgres "$(postgres --version)" \
   --arg maestro "$(tr -d '\n' <"$evidence/maestro-version.txt")" \
+  --argjson maestroDriverStartupTimeoutMs "$maestro_driver_startup_timeout_ms" \
   --arg distribution "$(sed -n 's/^distribution_version = "\([^"]*\)"/\1/p' "$workspace/.yydra/origin.toml")" \
   --arg originSha256 "$(shasum -a 256 "$workspace/.yydra/origin.toml" | awk '{print $1}')" \
   --arg buildRunId "${YYDRA_IOS_BUILD_RUN_ID:-${GITHUB_RUN_ID:?}}" \
@@ -182,7 +189,8 @@ jq -n \
       expo: $expo,
       cocoapods: $cocoapods,
       postgres: $postgres,
-      maestro: $maestro
+      maestro: $maestro,
+      maestroDriverStartupTimeoutMs: $maestroDriverStartupTimeoutMs
     },
     distribution: $distribution,
     originSha256: $originSha256,

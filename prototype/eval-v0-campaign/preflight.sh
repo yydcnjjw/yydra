@@ -26,6 +26,8 @@ clean="$evidence/clean-workspace"
   >"$evidence/clean-create.log" 2>&1
 "$yydra_cli" doctor "$clean" >"$evidence/clean-doctor.log" 2>&1
 "$yydra_cli" doctor "$reference" >"$evidence/reference-doctor.log" 2>&1
+"$script_dir/verify-seal" "$yydra_cli" "$clean" "$reference" \
+  >"$evidence/seal-verification.json"
 
 set +e
 "$script_dir/grader/run-hidden" "$clean" "$evidence/clean-hidden" \

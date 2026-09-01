@@ -1,6 +1,6 @@
 # V0 Agent Eval campaign prototype
 
-This directory is the freeze candidate for the second Reading Queue campaign.
+This directory is the current freeze candidate for the next Reading Queue campaign.
 It does not overwrite `prototype/eval-v0/`, which remains the immutable evidence
 for the first `campaign-invalid` preflight.
 
@@ -17,6 +17,11 @@ No scored Agent slot may start until all of these conditions hold:
    supported GitHub-hosted grader.
 5. The human confirms this freeze candidate. Any later change creates a new
    campaign ID and repeats the complete preflight.
+
+The slot launcher independently verifies the sealed hashes, a clean repository,
+the authorized freeze commit, and the manifest hash before exposing the task to
+an Agent. The authorization record stays outside the repository so confirmation
+does not mutate the frozen commit.
 
 The hidden grader consumes only the public wire and accessibility contract in
 `task.md`. It is kept outside every Agent Workspace and does not import the

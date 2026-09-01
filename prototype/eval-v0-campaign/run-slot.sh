@@ -14,12 +14,23 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 manifest="$script_dir/eval-manifest.json"
 campaign_id=$(jq -er '.campaignId' "$manifest")
 cohort=$(jq -er --arg run "$run_id" '.runs[] | select(.id == $run) | .cohort' "$manifest")
+repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+freeze_git_sha=$(git -C "$repo_root" rev-parse HEAD)
+manifest_sha256=$(sha256sum "$manifest" | cut -d' ' -f1)
 
 jq -e --arg campaign "$campaign_id" \
+  --arg freezeGitSha "$freeze_git_sha" \
+  --arg manifestSha256 "$manifest_sha256" \
   '.status == "confirmed" and .campaignId == $campaign and
+   .freezeGitSha == $freezeGitSha and .manifestSha256 == $manifestSha256 and
    (.confirmedBy | type == "string" and length > 0) and
    (.confirmedAt | type == "string" and length > 0)' \
   "$authorization" >/dev/null
+
+if [[ -n $(git -C "$repo_root" status --porcelain --untracked-files=all) ]]; then
+  echo "campaign repository must be clean at the authorized freeze commit" >&2
+  exit 67
+fi
 
 if [[ -e "$run_root" ]]; then
   echo "run directory already exists: $run_root" >&2
@@ -34,6 +45,8 @@ overlay="$run_root/cohort-overlay"
   --product-name "Reading Queue Eval" \
   --product-id reading-queue-eval \
   >"$run_root/evidence/create.log" 2>&1
+"$script_dir/verify-seal" "$yydra_cli" "$workspace" \
+  >"$run_root/evidence/seal-verification.json"
 
 if [[ "$cohort" == "no-skills" ]]; then
   mkdir -p "$overlay"

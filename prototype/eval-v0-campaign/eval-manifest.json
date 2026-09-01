@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "campaignId": "yydra-v0-reading-queue-20260901-b",
+  "schemaVersion": 3,
+  "campaignId": "yydra-v0-reading-queue-20260901-c",
   "createdAt": "2026-09-01T17:39:48+08:00",
   "state": "freeze-candidate",
   "result": "not-started",
@@ -21,8 +21,12 @@
     "rubricSha256": "06698910a78dc7dce5c163d78b09ed057ef19568e81c751966cdb6e329bbd4da",
     "graderInventorySha256": "76cc6d8c198578ce6e9c5f31e4445f7a3acd2add778e023f2819c443152de612",
     "hashTreeScriptSha256": "668493a9fdd52827b20c6a50865a9c539ef3a817403460ef0623fcdfb536722f",
-    "preflightScriptSha256": "588c2763dca8c5c19ad0f69957477c4b127ac09f14ff540d0747be5dc24a177c",
-    "runSlotScriptSha256": "1dade152919d6ac7d4593bc82273276c81efbc61d5e1c436b422a404738ef7b7",
+    "preflightScriptSha256": "7188202404ea33aa400a181f808455e49477a17f89a9803685d626d5c0331e2d",
+    "runSlotScriptSha256": "6e012cb790103ee955486f244fd762ccbd839ce72e4260ad99b530cfa255a377",
+    "verifySealScriptSha256": "da3970124e3210dc98eff276e97d54dd24ef78eaa131497d0e4d3437da8c4262",
+    "iosRuntimeScriptSha256": "c146e72f67395109d1a38b508b48728bcc1f154f72b244172716ea5b913b1283",
+    "iosRuntimeFlowSha256": "7104e667e4aed64d153d911614f2b5fa2322bb060a5897c4903ebefc8d5c701f",
+    "mechanicalQualityWorkflowSha256": "3f989decbcf695d0ffc89911a60bdd5f6f875300c6dc324cde2e83bff02fed97",
     "localPreflightResultSha256": "df7a56b273689149c9c4ab41eb0d5af7fcda55f0627318b8ca54521add7b5203",
     "cleanWorkspaceInventorySha256": "e20fe3cba8a2f5926eebd7da1d6dc08130dd8a8493cf56d830ed39ba2ec02c38",
     "knownGoodInventorySha256": "b9372b98648400311274843e90a029c59370ce0658897ea5e67666da04b76ff3",
@@ -35,6 +39,10 @@
     "node": "v26.8.1",
     "npm": "12.0.2",
     "xcodebuild": null
+  },
+  "ciPreflightEnvironment": {
+    "maestro": "2.7.0",
+    "maestroDriverStartupTimeoutMs": 240000
   },
   "primaryAgentConfiguration": {
     "client": "codex-cli 0.149.1",

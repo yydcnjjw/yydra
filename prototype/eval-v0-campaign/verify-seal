@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "usage: $0 <exact-yydra-cli> <clean-workspace> [known-good-reference]" >&2
+  exit 64
+fi
+
+yydra_cli=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+clean=$(cd "$2" && pwd)
+reference=${3:-}
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+manifest="$script_dir/eval-manifest.json"
+hash_tree="$script_dir/hash-tree"
+
+expected() {
+  jq -er "$1" "$manifest"
+}
+
+check_file() {
+  local selector=$1
+  local path=$2
+  local wanted actual
+  wanted=$(expected "$selector")
+  actual=$(sha256sum "$path" | cut -d' ' -f1)
+  [[ "$actual" == "$wanted" ]] || {
+    echo "sealed file mismatch: $path (expected $wanted, got $actual)" >&2
+    exit 1
+  }
+}
+
+check_tree() {
+  local selector=$1
+  local path=$2
+  local wanted actual
+  wanted=$(expected "$selector")
+  actual=$("$hash_tree" "$path")
+  [[ "$actual" == "$wanted" ]] || {
+    echo "sealed tree mismatch: $path (expected $wanted, got $actual)" >&2
+    exit 1
+  }
+}
+
+check_file '.distribution.cliSha256' "$yydra_cli"
+check_file '.artifacts.taskSha256' "$script_dir/task.md"
+check_file '.artifacts.rubricSha256' "$script_dir/rubric.md"
+check_tree '.artifacts.graderInventorySha256' "$script_dir/grader"
+check_file '.artifacts.hashTreeScriptSha256' "$hash_tree"
+check_file '.artifacts.preflightScriptSha256' "$script_dir/preflight.sh"
+check_file '.artifacts.runSlotScriptSha256' "$script_dir/run-slot.sh"
+check_file '.artifacts.verifySealScriptSha256' "$script_dir/verify-seal"
+check_file '.artifacts.iosRuntimeScriptSha256' "$repo_root/prototype/ios-validation/run-ios-runtime.sh"
+check_file '.artifacts.iosRuntimeFlowSha256' "$repo_root/prototype/ios-validation/reading-queue.yaml"
+check_file '.artifacts.mechanicalQualityWorkflowSha256' "$repo_root/.github/workflows/v0-mechanical-quality.yml"
+check_tree '.artifacts.cleanWorkspaceInventorySha256' "$clean"
+check_tree '.distribution.baselineSkillInventorySha256' "$clean/.agents/skills"
+check_file '.artifacts.cargoLockSha256' "$clean/Cargo.lock"
+check_file '.artifacts.npmLockSha256' "$clean/frontend/package-lock.json"
+
+origin="$clean/.yydra/origin.toml"
+test "$(sed -n 's/^distribution_version = "\([^"]*\)"/\1/p' "$origin")" = \
+  "$(expected '.distribution.version')"
+test "$(sed -n 's/^template_sha256 = "\([^"]*\)"/\1/p' "$origin")" = \
+  "$(expected '.distribution.templateSha256')"
+
+if [[ -n "$reference" ]]; then
+  reference=$(cd "$reference" && pwd)
+  check_tree '.artifacts.knownGoodInventorySha256' "$reference"
+fi
+
+jq -n \
+  --arg campaignId "$(expected '.campaignId')" \
+  --arg manifestSha256 "$(sha256sum "$manifest" | cut -d' ' -f1)" \
+  '{schemaVersion: 1, status: "pass-seal", campaignId: $campaignId, manifestSha256: $manifestSha256}'
