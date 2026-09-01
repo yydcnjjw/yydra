@@ -14,8 +14,8 @@ flow="$(cd "$(dirname "$0")" && pwd -P)/reading-queue.yaml"
   echo "missing iOS simulator application bundle: $application" >&2
   exit 1
 }
-[[ ! -e "$evidence" ]] || {
-  echo "evidence directory already exists: $evidence" >&2
+[[ ! -e "$evidence/result.json" ]] || {
+  echo "completed evidence already exists: $evidence/result.json" >&2
   exit 1
 }
 
