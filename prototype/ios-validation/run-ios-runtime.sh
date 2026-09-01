@@ -23,7 +23,7 @@ mkdir -p "$evidence/maestro-output" "$evidence/maestro-debug"
 
 postgres_bin="$(brew --prefix postgresql@18)/bin"
 export PATH="$postgres_bin:$PATH"
-test "$(postgres --version)" = "postgres (PostgreSQL) 18.6"
+test "$(postgres --version)" = "postgres (PostgreSQL) 18.6 (Homebrew)"
 maestro --version | tee "$evidence/maestro-version.txt"
 grep -Eq '(^|[^0-9])2\.7\.0([^0-9]|$)' "$evidence/maestro-version.txt"
 

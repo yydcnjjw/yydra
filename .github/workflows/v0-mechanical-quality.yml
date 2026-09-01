@@ -174,7 +174,7 @@ jobs:
           brew install postgresql@18 2>&1 | tee "$evidence/postgresql-install.log"
           postgres_version=$("$(brew --prefix postgresql@18)/bin/postgres" --version)
           printf '%s\n' "$postgres_version" | tee "$evidence/postgresql-version.txt"
-          test "$postgres_version" = 'postgres (PostgreSQL) 18.6'
+          test "$postgres_version" = 'postgres (PostgreSQL) 18.6 (Homebrew)'
       - name: Install exact Maestro CLI
         run: |
           curl --fail --location --retry 3 \
