@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "__PRODUCT_NAME__",
+    "slug": "__PRODUCT_ID__",
+    "version": "0.1.0",
+    "scheme": "__PRODUCT_ID__",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "ios": {
+      "bundleIdentifier": "dev.yydra.__PRODUCT_NATIVE_ID__",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "dev.yydra.__PRODUCT_NATIVE_ID__"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}

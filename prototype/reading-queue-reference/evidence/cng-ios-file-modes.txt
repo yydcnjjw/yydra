@@ -1,0 +1,17 @@
+.gitignore 644
+.xcode.env 644
+Podfile 644
+Podfile.properties.json 644
+ReadingQueueTestbed.xcodeproj/project.pbxproj 644
+ReadingQueueTestbed.xcodeproj/project.xcworkspace/contents.xcworkspacedata 644
+ReadingQueueTestbed.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist 644
+ReadingQueueTestbed.xcodeproj/xcshareddata/xcschemes/ReadingQueueTestbed.xcscheme 644
+ReadingQueueTestbed/AppDelegate.swift 644
+ReadingQueueTestbed/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png 644
+ReadingQueueTestbed/Images.xcassets/AppIcon.appiconset/Contents.json 644
+ReadingQueueTestbed/Images.xcassets/Contents.json 644
+ReadingQueueTestbed/Info.plist 644
+ReadingQueueTestbed/ReadingQueueTestbed-Bridging-Header.h 644
+ReadingQueueTestbed/ReadingQueueTestbed.entitlements 644
+ReadingQueueTestbed/SplashScreen.storyboard 644
+ReadingQueueTestbed/Supporting/Expo.plist 644

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "yydra-v0-reading-queue-20260901-a",
+  "createdAt": "2026-09-01T13:07:27+08:00",
+  "result": "campaign-invalid",
+  "resultReasons": [
+    "CLEAN_AGGREGATE_CHECK_INCOMPLETE",
+    "REFERENCE_AGGREGATE_CHECK_INCOMPLETE",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:database.running-service",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:h5.e2e",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:android.release",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:ios.simulator-release",
+    "GRADER_IOS_TOOLCHAIN_UNAVAILABLE",
+    "TASK_ACCEPTANCE_GRADER_UNAVAILABLE"
+  ],
+  "distribution": {
+    "version": "0.0.1-prototype",
+    "cliSha256": "661caab8ea7e080d8087296d8935ff20a90c5b618ae2ff6667bd52a51133e868",
+    "templateSha256": "98e2cfd04a4cdddd22fef12c497b1a291282cb78041ca47c56b74e9654810cee",
+    "baselineSkillInventorySha256": "2ed805644412e6f93991584437e392c523856d36f799fec47fb3b27166a00246"
+  },
+  "artifacts": {
+    "taskSha256": "fceb914215fa4a88d71362e68b6ac79806b44b0c0e09402c736d193f0b4f8930",
+    "rubricSha256": "bc370804e4fd5c9704c91f57d0b3fe2f6539958a814bb2923ef015577bbd663d",
+    "preflightSha256": "2931c64179db5c652dcc0a65c795ee92bb8d8836d01fdc771501567dc428ed7f",
+    "preflightResultSha256": "97b73ec4d4989338b35e60de4eec202a3a5da7d21710c79369f50a0179a8328d",
+    "cleanWorkspaceInventorySha256": "3d4b7892b93204644498d3b5dbdab688dda1b9fc698f5d7863bb04f751342cb1",
+    "knownGoodInventorySha256": "d8774fa5b5650a69287e8614b8b12be0950a630c943ff64c01f8702740288801",
+    "cargoLockSha256": "88866b224c7b630b5ab919e45a10b09bb13f7f46f0ea0174bdbf7e2761432f3e",
+    "npmLockSha256": "54e36205f60914aa71ac14f4cf63f5c61f9adcd96d858020ac42466ed94c4b0d",
+    "hiddenAcceptanceGraderSha256": null
+  },
+  "environment": {
+    "os": "Linux 6.18.40.1-microsoft-standard-WSL2 x86_64 GNU/Linux",
+    "rustToolchain": "1.97.1-x86_64-unknown-linux-gnu",
+    "node": "v26.8.1",
+    "npm": "12.0.2",
+    "xcodebuild": null
+  },
+  "primaryAgentConfiguration": {
+    "client": "codex-cli 0.149.1",
+    "model": "gpt-5.6-sol",
+    "providerNativeComputeLimit": "reasoning-effort-xhigh",
+    "visibleTask": "task.md",
+    "tools": [
+      "normal-shell",
+      "apply-patch",
+      "repository-tests",
+      "exact-yydra-cli"
+    ],
+    "sandbox": "workspace-write",
+    "approvalPolicy": "never",
+    "networkPolicy": "disabled-except-model-control-plane",
+    "agentTimeoutSeconds": 5400,
+    "graderTimeoutSeconds": 3600,
+    "humanIntervention": "none"
+  },
+  "randomization": {
+    "algorithm": "Python random.Random shuffle",
+    "seed": "yydra-v0-reading-queue-20260901",
+    "plannedOrder": [
+      "with-skills-02",
+      "control-02",
+      "control-01",
+      "control-03",
+      "with-skills-03",
+      "with-skills-01"
+    ]
+  },
+  "runs": [
+    { "id": "with-skills-01", "cohort": "with-skills", "status": "not-started" },
+    { "id": "with-skills-02", "cohort": "with-skills", "status": "not-started" },
+    { "id": "with-skills-03", "cohort": "with-skills", "status": "not-started" },
+    { "id": "control-01", "cohort": "no-skills", "status": "not-started" },
+    { "id": "control-02", "cohort": "no-skills", "status": "not-started" },
+    { "id": "control-03", "cohort": "no-skills", "status": "not-started" }
+  ]
+}

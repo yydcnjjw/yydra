@@ -1,0 +1,10 @@
+[package]
+name = "__PRODUCT_ID__-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_domain"
+path = "src/lib.rs"

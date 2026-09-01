@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Reading Queue Testbed",
+    "slug": "reading-queue-testbed",
+    "version": "0.1.0",
+    "scheme": "reading-queue-testbed",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "ios": {
+      "bundleIdentifier": "dev.yydra.readingqueuetestbed",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "dev.yydra.readingqueuetestbed"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}

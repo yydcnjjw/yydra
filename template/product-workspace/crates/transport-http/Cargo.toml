@@ -1,0 +1,18 @@
+[package]
+name = "__PRODUCT_ID__-transport-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_transport_http"
+path = "src/lib.rs"
+
+[dependencies]
+axum.workspace = true
+product-application = { package = "__PRODUCT_ID__-application", path = "../application" }
+product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
+serde.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true

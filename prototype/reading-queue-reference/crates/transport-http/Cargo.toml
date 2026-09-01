@@ -1,0 +1,22 @@
+[package]
+name = "reading-queue-testbed-transport-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_transport_http"
+path = "src/lib.rs"
+
+[dependencies]
+axum.workspace = true
+product-application = { package = "reading-queue-testbed-application", path = "../application" }
+product-domain = { package = "reading-queue-testbed-domain", path = "../domain" }
+serde.workspace = true
+sqlx.workspace = true
+tracing.workspace = true
+tower-http.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+uuid.workspace = true

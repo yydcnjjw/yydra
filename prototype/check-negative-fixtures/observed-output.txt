@@ -1,0 +1,16 @@
+PASS origin.exact-distribution
+FAIL ownership.baseline-skills
+FAIL ownership.generated-boundaries
+PASS rust.format
+PASS rust.compile
+PASS rust.clippy
+PASS rust.test
+FAIL api.openapi-drift
+FAIL api.generated-client-drift
+PASS frontend.expo-dependencies
+PASS frontend.advisories
+PASS frontend.typecheck
+PASS frontend.test
+PASS h5.production-export
+not-run=database.running-service,h5.e2e,android.release,ios.simulator-release
+exit=non-zero

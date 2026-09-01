@@ -1,0 +1,138 @@
+profile=local-prototype
+workspace=/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i
+PASS origin.exact-distribution
+PASS ownership.baseline-skills
+PASS ownership.generated-boundaries
+PASS rust.format
+    Checking eval-product-domain v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/domain)
+    Checking eval-product-persistence-postgres v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/persistence-postgres)
+    Checking eval-product-application v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/application)
+    Checking eval-product-transport-http v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/transport-http)
+    Checking eval-product-server v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+PASS rust.compile
+    Checking eval-product-domain v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/domain)
+    Checking eval-product-persistence-postgres v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/persistence-postgres)
+    Checking eval-product-application v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/application)
+    Checking eval-product-transport-http v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/transport-http)
+    Checking eval-product-server v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.54s
+PASS rust.clippy
+   Compiling eval-product-domain v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/domain)
+   Compiling eval-product-persistence-postgres v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/persistence-postgres)
+   Compiling eval-product-application v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/application)
+   Compiling eval-product-transport-http v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/transport-http)
+   Compiling eval-product-server v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.27s
+     Running unittests src/lib.rs (target/debug/deps/product_application-87a9e85dc1559c85)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_domain-acd74d930234d5e1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_persistence_postgres-d71b855e565f4f76)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/generate-openapi.rs (target/debug/deps/generate_openapi-d5eb57fc1bdd464b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/server-4b1eab140d388115)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_transport_http-374b83936ba59ae5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_application
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_persistence_postgres
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_transport_http
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS rust.test
+   Compiling eval-product-server v0.1.0 (/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/crates/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running `target/debug/generate-openapi /home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/contracts/.openapi-yydra-check-212442.json`
+PASS api.openapi-drift
+npm notice run eval-product-frontend@0.1.0 generate:api
+npm notice run orval --config orval.config.ts
+🍻 orval v8.27.0 - A swagger client generator for typescript
+publicApi Cleaning output folder
+🎉 publicApi - Your OpenAPI spec has been converted into ready to use orval!
+PASS api.generated-client-drift
+npm notice run eval-product-frontend@0.1.0 npx
+npm notice run 'expo' install --check
+Dependencies are up to date
+PASS frontend.expo-dependencies
+found 0 vulnerabilities
+PASS frontend.advisories
+npm notice run eval-product-frontend@0.1.0 typecheck
+npm notice run tsc --noEmit
+PASS frontend.typecheck
+npm notice run eval-product-frontend@0.1.0 test
+npm notice run vitest run
+
+ RUN  v4.1.11 /home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype-runs/final-blank-i/frontend
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  13:21:43
+   Duration  211ms (transform 30ms, setup 0ms, import 70ms, tests 3ms, environment 0ms)
+
+PASS frontend.test
+npm notice run eval-product-frontend@0.1.0 export:web
+npm notice run expo export --platform web
+Starting Metro Bundler
+
+Static rendering is enabled. Learn more: https://docs.expo.dev/router/web/static-rendering/
+λ Bundled 1077ms ../../final-blank-c/frontend/node_modules/expo/node_modules/@expo/cli/node_modules/@expo/router-server/node/render.js (860 modules)
+Web Bundled 1335ms ../../final-blank-c/frontend/node_modules/expo-router/entry.js (819 modules)
+
+› web bundles (1):
+_expo/static/js/web/entry-03e27caf25430f97050bf734ea43b930.js (1.2MB)
+
+› Static routes (3):
+/ (index) (18KB)
+/_sitemap (17KB)
+/+not-found (17KB)
+
+Exported: dist
+PASS h5.production-export
+not-run=database.running-service,h5.e2e,android.release,ios.simulator-release
+status=pass-local-applicable

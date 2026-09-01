@@ -1,0 +1,130 @@
+profile=local-prototype
+workspace=/home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype/reading-queue-reference
+PASS origin.exact-distribution
+PASS ownership.baseline-skills
+PASS ownership.generated-boundaries
+PASS rust.format
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+PASS rust.compile
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+PASS rust.clippy
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (target/debug/deps/product_application-07141d10dd61e403)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_domain-270b5e10d130e978)
+
+running 1 test
+test tests::only_legal_transitions_change_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_persistence_postgres-c6a5a48491b45fba)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/generate-openapi.rs (target/debug/deps/generate_openapi-3599452e7b8a428b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/migrate.rs (target/debug/deps/migrate-1473a0ab9c13b6a2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/server-3ca8061305394499)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/product_transport_http-f17ad55b414b62cc)
+
+running 1 test
+test tests::router_builds_without_overlapping_routes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_application
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_persistence_postgres
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests product_transport_http
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PASS rust.test
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/generate-openapi /home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype/reading-queue-reference/contracts/.openapi-yydra-check-213468.json`
+PASS api.openapi-drift
+npm notice run reading-queue-testbed-frontend@0.1.0 generate:api
+npm notice run orval --config orval.config.ts
+🍻 orval v8.27.0 - A swagger client generator for typescript
+publicApi Cleaning output folder
+🎉 publicApi - Your OpenAPI spec has been converted into ready to use orval!
+PASS api.generated-client-drift
+npm notice run reading-queue-testbed-frontend@0.1.0 npx
+npm notice run 'expo' install --check
+Dependencies are up to date
+PASS frontend.expo-dependencies
+found 0 vulnerabilities
+PASS frontend.advisories
+npm notice run reading-queue-testbed-frontend@0.1.0 typecheck
+npm notice run tsc --noEmit
+PASS frontend.typecheck
+npm notice run reading-queue-testbed-frontend@0.1.0 test
+npm notice run vitest run
+
+ RUN  v4.1.11 /home/yydcnjjw/workspace/project/yydra-prototype-v0/prototype/reading-queue-reference/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+   Start at  13:21:52
+   Duration  319ms (transform 104ms, setup 0ms, import 279ms, tests 51ms, environment 0ms)
+
+PASS frontend.test
+npm notice run reading-queue-testbed-frontend@0.1.0 export:web
+npm notice run expo export --platform web
+Starting Metro Bundler
+
+Static rendering is enabled. Learn more: https://docs.expo.dev/router/web/static-rendering/
+λ Bundled 1040ms node_modules/expo/node_modules/@expo/cli/node_modules/@expo/router-server/node/render.js (979 modules)
+Web Bundled 1343ms node_modules/expo-router/entry.js (928 modules)
+
+› web bundles (1):
+_expo/static/js/web/entry-7495b3d878b713e04d89526b4edcad64.js (1.7MB)
+
+› Static routes (3):
+/ (index) (24KB)
+/_sitemap (20KB)
+/+not-found (20KB)
+
+Exported: dist
+PASS h5.production-export
+not-run=database.running-service,h5.e2e,android.release,ios.simulator-release
+status=pass-local-applicable

@@ -1,0 +1,15 @@
+[package]
+name = "reading-queue-testbed-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_domain"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true

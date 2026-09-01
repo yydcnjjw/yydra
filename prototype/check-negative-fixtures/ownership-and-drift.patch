@@ -1,0 +1,32 @@
+diff --git a/.agents/skills/yydra-diagnose/SKILL.md b/.agents/skills/yydra-diagnose/SKILL.md
+--- a/.agents/skills/yydra-diagnose/SKILL.md
++++ b/.agents/skills/yydra-diagnose/SKILL.md
+@@ -8,7 +8,7 @@ metadata:
+   yydra-distribution: "0.0.1-prototype"
+ ---
+
+-# Diagnose a Yydra Workspace
++# Locally edited diagnosis instructions
+
+ Preserve the failing evidence, identify the first owning boundary, and make only
+ the narrowest Product-owned repair.
+diff --git a/contracts/openapi.json b/contracts/openapi.json
+index 55a3bd8..9fa4a36 100644
+--- a/contracts/openapi.json
++++ b/contracts/openapi.json
+@@ -1,7 +1,7 @@
+ {
+   "openapi": "3.1.0",
+   "info": {
+-    "title": "Reading Queue Testbed Public API",
++    "title": "Drifted Reading Queue Public API",
+     "description": "",
+     "license": {
+       "name": "MIT OR Apache-2.0",
+diff --git a/frontend/src/generated/public-api/handwritten.ts b/frontend/src/generated/public-api/handwritten.ts
+new file mode 100644
+index 0000000..2c5657a
+--- /dev/null
++++ b/frontend/src/generated/public-api/handwritten.ts
+@@ -0,0 +1 @@
++export const forbiddenHandwrittenFile = true;

@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "_sqlx_migrations",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "checksum",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "_sqlx_migrations",
+            "name": "checksum"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3fb960633ec4d115a99c126ef1192c12afb5cc3476755fb00af66101faa75e3a"
+}

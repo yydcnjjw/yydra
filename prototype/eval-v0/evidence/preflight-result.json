@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "status": "campaign-invalid",
+  "reasons": [
+    "CLEAN_AGGREGATE_CHECK_INCOMPLETE",
+    "REFERENCE_AGGREGATE_CHECK_INCOMPLETE",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:database.running-service",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:h5.e2e",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:android.release",
+    "REFERENCE_REQUIRED_NODE_NOT_RUN:ios.simulator-release",
+    "GRADER_IOS_TOOLCHAIN_UNAVAILABLE",
+    "TASK_ACCEPTANCE_GRADER_UNAVAILABLE"
+  ],
+  "artifacts": {
+    "cliSha256": "661caab8ea7e080d8087296d8935ff20a90c5b618ae2ff6667bd52a51133e868",
+    "cleanCheckLogSha256": "a0aea33a468944ea70e5431abb4a977a80f64805f5b4df9458eca4921955eec4",
+    "referenceCheckLogSha256": "55337f458320300b9d40f41aaf6ffc853de3e9ca377e0ce940508b7ebda8dd96"
+  }
+}

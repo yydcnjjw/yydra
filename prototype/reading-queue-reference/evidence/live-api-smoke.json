@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "pass",
+  "apiBase": "http://127.0.0.1:4000",
+  "entryId": "01a05b5f-c610-7c80-9ebb-a34c02215d19",
+  "checks": [
+    "health-ready",
+    "create-queued",
+    "complete",
+    "repeat-complete-stable-problem",
+    "completed-filter",
+    "reopen",
+    "invalid-input-stable-problem",
+    "invalid-cursor-stable-problem",
+    "opaque-cursor-no-adjacent-duplicate",
+    "cors-preflight"
+  ],
+  "paginationEvidence": {
+    "pageOneId": "019d0000-0000-7000-8000-000000000002",
+    "pageTwoId": "019d0000-0000-7000-8000-000000000001"
+  }
+}

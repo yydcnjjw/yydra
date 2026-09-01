@@ -1,0 +1,6 @@
+exit=1
+Error: staged API generation failed; committed artifacts are unchanged
+npm run generate:api exited with 1
+committed-openapi=byte-identical
+committed-generated-client=byte-identical
+staging-leftovers=none

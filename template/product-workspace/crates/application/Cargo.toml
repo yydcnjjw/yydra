@@ -1,0 +1,14 @@
+[package]
+name = "__PRODUCT_ID__-application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_application"
+path = "src/lib.rs"
+
+[dependencies]
+product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
+product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }

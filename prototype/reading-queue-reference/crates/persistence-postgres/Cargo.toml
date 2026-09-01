@@ -1,0 +1,16 @@
+[package]
+name = "reading-queue-testbed-persistence-postgres"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "product_persistence_postgres"
+path = "src/lib.rs"
+
+[dependencies]
+product-domain = { package = "reading-queue-testbed-domain", path = "../domain" }
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

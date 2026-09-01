@@ -1,0 +1,8 @@
+/target/
+/prototype-runs/
+**/node_modules/
+**/.expo/
+**/dist/
+**/test-results/
+**/android/
+**/ios/
