@@ -1,0 +1,30 @@
+appId: dev.yydra.readingqueuetestbed
+name: Reading Queue iOS real-backend lifecycle
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Reading Queue"
+    timeout: 60000
+- assertVisible: "Nothing here yet."
+- tapOn: "Title"
+- inputText: "Issue 20 iOS runtime"
+- tapOn: "Source URL"
+- inputText: "https://example.com/issue-20-ios-runtime"
+- hideKeyboard
+- tapOn:
+    text: "Add to queue"
+    enabled: true
+- scrollUntilVisible:
+    element: "Complete Issue 20 iOS runtime"
+    direction: DOWN
+    timeout: 30000
+- tapOn: "Complete Issue 20 iOS runtime"
+- extendedWaitUntil:
+    visible: "Completed"
+    timeout: 30000
+- tapOn: "Reopen Issue 20 iOS runtime"
+- extendedWaitUntil:
+    visible: "Queued"
+    timeout: 30000
+- takeScreenshot: reading-queue-reopened

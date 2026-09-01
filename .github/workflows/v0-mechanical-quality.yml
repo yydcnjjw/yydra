@@ -2,6 +2,9 @@ name: V0 Mechanical Quality Contract
 
 on:
   pull_request:
+  push:
+    branches:
+      - codex/prototype-yydra-v0-ios-validation
   workflow_dispatch:
 
 permissions:
@@ -111,17 +114,93 @@ jobs:
           echo "YYDRA_EVIDENCE=$RUNNER_TEMP/${{ matrix.workspace }}-macos" >>"$GITHUB_ENV"
       - name: Install exact frontend graph
         run: npm ci --ignore-scripts --prefix "$YYDRA_WORKSPACE/frontend"
+      - name: Capture repeated clean iOS CNG evidence
+        if: matrix.workspace == 'reference'
+        run: |
+          prototype/ios-validation/capture-ios-cng.sh \
+            "$YYDRA_WORKSPACE" "$RUNNER_TEMP/reference-ios-cng"
       - name: Execute macOS host shard
         run: |
           "$RUNNER_TEMP/yydra" check "$YYDRA_WORKSPACE" \
             --profile macos-ci \
             --evidence-dir "$YYDRA_EVIDENCE"
+      - name: Attach macOS and CNG identities
+        if: always()
+        run: |
+          if [[ -d "$YYDRA_EVIDENCE" ]]; then
+            prototype/ios-validation/record-macos-environment.sh \
+              "$YYDRA_WORKSPACE" "$YYDRA_EVIDENCE/issue20/environment"
+            if [[ "${{ matrix.workspace }}" == reference && -d "$RUNNER_TEMP/reference-ios-cng" ]]; then
+              mkdir -p "$YYDRA_EVIDENCE/issue20"
+              cp -R "$RUNNER_TEMP/reference-ios-cng" "$YYDRA_EVIDENCE/issue20/cng"
+            fi
+          fi
       - name: Upload macOS evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: quality-${{ matrix.workspace }}-macos
           path: ${{ env.YYDRA_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-runtime:
+    name: iOS simulator runtime - reference
+    needs: [macos-shard]
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Select and verify pinned Apple toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+          test "$(pod --version)" = 1.17.0
+      - name: Install exact PostgreSQL
+        run: |
+          brew install postgresql@18
+          test "$("$(brew --prefix postgresql@18)/bin/postgres" --version)" = \
+            'postgres (PostgreSQL) 18.6'
+      - name: Install exact Maestro CLI
+        run: |
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/maestro.zip" \
+            https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.7.0/maestro.zip
+          echo 'a4ccab6b604617e7aef6db4f885666056eabe5cfa32befaa3bc994041b8fcbb5  '"$RUNNER_TEMP/maestro.zip" \
+            | shasum -a 256 --check
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+          echo "$RUNNER_TEMP/maestro/maestro/bin" >>"$GITHUB_PATH"
+      - name: Install exact frontend graph
+        run: npm ci --ignore-scripts --prefix prototype/reading-queue-reference/frontend
+      - name: Download macOS build evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-reference-macos
+          path: ${{ runner.temp }}/reference-macos
+      - name: Exercise Reading Queue on a fresh iOS simulator
+        run: |
+          archive=$(find "$RUNNER_TEMP/reference-macos" -type f -name '*.app.zip' -print -quit)
+          test -n "$archive"
+          mkdir -p "$RUNNER_TEMP/runtime-application"
+          ditto -x -k "$archive" "$RUNNER_TEMP/runtime-application"
+          application=$(find "$RUNNER_TEMP/runtime-application" -type d -name '*.app' -print -quit)
+          test -n "$application"
+          prototype/ios-validation/run-ios-runtime.sh \
+            prototype/reading-queue-reference \
+            "$application" \
+            "$RUNNER_TEMP/ios-runtime-reference"
+      - name: Upload iOS runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-runtime-reference
+          path: ${{ runner.temp }}/ios-runtime-reference
           if-no-files-found: error
           retention-days: 14
 

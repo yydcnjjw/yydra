@@ -987,8 +987,18 @@ fn build_android_release(context: &mut NodeContext<'_>) -> Result<()> {
 fn build_ios_simulator_release(context: &mut NodeContext<'_>) -> Result<()> {
     let frontend = context.root.join("frontend");
     let native = frontend.join("ios");
+    let scratch = context.root.join(format!(
+        ".yydra-check/ios.simulator-release-{}",
+        std::process::id()
+    ));
     if native.exists() {
         bail!("generated iOS host already exists; remove it before read-only check execution");
+    }
+    if scratch.exists() {
+        bail!(
+            "iOS build scratch directory already exists: '{}'",
+            scratch.display()
+        );
     }
     let execution = (|| {
         context.command(
@@ -1013,10 +1023,8 @@ fn build_ios_simulator_release(context: &mut NodeContext<'_>) -> Result<()> {
             .and_then(|value| value.to_str())
             .context("generated iOS workspace name is not UTF-8")?
             .to_owned();
-        let derived = context
-            .evidence_root
-            .join("artifacts/ios.simulator-release/derived-data");
-        fs::create_dir_all(derived.parent().expect("iOS artifact has parent"))?;
+        let derived = scratch.join("derived-data");
+        fs::create_dir_all(&scratch)?;
         let workspace_arg = workspace.to_string_lossy().into_owned();
         let derived_arg = derived.to_string_lossy().into_owned();
         context.command(
@@ -1039,11 +1047,47 @@ fn build_ios_simulator_release(context: &mut NodeContext<'_>) -> Result<()> {
             &[("CI", "1")],
         )?;
         let application = find_extension(&derived, "app")?;
-        context.output(&application)
+        let application_name = application
+            .file_name()
+            .context("built iOS application has no file name")?;
+        let output = context
+            .evidence_root
+            .join("artifacts/ios.simulator-release")
+            .join(application_name);
+        fs::create_dir_all(output.parent().expect("iOS artifact has parent"))?;
+        let application_arg = application.to_string_lossy().into_owned();
+        let output_arg = output.to_string_lossy().into_owned();
+        context.command(
+            &native,
+            "ditto",
+            &[&application_arg, &output_arg],
+            &[("CI", "1")],
+        )?;
+        context.output(&output)?;
+        let archive = output.with_extension("app.zip");
+        let archive_arg = archive.to_string_lossy().into_owned();
+        context.command(
+            &native,
+            "ditto",
+            &[
+                "-c",
+                "-k",
+                "--sequesterRsrc",
+                "--keepParent",
+                &output_arg,
+                &archive_arg,
+            ],
+            &[("CI", "1")],
+        )?;
+        context.output(&archive)
     })();
     if native.exists() {
         fs::remove_dir_all(&native)
             .with_context(|| format!("remove generated iOS host '{}'", native.display()))?;
+    }
+    if scratch.exists() {
+        fs::remove_dir_all(&scratch)
+            .with_context(|| format!("remove iOS build scratch '{}'", scratch.display()))?;
     }
     execution
 }

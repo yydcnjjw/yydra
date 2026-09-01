@@ -20,7 +20,12 @@
     ],
     "ios": {
       "bundleIdentifier": "dev.yydra.readingqueuetestbed",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "dev.yydra.readingqueuetestbed"
