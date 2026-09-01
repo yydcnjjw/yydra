@@ -68,6 +68,7 @@ jobs:
           name: quality-${{ matrix.workspace }}-linux
           path: ${{ env.YYDRA_EVIDENCE }}
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
 
   macos-shard:
@@ -138,6 +139,7 @@ jobs:
           name: quality-${{ matrix.workspace }}-macos
           path: ${{ env.YYDRA_EVIDENCE }}
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
 
   ios-runtime:
@@ -207,6 +209,7 @@ jobs:
           name: ios-runtime-reference
           path: ${{ runner.temp }}/ios-runtime-reference
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
 
   aggregate:
@@ -258,4 +261,5 @@ jobs:
           name: quality-${{ matrix.workspace }}-aggregate
           path: ${{ runner.temp }}/${{ matrix.workspace }}-aggregate
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14

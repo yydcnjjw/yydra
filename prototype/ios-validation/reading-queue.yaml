@@ -11,7 +11,8 @@ name: Reading Queue iOS real-backend lifecycle
 - inputText: "Issue 20 iOS runtime"
 - tapOn: "Source URL"
 - inputText: "https://example.com/issue-20-ios-runtime"
-- hideKeyboard
+- tapOn: "Reading Queue"
+- waitForAnimationToEnd
 - tapOn:
     text: "Add to queue"
     enabled: true
