@@ -39,7 +39,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 21.0.8
-          cache: gradle
       - name: Build the exact prototype Distribution
         run: |
           cargo build --release --locked --bin yydra
