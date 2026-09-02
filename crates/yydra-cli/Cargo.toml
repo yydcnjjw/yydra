@@ -1,0 +1,35 @@
+[package]
+name = "yydra-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Exact-version CLI for the Yydra application framework"
+repository = "https://github.com/yydcnjjw/yydra"
+readme = "README.md"
+include = [
+  "src/**",
+  "tests/**",
+  "template/product-workspace/README.md",
+  "template/product-workspace/.gitignore",
+  "template/product-workspace/.yydra/origin.toml",
+  "README.md",
+]
+
+[[bin]]
+name = "yydra"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+hex.workspace = true
+include_dir.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
