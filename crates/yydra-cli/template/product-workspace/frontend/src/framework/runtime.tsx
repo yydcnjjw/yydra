@@ -3,6 +3,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
 
+import {
+  createPublicApiClient,
+  FrameworkContractProfile,
+  FrameworkFailure,
+  isTransportFailure,
+} from "./api/client";
+
+export { isTransportFailure } from "./api/client";
+
 export interface HealthStatus {
   status: string;
   database: string;
@@ -10,12 +19,10 @@ export interface HealthStatus {
 
 export interface FrameworkClient {
   health(signal?: AbortSignal): Promise<HealthStatus>;
+  frameworkContractProfile(
+    signal?: AbortSignal,
+  ): Promise<FrameworkContractProfile>;
 }
-
-type FrameworkFailure = {
-  kind: "transport" | "contractViolation";
-  message: string;
-};
 
 const FrameworkClientContext = createContext<FrameworkClient | null>(null);
 
@@ -59,12 +66,22 @@ export function createFrameworkClient(
   fetchImplementation: typeof fetch,
   baseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:4000",
 ): FrameworkClient {
+  const publicApi = createPublicApiClient({ baseUrl, fetchImplementation });
   return {
+    frameworkContractProfile(signal) {
+      return publicApi.frameworkContractProfile({ signal });
+    },
     async health(signal) {
       let response: Response;
       try {
         response = await fetchImplementation(`${baseUrl}/health`, { signal });
       } catch (cause) {
+        if (signal?.aborted) {
+          throw {
+            kind: "cancelled",
+            message: "health request was cancelled by its caller",
+          } satisfies FrameworkFailure;
+        }
         throw {
           kind: "transport",
           message:
@@ -97,14 +114,5 @@ function isHealthStatus(value: unknown): value is HealthStatus {
     typeof value.status === "string" &&
     "database" in value &&
     typeof value.database === "string"
-  );
-}
-
-export function isTransportFailure(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "kind" in error &&
-    error.kind === "transport"
   );
 }

@@ -118,6 +118,20 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "advisory, provenance, or artifact license policy",
     },
     NodeSpec {
+        id: "api.generated-contract",
+        prerequisites: &["rust.compile", "frontend.lock"],
+        remediation: "run `yydra generate api`, review every contract and Generated Client change, and commit the complete atomic output set",
+        proves: "Rust route collection reproduces the normalized OpenAPI, Orval Fetch/TypeScript/Zod outputs, wire profile, and generation record without modifying the Workspace",
+        does_not_prove: "that the running service returns every documented response or that Product Domain behavior is correct",
+    },
+    NodeSpec {
+        id: "api.runtime-conformance",
+        prerequisites: &["api.generated-contract"],
+        remediation: "align the public-route handler status, content type, headers, and response body with the committed Public API Contract",
+        proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject undocumented status, content type, and malformed bodies",
+        does_not_prove: "exhaustive generated-input coverage, authentication policy, or database-backed Product Domain behavior",
+    },
+    NodeSpec {
         id: "frontend.format",
         prerequisites: &["frontend.lock"],
         remediation: "run the pinned frontend formatter, review the diff, and rerun yydra check",
@@ -144,6 +158,13 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "restore non-empty canonical Vitest coverage and fix the reported failure",
         proves: "the canonical frontend test runner discovered tests and all selected tests passed",
         does_not_prove: "production H5 behavior against the real service",
+    },
+    NodeSpec {
+        id: "api.client-contract",
+        prerequisites: &["api.generated-contract", "frontend.typecheck"],
+        remediation: "restore the generated runtime schemas and fix the handwritten Framework facade without importing Generated Client internals from Product code",
+        proves: "the handwritten facade injects transport concerns and classifies declared Problems, transport, caller cancellation, timeout, and malformed or undocumented responses",
+        does_not_prove: "browser or native runtime behavior against a deployed service",
     },
     NodeSpec {
         id: "infrastructure.docker",
@@ -913,10 +934,13 @@ fn execute_node(
             "RUST_DOCTEST_FAILED",
         ),
         "frontend.lock" => check_frontend_lock(&mut context),
+        "api.generated-contract" => check_api_generated_contract(&mut context),
+        "api.runtime-conformance" => check_api_runtime_conformance(&mut context),
         "frontend.format" => check_frontend_format(&mut context),
         "frontend.lint" => check_frontend_lint(&mut context),
         "frontend.typecheck" => check_frontend_typecheck(&mut context),
         "frontend.test" => check_frontend_tests(&mut context),
+        "api.client-contract" => check_api_client_contract(&mut context),
         "infrastructure.docker" => check_docker(&mut context),
         "infrastructure.playwright-chromium" => context.infrastructure_command(
             &root.join("frontend"),
@@ -1707,6 +1731,7 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
         ("@playwright/test", "1.62.1"),
         ("@eslint/js", "10.0.1"),
         ("eslint", "10.9.1"),
+        ("orval", "8.27.0"),
         ("prettier", "3.9.6"),
         ("typescript", "6.0.3"),
         ("typescript-eslint", "8.69.0"),
@@ -1722,6 +1747,307 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
         )?;
     }
     Ok(())
+}
+
+fn check_api_generated_contract(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    let executable = std::env::current_exe().map_err(|error| {
+        NodeFailure::infrastructure("API_CHECK_EXECUTABLE_UNAVAILABLE", error.to_string())
+    })?;
+    let executable = executable.to_str().ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "API_CHECK_EXECUTABLE_UNAVAILABLE",
+            "the exact yydra executable path is not valid UTF-8",
+        )
+    })?;
+    let output = context.capture(
+        context.root,
+        executable,
+        &["generate", "api", ".", "--check"],
+        &[],
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let code = [
+        "API_BREAKING_CHANGE_UNACKNOWLEDGED",
+        "API_GENERATED_DRIFT",
+        "API_CLIENT_DRIFT",
+        "API_GENERATION_RECORD_DRIFT",
+        "API_OPENAPI_PROFILE_INVALID",
+        "API_OPENAPI_OPERATION_ID_INVALID",
+        "API_OPENAPI_CONTENT_TYPE_INVALID",
+        "API_OPENAPI_FIELD_NAME_INVALID",
+        "API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID",
+        "API_OPENAPI_REQUIREDNESS_INVALID",
+        "API_OPENAPI_DECIMAL_INVALID",
+        "API_OPENAPI_TIMESTAMP_INVALID",
+        "API_OPENAPI_SAFE_INTEGER_INVALID",
+        "API_OPENAPI_WIRE_TYPE_INVALID",
+        "API_OPENAPI_NULLABILITY_INVALID",
+        "API_OPENAPI_SHAPE_REUSE_INVALID",
+        "API_CLIENT_STAGE_INVALID",
+        "API_CLIENT_TYPECHECK_FAILED",
+        "API_CLIENT_GENERATION_FAILED",
+        "API_CLIENT_TOOL_VERSION_INVALID",
+        "API_OPENAPI_EXPORT_FAILED",
+        "API_GENERATION_BASELINE_INVALID",
+        "API_GENERATION_LOCK_INVALID",
+        "API_GENERATION_BUSY",
+        "API_GENERATION_RECOVERY_REQUIRED",
+        "API_GENERATION_RECOVERY_FAILED",
+    ]
+    .into_iter()
+    .find(|code| detail.contains(code))
+    .unwrap_or("API_GENERATED_CONTRACT_FAILED");
+    Err(NodeFailure::fail(
+        code,
+        "isolated `yydra generate api --check` rejected the committed authority chain",
+    ))
+}
+
+fn check_api_runtime_conformance(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    context.command(
+        context.root,
+        "cargo",
+        &[
+            "test",
+            "--locked",
+            "--test",
+            "public_api_contract",
+            "--",
+            "--nocapture",
+        ],
+        &[],
+        "API_RUNTIME_CONFORMANCE_FAILED",
+    )
+}
+
+fn check_api_client_contract(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    check_generated_client_import_boundary(context.root)?;
+    context.command(
+        &context.root.join("frontend"),
+        npm_program(),
+        &[
+            "exec",
+            "--offline",
+            "--",
+            "vitest",
+            "run",
+            "src/framework/api/client.test.ts",
+            "--passWithNoTests=false",
+        ],
+        &[],
+        "API_CLIENT_CONTRACT_FAILED",
+    )
+}
+
+fn check_generated_client_import_boundary(root: &Path) -> std::result::Result<(), NodeFailure> {
+    let frontend = root.join("frontend");
+    let mut pending = vec![frontend.join("app"), frontend.join("src")];
+    while let Some(path) = pending.pop() {
+        let relative = path.strip_prefix(&frontend).map_err(|error| {
+            NodeFailure::infrastructure("API_CLIENT_IMPORT_SCAN_FAILED", error.to_string())
+        })?;
+        if relative.starts_with("src/generated/public-api")
+            || relative.starts_with("src/framework/api")
+        {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            NodeFailure::fail(
+                "API_CLIENT_IMPORT_SCAN_FAILED",
+                format!("inspect '{}': {error}", path.display()),
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(NodeFailure::fail(
+                "API_CLIENT_IMPORT_BOUNDARY_VIOLATION",
+                format!(
+                    "handwritten frontend path '{}' is a symlink",
+                    path.display()
+                ),
+            ));
+        }
+        if metadata.is_dir() {
+            let mut entries = fs::read_dir(&path)
+                .map_err(|error| {
+                    NodeFailure::fail(
+                        "API_CLIENT_IMPORT_SCAN_FAILED",
+                        format!("read '{}': {error}", path.display()),
+                    )
+                })?
+                .collect::<std::io::Result<Vec<_>>>()
+                .map_err(|error| {
+                    NodeFailure::fail("API_CLIENT_IMPORT_SCAN_FAILED", error.to_string())
+                })?;
+            entries.sort_by_key(fs::DirEntry::file_name);
+            pending.extend(entries.into_iter().rev().map(|entry| entry.path()));
+            continue;
+        }
+        if !metadata.is_file()
+            || !matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts")
+            )
+        {
+            continue;
+        }
+        let source = fs::read_to_string(&path).map_err(|error| {
+            NodeFailure::fail(
+                "API_CLIENT_IMPORT_SCAN_FAILED",
+                format!("read '{}': {error}", path.display()),
+            )
+        })?;
+        if imports_generated_public_api(&source).map_err(|error| {
+            NodeFailure::fail(
+                "API_CLIENT_IMPORT_SCAN_FAILED",
+                format!("parse module imports in '{}': {error}", path.display()),
+            )
+        })? {
+            return Err(NodeFailure::fail(
+                "API_CLIENT_IMPORT_BOUNDARY_VIOLATION",
+                format!(
+                    "Product code '{}' imports the Generated Client directly; import the handwritten Framework facade instead",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum JavaScriptToken {
+    Identifier(String),
+    String(String),
+    Punctuation(char),
+}
+
+fn imports_generated_public_api(source: &str) -> std::result::Result<bool, &'static str> {
+    let tokens = javascript_tokens(source)?;
+    for (index, token) in tokens.iter().enumerate() {
+        let JavaScriptToken::String(specifier) = token else {
+            continue;
+        };
+        if !specifier.contains("generated/public-api") {
+            continue;
+        }
+        let previous = index.checked_sub(1).and_then(|index| tokens.get(index));
+        let before_previous = index.checked_sub(2).and_then(|index| tokens.get(index));
+        let direct_module_load = matches!(
+            (before_previous, previous),
+            (
+                Some(JavaScriptToken::Identifier(keyword)),
+                Some(JavaScriptToken::Punctuation('('))
+            ) if keyword == "import" || keyword == "require"
+        );
+        let bare_import = matches!(
+            previous,
+            Some(JavaScriptToken::Identifier(keyword)) if keyword == "import"
+        );
+        let from_clause = matches!(
+            previous,
+            Some(JavaScriptToken::Identifier(keyword)) if keyword == "from"
+        ) && tokens[..index.saturating_sub(1)]
+            .iter()
+            .rev()
+            .take_while(|token| !matches!(token, JavaScriptToken::Punctuation(';')))
+            .any(|token| {
+                matches!(
+                    token,
+                    JavaScriptToken::Identifier(keyword)
+                        if keyword == "import" || keyword == "export"
+                )
+            });
+        if direct_module_load || bare_import || from_clause {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn javascript_tokens(source: &str) -> std::result::Result<Vec<JavaScriptToken>, &'static str> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            byte if byte.is_ascii_whitespace() => index += 1,
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                if index + 1 == bytes.len() {
+                    return Err("unterminated block comment");
+                }
+                index += 2;
+            }
+            quote @ (b'\'' | b'"' | b'`') => {
+                index += 1;
+                let mut value = String::new();
+                let mut terminated = false;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        byte if byte == quote => {
+                            index += 1;
+                            terminated = true;
+                            break;
+                        }
+                        b'\\' => {
+                            let Some(escaped) = bytes.get(index + 1) else {
+                                return Err("unterminated string escape");
+                            };
+                            value.push(char::from(*escaped));
+                            index += 2;
+                        }
+                        byte => {
+                            value.push(char::from(byte));
+                            index += 1;
+                        }
+                    }
+                }
+                if !terminated {
+                    return Err("unterminated string literal");
+                }
+                tokens.push(JavaScriptToken::String(value));
+            }
+            byte if byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$') => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
+                {
+                    index += 1;
+                }
+                tokens.push(JavaScriptToken::Identifier(source[start..index].to_owned()));
+            }
+            byte if byte.is_ascii() => {
+                tokens.push(JavaScriptToken::Punctuation(char::from(byte)));
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(tokens)
 }
 
 fn check_docker(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
@@ -1766,6 +2092,7 @@ fn validate_frontend_tool_authority(
         ("devDependencies", "@playwright/test", "1.62.1"),
         ("devDependencies", "@eslint/js", "10.0.1"),
         ("devDependencies", "eslint", "10.9.1"),
+        ("devDependencies", "orval", "8.27.0"),
         ("devDependencies", "prettier", "3.9.6"),
         ("devDependencies", "typescript", "6.0.3"),
         ("devDependencies", "typescript-eslint", "8.69.0"),
@@ -1846,6 +2173,7 @@ const FRONTEND_SOURCES: &[&str] = &[
     "scripts",
     "app.json",
     "eslint.config.mjs",
+    "orval.config.mjs",
     "package.json",
     "playwright.config.mts",
     "tsconfig.json",
@@ -1858,6 +2186,7 @@ const FRONTEND_LINT_SOURCES: &[&str] = &[
     "src",
     "scripts",
     "eslint.config.mjs",
+    "orval.config.mjs",
     "playwright.config.mts",
     "vitest.config.mts",
 ];
@@ -2961,6 +3290,7 @@ fn required_tool_versions() -> BTreeMap<String, String> {
         ("@playwright/test", "1.62.1"),
         ("@eslint/js", "10.0.1"),
         ("eslint", "10.9.1"),
+        ("orval", "8.27.0"),
         ("prettier", "3.9.6"),
         ("typescript", "6.0.3"),
         ("typescript-eslint", "8.69.0"),
@@ -3170,5 +3500,26 @@ mod tests {
             b"benches::throughput: benchmark\n"
         ));
         assert!(has_discovered_rust_tests(b"tests::transition: test\n"));
+    }
+
+    #[test]
+    fn generated_client_boundary_recognizes_multiline_and_dynamic_module_loads() {
+        for source in [
+            "import {\n  profile,\n} from '../generated/public-api/fetch/client';",
+            "export type { Profile }\nfrom '../generated/public-api/fetch/schemas';",
+            "const client = import(\n  '../generated/public-api/fetch/client'\n);",
+            "const client = require(\n  '../generated/public-api/fetch/client'\n);",
+        ] {
+            assert!(
+                imports_generated_public_api(source).expect("scan valid fixture"),
+                "fixture was missed: {source}"
+            );
+        }
+        assert!(
+            !imports_generated_public_api(
+                "// import '../generated/public-api/fetch/client'\nconst note = \"generated/public-api\";"
+            )
+            .expect("scan comment/string fixture")
+        );
     }
 }
