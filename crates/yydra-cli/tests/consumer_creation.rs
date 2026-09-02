@@ -1108,12 +1108,24 @@ await new Promise((resolve) => worker.once('exit', resolve));
 "#,
     )
     .expect("write fake npm CLI");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake npm directory");
+    write_executable(
+        &fake_bin.join("npm"),
+        "#!/bin/sh\nexec node \"$YYDRA_FAKE_NPM_CLI\"\n",
+    );
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let fake_path = std::env::join_paths(
+        std::iter::once(fake_bin.clone()).chain(std::env::split_paths(&inherited_path)),
+    )
+    .expect("compose fake npm PATH");
     let child_pid = sandbox.path().join("runner-child.pid");
     let worker_pid = sandbox.path().join("runner-worker.pid");
     let child = Command::new("node")
         .arg("scripts/run-h5-e2e.mjs")
         .current_dir(workspace.join("frontend"))
-        .env("npm_execpath", fake_npm_cli)
+        .env("PATH", fake_path)
+        .env("YYDRA_FAKE_NPM_CLI", fake_npm_cli)
         .env("YYDRA_RUNNER_CHILD_PID", &child_pid)
         .env("YYDRA_RUNNER_WORKER_PID", &worker_pid)
         .stdout(Stdio::piped())

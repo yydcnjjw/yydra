@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createContext, PropsWithChildren, useContext, useState } from 'react';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createContext, PropsWithChildren, useContext, useState } from "react";
 
 export interface HealthStatus {
   status: string;
@@ -13,7 +13,7 @@ export interface FrameworkClient {
 }
 
 type FrameworkFailure = {
-  kind: 'transport' | 'contractViolation';
+  kind: "transport" | "contractViolation";
   message: string;
 };
 
@@ -50,14 +50,14 @@ export function FrameworkRuntime({
 export function useFrameworkClient(): FrameworkClient {
   const client = useContext(FrameworkClientContext);
   if (client === null) {
-    throw new Error('useFrameworkClient requires FrameworkRuntime');
+    throw new Error("useFrameworkClient requires FrameworkRuntime");
   }
   return client;
 }
 
 export function createFrameworkClient(
   fetchImplementation: typeof fetch,
-  baseUrl = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:4000',
+  baseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:4000",
 ): FrameworkClient {
   return {
     async health(signal) {
@@ -66,21 +66,22 @@ export function createFrameworkClient(
         response = await fetchImplementation(`${baseUrl}/health`, { signal });
       } catch (cause) {
         throw {
-          kind: 'transport',
-          message: cause instanceof Error ? cause.message : 'health request failed',
+          kind: "transport",
+          message:
+            cause instanceof Error ? cause.message : "health request failed",
         } satisfies FrameworkFailure;
       }
       if (!response.ok) {
         throw {
-          kind: 'transport',
+          kind: "transport",
           message: `health request returned HTTP ${response.status}`,
         } satisfies FrameworkFailure;
       }
       const body: unknown = await response.json();
       if (!isHealthStatus(body)) {
         throw {
-          kind: 'contractViolation',
-          message: 'health response does not match the Framework contract',
+          kind: "contractViolation",
+          message: "health response does not match the Framework contract",
         } satisfies FrameworkFailure;
       }
       return body;
@@ -90,20 +91,20 @@ export function createFrameworkClient(
 
 function isHealthStatus(value: unknown): value is HealthStatus {
   return (
-    typeof value === 'object' &&
+    typeof value === "object" &&
     value !== null &&
-    'status' in value &&
-    typeof value.status === 'string' &&
-    'database' in value &&
-    typeof value.database === 'string'
+    "status" in value &&
+    typeof value.status === "string" &&
+    "database" in value &&
+    typeof value.database === "string"
   );
 }
 
 export function isTransportFailure(error: unknown): boolean {
   return (
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'kind' in error &&
-    error.kind === 'transport'
+    "kind" in error &&
+    error.kind === "transport"
   );
 }

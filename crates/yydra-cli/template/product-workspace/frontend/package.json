@@ -6,6 +6,8 @@
   "scripts": {
     "web": "expo start --web",
     "export:h5": "expo export --clear --platform web --output-dir dist",
+    "format:check": "prettier --check app e2e src scripts app.json eslint.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
+    "lint": "eslint --max-warnings=0 app e2e src scripts eslint.config.mjs playwright.config.mts vitest.config.mts",
     "test": "vitest run",
     "test:e2e": "node scripts/run-h5-e2e.mjs",
     "typecheck": "tsc --noEmit"
@@ -33,8 +35,12 @@
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/react": "19.2.4",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.9.1",
     "orval": "8.27.0",
+    "prettier": "3.9.6",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0",
     "vitest": "4.1.11"
   },
   "overrides": {

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useQuery } from '@tanstack/react-query';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useQuery } from "@tanstack/react-query";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { useFrameworkClient } from '@/framework/runtime';
+import { useFrameworkClient } from "@/framework/runtime";
 
 export default function IndexRoute() {
   const client = useFrameworkClient();
   const health = useQuery({
-    queryKey: ['workspace-health'],
+    queryKey: ["workspace-health"],
     queryFn: ({ signal }) => client.health(signal),
   });
 
@@ -21,7 +21,10 @@ export default function IndexRoute() {
       {health.isError ? (
         <View style={styles.status}>
           <Text accessibilityRole="alert">Product service unavailable.</Text>
-          <Pressable accessibilityRole="button" onPress={() => health.refetch()}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => health.refetch()}
+          >
             <Text>Retry</Text>
           </Pressable>
         </View>
@@ -39,17 +42,17 @@ export default function IndexRoute() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
     padding: 24,
   },
   title: {
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   status: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 8,
   },
 });

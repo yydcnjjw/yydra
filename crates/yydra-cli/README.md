@@ -34,12 +34,20 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
   yydra db migrate ./reader
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
   yydra dev ./reader
+yydra check ./reader
 ```
 
 `setup` consumes both committed locks. Migration creation (`yydra db migration
 add`) and application are explicit; the server only verifies that PostgreSQL
-matches its compiled history. Add `--message-format=json` before the subcommand
-for versioned JSON Lines diagnostics.
+matches its compiled history. `check` is read-only for Workspace inputs and
+runs the Distribution-owned core graph, including the real PostgreSQL/Axum/H5
+path. Its default evidence directory is a private, unique system-temporary
+directory outside the Product Workspace; an explicit `--evidence-dir` must
+also be outside the Workspace and have no symlink ancestor. Diagnostic
+`--node` selection is explicitly incomplete. A full result is scoped as
+`clean-core-local` and explicitly does not claim aggregate conformance. Add
+`--message-format=json` before the subcommand for versioned JSON Lines
+diagnostics.
 
 Creation does not establish a template rerun, synchronization, upgrade,
 compatibility-range, or Distribution-version override contract.

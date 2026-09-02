@@ -130,7 +130,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "__PRODUCT_ID__-application",
- "__PRODUCT_ID__-domain",
  "serde",
 ]
 

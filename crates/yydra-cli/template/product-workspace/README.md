@@ -38,6 +38,24 @@ database has exactly the compiled versions and checksums. After migration,
 `yydra dev .` visibly starts the migration, backend, and H5 frontend phases and
 terminates their process groups together on failure or shutdown.
 
+The supported quality entrypoint is read-only for authored, snapshot,
+committed-generated, lock, migration, and configuration inputs:
+
+```console
+yydra check .
+```
+
+It emits one result model as human output or versioned JSON Lines and writes a
+manifest plus raw node logs to a private, unique system-temporary directory
+outside this Workspace by default. An explicit `--evidence-dir` must also be
+outside the Workspace and have no symlink ancestor. A focused `--node
+<stable-id>` run is diagnostic and records `complete=false`; it is not a
+complete core-graph claim. A full #30 pass remains
+`scope=clean-core-local` with `aggregateConformance=false`; cross-fixture CI
+aggregation belongs to a later contract. Missing required infrastructure is
+reported separately from semantic failure, and a failed prerequisite skips
+only its dependent nodes.
+
 The focused production H5 acceptance command exports static web assets, serves
 them locally, and runs Playwright against the real service URL. Start the
 diagnostic-only server leaf in one terminal:
