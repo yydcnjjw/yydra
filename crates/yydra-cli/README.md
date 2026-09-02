@@ -33,6 +33,7 @@ yydra setup ./reader
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
   yydra db migrate ./reader
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
+YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=<at-least-32-byte-secret> \
   yydra dev ./reader
 yydra generate api ./reader
 yydra check ./reader
@@ -43,8 +44,8 @@ add`) and application are explicit; the server only verifies that PostgreSQL
 matches its compiled history. `check` is read-only for Workspace inputs and
 runs the Distribution-owned core graph, including Public API/Generated Client
 drift and the real PostgreSQL/Axum/H5 Reading Queue
-create/list/complete/reopen path with stable Problem and bounded authentication
-semantics. The
+create/list/complete/reopen/filter/keyset-pagination path with restorable URL
+state, stable cursor Problems, and bounded authentication semantics. The
 Product Domain rules remain pure Rust, while the concrete application use
 cases explicitly own SQLx transactions and database constraints remain the
 final defense. `generate api` is the only supported

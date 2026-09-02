@@ -3,14 +3,14 @@
   "sourceAuthority": "rust-utoipa-openapi-router",
   "normalizationSchemaVersion": 1,
   "generator": "orval@8.27.0",
-  "openapiSha256": "fa8e600897144a76fbfb2c925429322a4f463b666f3d6136f33f562e02f26c95",
-  "generatedClientSha256": "0b772d63639b2f2e4f07195b045d2393b0f8309f8a14e09f906963b341bf4f5f",
-  "previousOpenapiSha256": "bee11761664632709bf687b740f264e5ecaf6e497031d358a8f913bd598cba33",
-  "previousRecordSha256": "6af3a6b65193215f5983bc0866707c3ea096468b04d64bd9a6ec978de629dadf",
+  "openapiSha256": "2ed5a5f90803704589fe032f9b484972386949b95f56e23b5fe87eaa6e213fc0",
+  "generatedClientSha256": "56078e09b3dc4cba307211be33dccb0fd59e4a02eaa84fea51f3a07284047dc9",
+  "previousOpenapiSha256": "fa8e600897144a76fbfb2c925429322a4f463b666f3d6136f33f562e02f26c95",
+  "previousRecordSha256": "e3be0ba44ef3cf634b9997bc962d8ef09225c916f5d82393c5d10e569febe2b9",
   "breakingChanges": [
-    "changed type or constraint of schema ReadingQueueEntryState"
+    "made schema ReadingQueueResponse.nextCursor required"
   ],
   "acknowledgements": [
-    "issue-33-reading-entry-transitions"
+    "issue-34-reading-queue-pagination"
   ]
 }

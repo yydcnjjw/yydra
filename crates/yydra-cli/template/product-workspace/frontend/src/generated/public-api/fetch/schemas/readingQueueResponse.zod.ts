@@ -14,6 +14,7 @@ export const ReadingQueueResponse = zod.object({
       title: zod.string(),
     }),
   ),
+  nextCursor: zod.string().nullable(),
 });
 
 export type ReadingQueueResponse = zod.input<typeof ReadingQueueResponse>;

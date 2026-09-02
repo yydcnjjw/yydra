@@ -8,6 +8,7 @@ import { ReadingQueueEntryResponse } from "./readingQueueEntryResponse.zod";
 
 export const ReadingQueueResponse = zod.strictObject({
   entries: zod.array(ReadingQueueEntryResponse),
+  nextCursor: zod.string().nullable(),
 });
 
 export type ReadingQueueResponse = zod.input<typeof ReadingQueueResponse>;

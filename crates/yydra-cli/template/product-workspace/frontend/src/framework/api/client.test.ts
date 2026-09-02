@@ -63,6 +63,7 @@ describe("Framework Public API facade", () => {
         }
         return Response.json({
           entries: [{ ...validEntry, additiveFutureField: "accepted" }],
+          nextCursor: null,
           additivePageField: "accepted",
         });
       },
@@ -74,6 +75,7 @@ describe("Framework Public API facade", () => {
 
     await expect(client.listReadingQueueEntries()).resolves.toEqual({
       entries: [validEntry],
+      nextCursor: null,
     });
     await expect(
       client.createReadingQueueEntry({
@@ -87,6 +89,48 @@ describe("Framework Public API facade", () => {
     expect(String(fetchImplementation.mock.calls[1][0])).toBe(
       "https://service.test/api/v1/reading-queue/entries",
     );
+  });
+
+  it("validates and encodes query-specific Reading Queue pagination input", async () => {
+    const fetchImplementation = vi.fn<typeof globalThis.fetch>(
+      async (input) => {
+        const url = new URL(String(input));
+        expect(url.pathname).toBe("/api/v1/reading-queue/entries");
+        expect(Object.fromEntries(url.searchParams)).toEqual({
+          cursor: "v1.opaque.signed",
+          limit: "2",
+          sort: "newest",
+          status: "queued",
+        });
+        return Response.json({
+          entries: [validEntry],
+          nextCursor: null,
+          additivePageField: "accepted",
+        });
+      },
+    );
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation,
+    });
+
+    await expect(
+      client.listReadingQueueEntries({
+        status: "queued",
+        sort: "newest",
+        limit: 2,
+        cursor: "v1.opaque.signed",
+      }),
+    ).resolves.toEqual({ entries: [validEntry], nextCursor: null });
+    await expect(
+      client.listReadingQueueEntries({
+        status: "queued",
+        sort: "newest",
+        limit: 2,
+        unknown: true,
+      } as never),
+    ).rejects.toMatchObject({ kind: "contractViolation" });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
   });
 
   it("changes state through the generated operation and validates strict input before Fetch", async () => {
@@ -255,7 +299,10 @@ describe("Framework Public API facade", () => {
     const client = createPublicApiClient({
       baseUrl: "https://service.test",
       fetchImplementation: async () =>
-        Response.json({ entries: [{ ...validEntry, state: "invented" }] }),
+        Response.json({
+          entries: [{ ...validEntry, state: "invented" }],
+          nextCursor: null,
+        }),
     });
 
     await expect(client.listReadingQueueEntries()).rejects.toMatchObject({

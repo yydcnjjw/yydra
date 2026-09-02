@@ -846,6 +846,7 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
     let rust_workspace = sandbox.path().join("rust-zero-reader");
     create_workspace(&rust_workspace, "rust-zero-reader");
     for relative in [
+        "crates/application/src/lib.rs",
         "crates/domain/src/lib.rs",
         "crates/persistence-postgres/src/lib.rs",
     ] {

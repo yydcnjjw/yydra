@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  infiniteQueryOptions,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
 
 import {
@@ -11,6 +15,7 @@ import {
   FrameworkFailure,
   FrameworkProtectedContract,
   isTransportFailure,
+  ListReadingQueueEntriesParams,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 } from "./api/client";
@@ -30,7 +35,10 @@ export interface FrameworkClient {
   frameworkProtectedContract(
     signal?: AbortSignal,
   ): Promise<FrameworkProtectedContract>;
-  listReadingQueueEntries(signal?: AbortSignal): Promise<ReadingQueueResponse>;
+  listReadingQueueEntries(
+    input?: ListReadingQueueEntriesParams,
+    signal?: AbortSignal,
+  ): Promise<ReadingQueueResponse>;
   createReadingQueueEntry(
     input: CreateReadingEntryRequest,
     signal?: AbortSignal,
@@ -40,6 +48,35 @@ export interface FrameworkClient {
     input: ChangeReadingEntryStateRequest,
     signal?: AbortSignal,
   ): Promise<ReadingQueueEntryResponse>;
+}
+
+export type ReadingQueueStatusFilter = "all" | "queued" | "completed";
+export type ReadingQueueSort = "oldest" | "newest";
+
+export function readingQueueQueryKey(
+  status: ReadingQueueStatusFilter,
+  sort: ReadingQueueSort,
+  limit: number,
+) {
+  return ["reading-queue", { status, sort, limit }] as const;
+}
+
+export function readingQueueInfiniteQueryOptions(
+  client: FrameworkClient,
+  status: ReadingQueueStatusFilter,
+  sort: ReadingQueueSort,
+  limit: number,
+) {
+  return infiniteQueryOptions({
+    queryKey: readingQueueQueryKey(status, sort, limit),
+    queryFn: ({ pageParam, signal }) =>
+      client.listReadingQueueEntries(
+        { status, sort, limit, cursor: pageParam },
+        signal,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
 }
 
 const FrameworkClientContext = createContext<FrameworkClient | null>(null);
@@ -98,8 +135,8 @@ export function createFrameworkClient(
     frameworkProtectedContract(signal) {
       return publicApi.frameworkProtectedContract({ signal });
     },
-    listReadingQueueEntries(signal) {
-      return publicApi.listReadingQueueEntries({ signal });
+    listReadingQueueEntries(input, signal) {
+      return publicApi.listReadingQueueEntries(input, { signal });
     },
     createReadingQueueEntry(input, signal) {
       return publicApi.createReadingQueueEntry(input, { signal });
