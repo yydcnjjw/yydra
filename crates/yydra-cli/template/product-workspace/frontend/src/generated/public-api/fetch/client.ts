@@ -12,6 +12,7 @@ import {
 import type {
   ChangeReadingEntryStateRequest,
   CreateReadingEntryRequest,
+  ListReadingQueueEntriesParams,
   ProblemDetails,
 } from "./schemas";
 
@@ -135,6 +136,11 @@ export type listReadingQueueEntriesResponse200 = {
   status: 200;
 };
 
+export type listReadingQueueEntriesResponse400 = {
+  data: ProblemDetails;
+  status: 400;
+};
+
 export type listReadingQueueEntriesResponse500 = {
   data: ProblemDetails;
   status: 500;
@@ -144,23 +150,39 @@ export type listReadingQueueEntriesResponseSuccess =
   listReadingQueueEntriesResponse200 & {
     headers: Headers;
   };
-export type listReadingQueueEntriesResponseError =
-  listReadingQueueEntriesResponse500 & {
-    headers: Headers;
-  };
+export type listReadingQueueEntriesResponseError = (
+  listReadingQueueEntriesResponse400 | listReadingQueueEntriesResponse500
+) & {
+  headers: Headers;
+};
 
 export type listReadingQueueEntriesResponse =
   listReadingQueueEntriesResponseSuccess | listReadingQueueEntriesResponseError;
 
-export const getListReadingQueueEntriesUrl = () => {
-  return `/api/v1/reading-queue/entries`;
+export const getListReadingQueueEntriesUrl = (
+  params?: ListReadingQueueEntriesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/reading-queue/entries?${stringifiedParams}`
+    : `/api/v1/reading-queue/entries`;
 };
 
 export const listReadingQueueEntries = async (
+  params?: ListReadingQueueEntriesParams,
   options?: RequestInit,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<listReadingQueueEntriesResponse> => {
-  const res = await (fetchFn ?? fetch)(getListReadingQueueEntriesUrl(), {
+  const res = await (fetchFn ?? fetch)(getListReadingQueueEntriesUrl(params), {
     ...options,
     method: "GET",
   });

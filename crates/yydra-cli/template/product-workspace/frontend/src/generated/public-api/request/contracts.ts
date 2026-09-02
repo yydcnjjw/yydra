@@ -18,6 +18,17 @@ export const GetFrameworkProtectedContractResponse = FrameworkProtectedContract;
 
 export const GetFrameworkContractProfileResponse = FrameworkContractProfile;
 
+export const listReadingQueueEntriesQueryLimitMax = 50;
+
+export const listReadingQueueEntriesQueryCursorMax = 2048;
+
+export const ListReadingQueueEntriesQueryParams = zod.strictObject({
+  status: zod.enum(["all", "queued", "completed"]).optional(),
+  sort: zod.enum(["oldest", "newest"]).optional(),
+  limit: zod.int().min(1).max(listReadingQueueEntriesQueryLimitMax).optional(),
+  cursor: zod.string().max(listReadingQueueEntriesQueryCursorMax).optional(),
+});
+
 export const ListReadingQueueEntriesResponse = ReadingQueueResponse;
 
 export const CreateReadingQueueEntryBody = CreateReadingEntryRequest;

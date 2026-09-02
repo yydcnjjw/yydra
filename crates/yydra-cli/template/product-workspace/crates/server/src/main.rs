@@ -24,10 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("YYDRA_AUTH_CONTRACT_FORBIDDEN_TOKEN")
             .unwrap_or_else(|_| "local-framework-forbidden".to_owned()),
     )?;
+    let cursor_signing_key = env::var("YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY")?;
 
     let app = product_transport_http::router(
         HealthService::new(database.clone()),
-        ReadingQueueService::new(database),
+        ReadingQueueService::new(database, cursor_signing_key.as_bytes())?,
         authentication,
     )
     .layer(CorsLayer::permissive())

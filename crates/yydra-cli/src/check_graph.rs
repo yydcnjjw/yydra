@@ -128,7 +128,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         id: "api.runtime-conformance",
         prerequisites: &["api.generated-contract"],
         remediation: "align the public-route handler status, content type, headers, and response body with the committed Public API Contract",
-        proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject invalid JSON, unknown request fields, undocumented status or content type, malformed bodies, prohibited transitions, and incorrect 401/403 authentication meanings",
+        proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject invalid JSON, unknown request or query fields, malformed pagination responses, invalid cursors, undocumented status or content type, prohibited transitions, and incorrect 401/403 authentication meanings",
         does_not_prove: "exhaustive generated-input coverage, a full Identity system, or database-backed Product Domain behavior",
     },
     NodeSpec {
@@ -163,7 +163,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         id: "api.client-contract",
         prerequisites: &["api.generated-contract", "frontend.typecheck"],
         remediation: "restore the generated runtime schemas and fix the handwritten Framework facade without importing Generated Client internals from Product code",
-        proves: "the handwritten facade injects credentials and transport concerns, validates 401 challenges, and classifies typed Problems, transport, caller cancellation, timeout, and malformed or undocumented responses without parsing Problem prose for behavior",
+        proves: "the handwritten facade injects credentials and transport concerns, validates strict query-specific pagination input and nullable cursors, validates 401 challenges, and classifies typed Problems, transport, caller cancellation, timeout, and malformed or undocumented responses without parsing Problem prose for behavior",
         does_not_prove: "browser or native runtime behavior against a deployed service",
     },
     NodeSpec {
@@ -189,8 +189,8 @@ const NODE_SPECS: &[NodeSpec] = &[
             "infrastructure.playwright-chromium",
         ],
         remediation: "inspect the node log, run yydra db migrate and the focused production H5 test, then fix the first semantic failure",
-        proves: "the production H5 export creates, completes, reopens, and reloads a Reading Queue entry through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; stable request, transition, and authentication Problems plus the focused rollback fixture also pass",
-        does_not_prove: "Reading Queue pagination, a full Identity system, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
+        proves: "the production H5 export creates, completes, reopens, filters, paginates, refreshes from page one, and restores URL state through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; stable request, cursor, transition, and authentication Problems plus focused rollback and keyset-order fixtures also pass",
+        does_not_prove: "cross-request snapshot consistency, universal totals or pagination, a full Identity system, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
     },
     NodeSpec {
         id: INPUTS_UNCHANGED_NODE,
@@ -2522,11 +2522,99 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
     body: { type: "https://yydra.dev/problems/invalid-reading-entry" },
     status: 422,
   });
+  const pagination = await page.evaluate(async (baseUrl) => {
+    for (let index = 1; index <= 11; index += 1) {
+      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: `Paging entry ${String(index).padStart(2, "0")}`,
+          sourceUrl: `https://example.test/paging-${index}`,
+        }),
+      });
+      if (response.status !== 201) throw new Error(`fixture create returned ${response.status}`);
+    }
+    const requestPage = async (status, sort, limit, cursor) => {
+      const query = new URLSearchParams({ status, sort, limit: String(limit) });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries?${query}`);
+      return { body: await response.json(), status: response.status };
+    };
+    const first = await requestPage("queued", "oldest", 3);
+    const firstCursor = first.body.nextCursor;
+    const second = await requestPage("queued", "oldest", 3, firstCursor);
+    const tamperedBytes = firstCursor.split("");
+    const payloadIndex = firstCursor.indexOf(".") + 2;
+    tamperedBytes[payloadIndex] = tamperedBytes[payloadIndex] === "A" ? "B" : "A";
+    const tampered = await requestPage("queued", "oldest", 3, tamperedBytes.join(""));
+    const mismatch = await requestPage("completed", "oldest", 3, firstCursor);
+    const unknown = await fetch(`${baseUrl}/api/v1/reading-queue/entries?unknown=true`);
+    const traversedIds = [];
+    let cursor;
+    let pages = 0;
+    do {
+      const page = await requestPage("queued", "oldest", 3, cursor);
+      if (page.status !== 200) throw new Error(`pagination returned ${page.status}`);
+      traversedIds.push(...page.body.entries.map((entry) => entry.id));
+      cursor = page.body.nextCursor ?? undefined;
+      pages += 1;
+      if (pages > 10) throw new Error("pagination did not terminate");
+    } while (cursor);
+    return {
+      first,
+      second,
+      tampered,
+      mismatch,
+      unknown: { body: await unknown.json(), status: unknown.status },
+      traversedIds,
+      pages,
+    };
+  }, apiUrl);
+  expect(pagination.first).toMatchObject({
+    body: { entries: expect.any(Array), nextCursor: expect.any(String) },
+    status: 200,
+  });
+  expect(pagination.first.body.entries).toHaveLength(3);
+  expect(pagination.second.status).toBe(200);
+  expect(pagination.traversedIds).toHaveLength(11);
+  expect(new Set(pagination.traversedIds).size).toBe(11);
+  expect(pagination.pages).toBe(4);
+  for (const invalid of [pagination.tampered, pagination.mismatch]) {
+    expect(invalid).toMatchObject({
+      body: { type: "https://yydra.dev/problems/invalid-reading-queue-cursor" },
+      status: 400,
+    });
+  }
+  expect(pagination.unknown).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-queue-query" },
+    status: 400,
+  });
+  await page.getByRole("button", { name: "Queued entries" }).click();
+  await page.getByRole("button", { name: "Newest first" }).click();
+  await expect(page).toHaveURL(/status=queued/);
+  await expect(page).toHaveURL(/sort=newest/);
+  await expect(page.getByText("Paging entry 11", { exact: true })).toBeVisible();
+  await expect(page.getByText("Paging entry 01", { exact: true })).not.toBeVisible();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByText("Paging entry 01", { exact: true })).toBeVisible();
+  await expect(page.getByText("End of queue.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh from first page" }).click();
+  await expect(page.getByText("Paging entry 01", { exact: true })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more" })).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(/status=queued/);
+  await expect(page).toHaveURL(/sort=newest/);
+  await expect(page.getByText("Paging entry 11", { exact: true })).toBeVisible();
+  await expect(page.getByText(entryTitle, { exact: true })).not.toBeVisible();
+  await page.goto("/?status=completed&sort=oldest");
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(page.getByText("Paging entry 11", { exact: true })).not.toBeVisible();
   await page.getByLabel("Entry title").fill("   ");
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
   await page.getByRole("button", { name: "Add entry" }).click();
   await expect(page.getByRole("alert")).toContainText("Could not add this entry.");
   await page.reload();
+  await expect(page).toHaveURL(/status=completed/);
   await expect(page.getByText("Backend ready.")).toBeVisible();
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
   await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
@@ -2641,6 +2729,22 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
             ],
             &[("DATABASE_URL", &database_url)],
             "READING_QUEUE_POSTGRES_FAILED",
+        )?;
+        context.command(
+            context.root,
+            "cargo",
+            &[
+                "test",
+                "--locked",
+                "--test",
+                "reading_queue_postgres",
+                "reading_queue_keyset_pages_preserve_order_filter_context_and_termination",
+                "--",
+                "--exact",
+                "--ignored",
+            ],
+            &[("DATABASE_URL", &database_url)],
+            "READING_QUEUE_PAGINATION_POSTGRES_FAILED",
         )?;
         let mut server = spawn_server(context, &database_url, &server_address)?;
         let readiness = wait_for_server(
@@ -2836,6 +2940,10 @@ fn spawn_server(
         &[
             ("DATABASE_URL", database_url),
             ("YYDRA_BIND_ADDRESS", server_address),
+            (
+                "YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY",
+                "local-reading-queue-cursor-signing-key",
+            ),
         ],
     );
     context.commands.push(display.clone());
@@ -2859,6 +2967,10 @@ fn spawn_server(
         .args(["run", "--locked", "--bin", "server"])
         .env("DATABASE_URL", database_url)
         .env("YYDRA_BIND_ADDRESS", server_address)
+        .env(
+            "YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY",
+            "local-reading-queue-cursor-signing-key",
+        )
         .current_dir(context.root)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));

@@ -12,8 +12,13 @@ name = "product_application"
 path = "src/lib.rs"
 
 [dependencies]
+base64.workspace = true
+hmac.workspace = true
 product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
 product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 
 [dev-dependencies]

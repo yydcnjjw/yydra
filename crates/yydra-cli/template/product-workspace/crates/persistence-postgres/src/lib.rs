@@ -9,7 +9,8 @@ use std::fmt;
 use std::io;
 
 use product_domain::{
-    DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryTitle, SourceUrl,
+    DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryOrder,
+    ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
@@ -78,21 +79,88 @@ pub async fn insert_reading_entry(
     row.try_into()
 }
 
-pub async fn list_reading_entries(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadingEntryPagePosition {
+    pub created_at: String,
+    pub id: String,
+}
+
+pub struct ReadingEntryPageItem {
+    pub entry: ReadingEntry,
+    pub position: ReadingEntryPagePosition,
+}
+
+pub async fn list_reading_entries_page(
     connection: &mut PgConnection,
-) -> Result<Vec<ReadingEntry>, PersistenceError> {
-    sqlx::query_as::<_, ReadingEntryRow>(
-        r#"
-        SELECT id::text AS id, title, source_url, state
-        FROM reading_queue_entries
-        ORDER BY created_at ASC, id ASC
-        "#,
-    )
-    .fetch_all(connection)
-    .await?
-    .into_iter()
-    .map(TryInto::try_into)
-    .collect()
+    status: ReadingEntryStatusFilter,
+    order: ReadingEntryOrder,
+    after: Option<&ReadingEntryPagePosition>,
+    fetch_limit: u16,
+) -> Result<Vec<ReadingEntryPageItem>, PersistenceError> {
+    let status = status.persisted_state();
+    let after_created_at = after.map(|position| position.created_at.as_str());
+    let after_id = after.map(|position| position.id.as_str());
+    let rows = match order {
+        ReadingEntryOrder::OldestFirst => {
+            sqlx::query_as::<_, ReadingEntryPageRow>(
+                r#"
+                SELECT
+                    id::text AS id,
+                    title,
+                    source_url,
+                    state,
+                    to_char(
+                        created_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                    ) AS created_at_cursor
+                FROM reading_queue_entries
+                WHERE ($1::text IS NULL OR state = $1)
+                  AND (
+                    $2::timestamptz IS NULL
+                    OR (created_at, id) > ($2::timestamptz, $3::uuid)
+                  )
+                ORDER BY created_at ASC, id ASC
+                LIMIT $4
+                "#,
+            )
+            .bind(status)
+            .bind(after_created_at)
+            .bind(after_id)
+            .bind(i64::from(fetch_limit))
+            .fetch_all(connection)
+            .await?
+        }
+        ReadingEntryOrder::NewestFirst => {
+            sqlx::query_as::<_, ReadingEntryPageRow>(
+                r#"
+                SELECT
+                    id::text AS id,
+                    title,
+                    source_url,
+                    state,
+                    to_char(
+                        created_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                    ) AS created_at_cursor
+                FROM reading_queue_entries
+                WHERE ($1::text IS NULL OR state = $1)
+                  AND (
+                    $2::timestamptz IS NULL
+                    OR (created_at, id) < ($2::timestamptz, $3::uuid)
+                  )
+                ORDER BY created_at DESC, id DESC
+                LIMIT $4
+                "#,
+            )
+            .bind(status)
+            .bind(after_created_at)
+            .bind(after_id)
+            .bind(i64::from(fetch_limit))
+            .fetch_all(connection)
+            .await?
+        }
+    };
+    rows.into_iter().map(TryInto::try_into).collect()
 }
 
 pub async fn lock_reading_entry_for_update(
@@ -203,6 +271,34 @@ struct ReadingEntryRow {
     title: String,
     source_url: String,
     state: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ReadingEntryPageRow {
+    id: String,
+    title: String,
+    source_url: String,
+    state: String,
+    created_at_cursor: String,
+}
+
+impl TryFrom<ReadingEntryPageRow> for ReadingEntryPageItem {
+    type Error = PersistenceError;
+
+    fn try_from(row: ReadingEntryPageRow) -> Result<Self, Self::Error> {
+        let position = ReadingEntryPagePosition {
+            created_at: row.created_at_cursor,
+            id: row.id.clone(),
+        };
+        let entry = ReadingEntryRow {
+            id: row.id,
+            title: row.title,
+            source_url: row.source_url,
+            state: row.state,
+        }
+        .try_into()?;
+        Ok(Self { entry, position })
+    }
 }
 
 impl TryFrom<ReadingEntryRow> for ReadingEntry {

@@ -195,12 +195,34 @@
               "$ref": "#/components/schemas/ReadingQueueEntryResponse"
             },
             "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "entries"
+          "entries",
+          "nextCursor"
         ],
         "type": "object"
+      },
+      "ReadingQueueSort": {
+        "enum": [
+          "oldest",
+          "newest"
+        ],
+        "type": "string"
+      },
+      "ReadingQueueStatusFilter": {
+        "enum": [
+          "all",
+          "queued",
+          "completed"
+        ],
+        "type": "string"
       }
     }
   },
@@ -283,6 +305,44 @@
     "/api/v1/reading-queue/entries": {
       "get": {
         "operationId": "listReadingQueueEntries",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadingQueueStatusFilter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadingQueueSort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 2048,
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -293,6 +353,16 @@
               }
             },
             "description": "Reading queue"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid query or cursor"
           },
           "500": {
             "content": {

@@ -4,21 +4,22 @@
 
 use std::sync::Arc;
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use product_application::{
     ChangeReadingEntryStateCommand, ChangeReadingEntryStateError, CreateReadingEntryCommand,
-    CreateReadingEntryError, HealthService, ReadingQueueApplication, ReadingQueueEntry,
+    CreateReadingEntryError, HealthService, ListReadingEntriesError, ListReadingEntriesQuery,
+    ReadingQueueApplication, ReadingQueueEntry,
     ReadingQueueEntryState as ApplicationReadingQueueEntryState, ReadingQueueService,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::schema::{AdditionalProperties, Schema};
 use utoipa::openapi::{Info, OpenApi, Paths, RefOr};
-use utoipa::{PartialSchema, ToSchema};
+use utoipa::{IntoParams, PartialSchema, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -133,6 +134,54 @@ impl From<ReadingQueueEntry> for ReadingQueueEntryResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ReadingQueueResponse {
     pub entries: Vec<ReadingQueueEntryResponse>,
+    #[schema(required, nullable = true)]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadingQueueStatusFilter {
+    All,
+    Queued,
+    Completed,
+}
+
+impl ReadingQueueStatusFilter {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Queued => "queued",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadingQueueSort {
+    Oldest,
+    Newest,
+}
+
+impl ReadingQueueSort {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Oldest => "oldest",
+            Self::Newest => "newest",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListReadingQueueEntriesQuery {
+    pub status: Option<ReadingQueueStatusFilter>,
+    pub sort: Option<ReadingQueueSort>,
+    #[param(minimum = 1, maximum = 50)]
+    pub limit: Option<u16>,
+    #[param(max_length = 2048)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -246,16 +295,28 @@ impl ReadingQueueHttpState {
         }
     }
 
-    fn authorize(&self, access: RouteAccess, headers: &HeaderMap) -> Result<(), ProblemResponse> {
+    fn authorize(
+        &self,
+        access: RouteAccess,
+        headers: &HeaderMap,
+    ) -> Result<AuthorizationContext, ProblemResponse> {
         if access == RouteAccess::Anonymous {
-            return Ok(());
+            return Ok(AuthorizationContext {
+                cursor_scope: "anonymous",
+            });
         }
         match self.authentication.authenticate(headers) {
-            AuthenticationDecision::Authorized => Ok(()),
+            AuthenticationDecision::Authorized => Ok(AuthorizationContext {
+                cursor_scope: "protected-contract",
+            }),
             AuthenticationDecision::MissingCredentials => Err(ProblemResponse::unauthorized()),
             AuthenticationDecision::Forbidden => Err(ProblemResponse::forbidden()),
         }
     }
+}
+
+struct AuthorizationContext {
+    cursor_scope: &'static str,
 }
 
 struct ProblemResponse {
@@ -283,6 +344,32 @@ impl ProblemResponse {
             body: ProblemDetails {
                 type_uri: "https://yydra.dev/problems/invalid-request-body".to_owned(),
                 title: "Invalid request body".to_owned(),
+                status: StatusCode::BAD_REQUEST.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn invalid_reading_queue_query() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/invalid-reading-queue-query".to_owned(),
+                title: "Invalid Reading Queue query".to_owned(),
+                status: StatusCode::BAD_REQUEST.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn invalid_reading_queue_cursor() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/invalid-reading-queue-cursor".to_owned(),
+                title: "Invalid Reading Queue cursor".to_owned(),
                 status: StatusCode::BAD_REQUEST.as_u16(),
                 detail: None,
                 trace_id: None,
@@ -472,21 +559,40 @@ async fn create_reading_queue_entry(
     tag = "readingQueue",
     responses(
         (status = 200, description = "Reading queue", body = ReadingQueueResponse, content_type = "application/json"),
+        (status = 400, description = "Invalid query or cursor", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
-    )
+    ),
+    params(ListReadingQueueEntriesQuery)
 )]
 async fn list_reading_queue_entries(
     State(state): State<ReadingQueueHttpState>,
     headers: HeaderMap,
+    query: Result<Query<ListReadingQueueEntriesQuery>, QueryRejection>,
 ) -> Result<Json<ReadingQueueResponse>, ProblemResponse> {
-    state.authorize(READING_QUEUE_ACCESS, &headers)?;
-    let entries = state
+    let authorization = state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let Query(query) = query.map_err(|_| ProblemResponse::invalid_reading_queue_query())?;
+    let page = state
         .application
-        .list()
+        .list(ListReadingEntriesQuery {
+            status: query.status.map(|status| status.as_str().to_owned()),
+            sort: query.sort.map(|sort| sort.as_str().to_owned()),
+            limit: query.limit,
+            cursor: query.cursor,
+            authorization_scope: authorization.cursor_scope.to_owned(),
+        })
         .await
-        .map_err(|_| ProblemResponse::internal())?;
+        .map_err(|error| match error {
+            ListReadingEntriesError::InvalidInput { .. } => {
+                ProblemResponse::invalid_reading_queue_query()
+            }
+            ListReadingEntriesError::InvalidCursor => {
+                ProblemResponse::invalid_reading_queue_cursor()
+            }
+            ListReadingEntriesError::Storage(_) => ProblemResponse::internal(),
+        })?;
     Ok(Json(ReadingQueueResponse {
-        entries: entries.into_iter().map(Into::into).collect(),
+        entries: page.entries.into_iter().map(Into::into).collect(),
+        next_cursor: page.next_cursor,
     }))
 }
 
@@ -562,6 +668,11 @@ pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
         "FrameworkContractPatch".to_owned(),
         FrameworkContractPatch::schema(),
     );
+    schemas.insert(
+        "ReadingQueueStatusFilter".to_owned(),
+        ReadingQueueStatusFilter::schema(),
+    );
+    schemas.insert("ReadingQueueSort".to_owned(), ReadingQueueSort::schema());
     for response_schema in [
         "FrameworkContractProfile",
         "FrameworkProtectedContract",

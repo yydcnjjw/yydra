@@ -9,7 +9,8 @@ use axum::http::{Method, Request, Response, StatusCode, header};
 use product_application::{
     ApplicationFuture, ChangeReadingEntryStateCommand, ChangeReadingEntryStateError,
     CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntriesError,
-    ReadingQueueApplication, ReadingQueueEntry, ReadingQueueEntryState,
+    ListReadingEntriesQuery, ReadingQueueApplication, ReadingQueueEntry, ReadingQueueEntryState,
+    ReadingQueuePage,
 };
 use serde_json::Value;
 use tower::ServiceExt;
@@ -157,16 +158,29 @@ impl ReadingQueueApplication for FixtureReadingQueue {
         })
     }
 
-    fn list(
-        &self,
-    ) -> ApplicationFuture<'_, Result<Vec<ReadingQueueEntry>, ListReadingEntriesError>> {
-        Box::pin(async {
-            Ok(vec![ReadingQueueEntry {
-                id: "opaque-contract-entry".to_owned(),
-                title: "Contract fixture".to_owned(),
-                source_url: "https://example.test/contract".to_owned(),
-                state: ReadingQueueEntryState::Queued,
-            }])
+    fn list<'a>(
+        &'a self,
+        query: ListReadingEntriesQuery,
+    ) -> ApplicationFuture<'a, Result<ReadingQueuePage, ListReadingEntriesError>> {
+        Box::pin(async move {
+            if query.cursor.as_deref() == Some("invalid") {
+                return Err(ListReadingEntriesError::InvalidCursor);
+            }
+            if query.status.as_deref() == Some("invented") {
+                return Err(ListReadingEntriesError::InvalidInput {
+                    field: "status",
+                    message: "must be all, queued, or completed",
+                });
+            }
+            Ok(ReadingQueuePage {
+                entries: vec![ReadingQueueEntry {
+                    id: "opaque-contract-entry".to_owned(),
+                    title: "Contract fixture".to_owned(),
+                    source_url: "https://example.test/contract".to_owned(),
+                    state: ReadingQueueEntryState::Queued,
+                }],
+                next_cursor: (query.limit == Some(1)).then(|| "v1.opaque.signed".to_owned()),
+            })
         })
     }
 
@@ -310,6 +324,52 @@ async fn invalid_requests_transitions_and_auth_have_stable_problem_semantics() {
     }
 }
 
+#[tokio::test]
+async fn pagination_query_and_cursor_failures_have_stable_public_semantics() {
+    let page = fixture_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/reading-queue/entries?status=queued&sort=newest&limit=1")
+                .body(Body::empty())
+                .expect("page request"),
+        )
+        .await
+        .expect("call paginated list route");
+    assert_eq!(page.status(), StatusCode::OK);
+    let page_body = to_bytes(page.into_body(), usize::MAX)
+        .await
+        .expect("read page body");
+    let page_body: Value = serde_json::from_slice(&page_body).expect("parse page body");
+    assert_eq!(page_body["nextCursor"], "v1.opaque.signed");
+
+    for (query, problem_type) in [
+        (
+            "cursor=invalid",
+            "https://yydra.dev/problems/invalid-reading-queue-cursor",
+        ),
+        (
+            "status=invented",
+            "https://yydra.dev/problems/invalid-reading-queue-query",
+        ),
+        (
+            "unknown=true",
+            "https://yydra.dev/problems/invalid-reading-queue-query",
+        ),
+    ] {
+        let response = fixture_router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/reading-queue/entries?{query}"))
+                    .body(Body::empty())
+                    .expect("invalid pagination request"),
+            )
+            .await
+            .expect("call paginated list route");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_problem_type(response, problem_type).await;
+    }
+}
+
 async fn assert_problem_type(response: Response<Body>, expected: &str) {
     assert_eq!(
         response.headers()[header::CONTENT_TYPE],
@@ -409,7 +469,7 @@ async fn conformance_fixture_rejects_undocumented_status_content_type_and_body()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
-            r#"{"entries":[{"id":"opaque","title":"Example","sourceUrl":"https://example.test","state":"invented"}]}"#,
+            r#"{"entries":[{"id":"opaque","title":"Example","sourceUrl":"https://example.test","state":"invented"}],"nextCursor":null}"#,
         ))
         .expect("build invalid reading-entry state fixture");
     assert!(

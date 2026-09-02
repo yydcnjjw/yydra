@@ -202,6 +202,136 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
     status: 200,
   });
 
+  const pagination = await page.evaluate(async (baseUrl) => {
+    for (let index = 1; index <= 11; index += 1) {
+      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: `Paging entry ${String(index).padStart(2, "0")}`,
+          sourceUrl: `https://example.test/paging-${index}`,
+        }),
+      });
+      if (response.status !== 201) {
+        throw new Error(
+          `pagination fixture create returned ${response.status}`,
+        );
+      }
+    }
+
+    const requestPage = async (
+      status: string,
+      sort: string,
+      limit: number,
+      cursor?: string,
+    ) => {
+      const query = new URLSearchParams({ status, sort, limit: String(limit) });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(
+        `${baseUrl}/api/v1/reading-queue/entries?${query}`,
+      );
+      return { body: await response.json(), status: response.status };
+    };
+    const first = await requestPage("queued", "oldest", 3);
+    const firstCursor = first.body.nextCursor as string;
+    const second = await requestPage("queued", "oldest", 3, firstCursor);
+    const tamperedBytes = firstCursor.split("");
+    const payloadIndex = firstCursor.indexOf(".") + 2;
+    tamperedBytes[payloadIndex] =
+      tamperedBytes[payloadIndex] === "A" ? "B" : "A";
+    const tampered = await requestPage(
+      "queued",
+      "oldest",
+      3,
+      tamperedBytes.join(""),
+    );
+    const mismatch = await requestPage("completed", "oldest", 3, firstCursor);
+    const unknown = await fetch(
+      `${baseUrl}/api/v1/reading-queue/entries?unknown=true`,
+    );
+
+    const traversedIds: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await requestPage("queued", "oldest", 3, cursor);
+      if (page.status !== 200) {
+        throw new Error(`pagination traversal returned ${page.status}`);
+      }
+      traversedIds.push(
+        ...page.body.entries.map((entry: { id: string }) => entry.id),
+      );
+      cursor = page.body.nextCursor ?? undefined;
+      pages += 1;
+      if (pages > 10) throw new Error("pagination did not terminate");
+    } while (cursor);
+
+    return {
+      first,
+      second,
+      tampered,
+      mismatch,
+      unknown: { body: await unknown.json(), status: unknown.status },
+      traversedIds,
+      pages,
+    };
+  }, apiUrl);
+  expect(pagination.first).toMatchObject({
+    body: { entries: expect.any(Array), nextCursor: expect.any(String) },
+    status: 200,
+  });
+  expect(pagination.first.body.entries).toHaveLength(3);
+  expect(pagination.second.status).toBe(200);
+  expect(pagination.traversedIds).toHaveLength(11);
+  expect(new Set(pagination.traversedIds).size).toBe(11);
+  expect(pagination.pages).toBe(4);
+  expect(pagination.tampered).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-queue-cursor" },
+    status: 400,
+  });
+  expect(pagination.mismatch).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-queue-cursor" },
+    status: 400,
+  });
+  expect(pagination.unknown).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-queue-query" },
+    status: 400,
+  });
+
+  await page.getByRole("button", { name: "Queued entries" }).click();
+  await page.getByRole("button", { name: "Newest first" }).click();
+  await expect(page).toHaveURL(/status=queued/);
+  await expect(page).toHaveURL(/sort=newest/);
+  await expect(
+    page.getByText("Paging entry 11", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Paging entry 01", { exact: true }),
+  ).not.toBeVisible();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(
+    page.getByText("Paging entry 01", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("End of queue.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh from first page" }).click();
+  await expect(
+    page.getByText("Paging entry 01", { exact: true }),
+  ).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more" })).toBeVisible();
+
+  await page.reload();
+  await expect(page).toHaveURL(/status=queued/);
+  await expect(page).toHaveURL(/sort=newest/);
+  await expect(
+    page.getByText("Paging entry 11", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(entryTitle, { exact: true })).not.toBeVisible();
+  await page.goto("/?status=completed&sort=oldest");
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Paging entry 11", { exact: true }),
+  ).not.toBeVisible();
+
   await page.getByLabel("Entry title").fill("   ");
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
   await page.getByRole("button", { name: "Add entry" }).click();
@@ -210,6 +340,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   );
 
   await page.reload();
+  await expect(page).toHaveURL(/status=completed/);
   await expect(page.getByText("Backend ready.")).toBeVisible();
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
   await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();

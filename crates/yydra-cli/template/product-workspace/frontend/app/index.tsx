@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   Pressable,
@@ -11,29 +17,77 @@ import {
   View,
 } from "react-native";
 
-import { isFrameworkFailure, useFrameworkClient } from "@/framework/runtime";
+import {
+  isFrameworkFailure,
+  readingQueueInfiniteQueryOptions,
+  readingQueueQueryKey,
+  ReadingQueueSort,
+  ReadingQueueStatusFilter,
+  useFrameworkClient,
+} from "@/framework/runtime";
 
-const readingQueueKey = ["reading-queue"] as const;
+const readingQueueRootKey = ["reading-queue"] as const;
+const readingQueuePageSize = 10;
+
+function firstSearchValue(
+  value: string | string[] | undefined,
+): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function statusFromUrl(
+  value: string | string[] | undefined,
+): ReadingQueueStatusFilter {
+  const status = firstSearchValue(value);
+  return status === "queued" || status === "completed" ? status : "all";
+}
+
+function sortFromUrl(value: string | string[] | undefined): ReadingQueueSort {
+  return firstSearchValue(value) === "newest" ? "newest" : "oldest";
+}
+
+function routeParams(
+  status: ReadingQueueStatusFilter,
+  sort: ReadingQueueSort,
+): Record<string, string> {
+  return {
+    ...(status === "all" ? {} : { status }),
+    ...(sort === "oldest" ? {} : { sort }),
+  };
+}
 
 export default function IndexRoute() {
   const client = useFrameworkClient();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const search = useLocalSearchParams<{
+    status?: string | string[];
+    sort?: string | string[];
+  }>();
+  const status = statusFromUrl(search.status);
+  const sort = sortFromUrl(search.sort);
+  const queueKey = readingQueueQueryKey(status, sort, readingQueuePageSize);
   const [title, setTitle] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const health = useQuery({
     queryKey: ["workspace-health"],
     queryFn: ({ signal }) => client.health(signal),
   });
-  const queue = useQuery({
-    queryKey: readingQueueKey,
-    queryFn: ({ signal }) => client.listReadingQueueEntries(signal),
-  });
+  const queue = useInfiniteQuery(
+    readingQueueInfiniteQueryOptions(
+      client,
+      status,
+      sort,
+      readingQueuePageSize,
+    ),
+  );
+  const entries = queue.data?.pages.flatMap((page) => page.entries) ?? [];
   const createEntry = useMutation({
     mutationFn: () => client.createReadingQueueEntry({ title, sourceUrl }),
     async onSuccess() {
       setTitle("");
       setSourceUrl("");
-      await queryClient.invalidateQueries({ queryKey: readingQueueKey });
+      await queryClient.resetQueries({ queryKey: readingQueueRootKey });
     },
   });
   const changeEntryState = useMutation({
@@ -45,7 +99,7 @@ export default function IndexRoute() {
       state: "queued" | "completed";
     }) => client.changeReadingQueueEntryState(id, { state }),
     async onSuccess() {
-      await queryClient.invalidateQueries({ queryKey: readingQueueKey });
+      await queryClient.resetQueries({ queryKey: readingQueueRootKey });
     },
   });
 
@@ -115,6 +169,69 @@ export default function IndexRoute() {
         <Text accessibilityRole="header" style={styles.sectionTitle}>
           Reading Queue
         </Text>
+        <View style={styles.filterRow}>
+          {(
+            [
+              ["all", "All entries"],
+              ["queued", "Queued entries"],
+              ["completed", "Completed entries"],
+            ] as const
+          ).map(([value, label]) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: status === value }}
+              key={value}
+              onPress={() =>
+                router.replace({
+                  pathname: "/",
+                  params: routeParams(value, sort),
+                })
+              }
+              style={[
+                styles.filterButton,
+                status === value && styles.selectedButton,
+              ]}
+            >
+              <Text style={styles.buttonText}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.filterRow}>
+          {(
+            [
+              ["oldest", "Oldest first"],
+              ["newest", "Newest first"],
+            ] as const
+          ).map(([value, label]) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: sort === value }}
+              key={value}
+              onPress={() =>
+                router.replace({
+                  pathname: "/",
+                  params: routeParams(status, value),
+                })
+              }
+              style={[
+                styles.filterButton,
+                sort === value && styles.selectedButton,
+              ]}
+            >
+              <Text style={styles.buttonText}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          disabled={queue.isFetching && !queue.isFetchingNextPage}
+          onPress={() =>
+            void queryClient.resetQueries({ queryKey: queueKey, exact: true })
+          }
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>Refresh from first page</Text>
+        </Pressable>
         {queue.isPending ? <Text>Loading queue…</Text> : null}
         {queue.isError ? (
           <View style={styles.status}>
@@ -127,8 +244,12 @@ export default function IndexRoute() {
             </Pressable>
           </View>
         ) : null}
-        {queue.data?.entries.length === 0 ? (
-          <Text>The queue is empty.</Text>
+        {entries.length === 0 && !queue.isPending && !queue.isError ? (
+          <Text>
+            {status === "all"
+              ? "The queue is empty."
+              : "No entries match this filter."}
+          </Text>
         ) : null}
         {changeEntryState.isError ? (
           <View style={styles.status}>
@@ -144,14 +265,17 @@ export default function IndexRoute() {
               accessibilityRole="button"
               onPress={() => {
                 changeEntryState.reset();
-                void queue.refetch();
+                void queryClient.resetQueries({
+                  queryKey: queueKey,
+                  exact: true,
+                });
               }}
             >
               <Text>Refresh queue</Text>
             </Pressable>
           </View>
         ) : null}
-        {queue.data?.entries.map((entry) => (
+        {entries.map((entry) => (
           <View key={entry.id} style={styles.entry}>
             <Text style={styles.entryTitle}>{entry.title}</Text>
             <Text>{entry.sourceUrl}</Text>
@@ -175,6 +299,21 @@ export default function IndexRoute() {
             </Pressable>
           </View>
         ))}
+        {queue.hasNextPage ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={queue.isFetchingNextPage}
+            onPress={() => void queue.fetchNextPage({ cancelRefetch: false })}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>
+              {queue.isFetchingNextPage ? "Loading more…" : "Load more"}
+            </Text>
+          </Pressable>
+        ) : null}
+        {entries.length > 0 && !queue.hasNextPage ? (
+          <Text>End of queue.</Text>
+        ) : null}
       </View>
     </ScrollView>
   );
@@ -224,6 +363,20 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#ffffff",
     fontWeight: "700",
+  },
+  filterButton: {
+    backgroundColor: "#475569",
+    borderRadius: 8,
+    flexGrow: 1,
+    padding: 10,
+  },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  selectedButton: {
+    backgroundColor: "#0369a1",
   },
   entry: {
     borderTopColor: "#e2e8f0",

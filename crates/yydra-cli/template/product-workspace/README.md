@@ -48,12 +48,20 @@ dependencies. The concrete create, list, and change-state use cases in
 `crates/application` own their SQLx transactions;
 `crates/persistence-postgres` contains only the Product Workspace PostgreSQL
 operations, and append-only migrations `0002` and `0003` retain final database
-constraints. There is no generic repository or Unit of Work.
+constraints. Migration `0004` adds the query-specific status/keyset index.
+There is no generic repository or Unit of Work.
 
 The H5 Product Presentation submits `title` and `sourceUrl` through the
 handwritten Framework client facade, then completes or reopens entries and
-reloads the queue through the same Public API seam. Public identifiers are
-opaque strings. Invalid JSON, unknown request fields, missing entries, and
+reloads the queue through the same Public API seam. The list uses
+`created_at` plus the opaque entry ID as its stable keyset order, bounded pages,
+and a nullable `nextCursor`. Status and oldest/newest state live in Expo Router
+URLs; TanStack Query keys bind that state, refresh starts at page one, and
+duplicate concurrent next-page calls are suppressed. The versioned URL-safe
+cursor is signed and bound to status, order, page size, and the reapplied route
+authorization context. Tampering or context reuse is a stable 400 Problem.
+Pagination makes no cross-request snapshot, total-count, or universal-paginator
+promise. Invalid JSON, unknown request/query fields, missing entries, and
 prohibited transitions produce stable RFC 9457 Problem types. Mutations never
 retry automatically.
 
@@ -65,7 +73,9 @@ authorized local token is `local-framework-contract`, while the valid but
 denied fixture token is `local-framework-forbidden`. These non-secret fixture
 values may be replaced through `YYDRA_AUTH_CONTRACT_TOKEN` and
 `YYDRA_AUTH_CONTRACT_FORBIDDEN_TOKEN`. This bounded probe is not an Identity
-system. Cursor pagination is not part of this slice.
+system. Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` to a stable secret of at
+least 32 bytes before starting the server; rotating it intentionally invalidates
+previous cursors. Do not place that value in source or logs.
 
 The supported quality entrypoint is read-only for authored, snapshot,
 committed-generated, lock, migration, and configuration inputs:
@@ -110,14 +120,16 @@ the change non-breaking. Product code calls the handwritten facade in
 `frontend/src/framework/api/`, never the generated directory directly.
 
 The focused production H5 acceptance command exports static web assets, serves
-them locally, creates, completes, reopens, and reloads a Reading Queue entry
-against the real Axum and PostgreSQL service, verifies stable request,
-transition, and authentication Problems, and runs the focused
-transaction/constraint rollback fixture. Start the
+them locally, creates, completes, reopens, filters, paginates, refreshes, and
+restores URL state against the real Axum and PostgreSQL service. It verifies
+cursor traversal/termination, tamper and context rejection, stable request,
+transition, and authentication Problems, plus the focused transaction,
+constraint, and keyset-order fixtures. Start the
 diagnostic-only server leaf in one terminal:
 
 ```console
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
+YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=<at-least-32-byte-secret> \
   cargo run --locked --bin server
 ```
 

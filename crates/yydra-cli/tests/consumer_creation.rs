@@ -64,6 +64,7 @@ fn materializes_the_public_api_authority_chain() {
         "crates/transport-http/tests/public_api_contract.rs",
         "migrations/0002_reading_queue.sql",
         "migrations/0003_reading_entry_transitions.sql",
+        "migrations/0004_reading_queue_pagination.sql",
         "frontend/orval.config.mjs",
         "frontend/src/generated/public-api/fetch/client.ts",
         "frontend/src/generated/public-api/fetch/schemas/index.ts",
@@ -714,7 +715,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(workspace.join("migrations/0001_baseline.sql").is_file());
-    let added = workspace.join("migrations/0004_add_reading_notes.sql");
+    let added = workspace.join("migrations/0005_add_reading_notes.sql");
     let contents = fs::read_to_string(&added).expect("read migration stub");
     assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
     assert!(contents.contains("-- Add migration SQL here."));
@@ -2492,6 +2493,8 @@ fn api_generation_allows_product_owned_reading_queue_replacement() {
         "ReadingQueueEntryResponse",
         "ReadingQueueEntryState",
         "ReadingQueueResponse",
+        "ReadingQueueSort",
+        "ReadingQueueStatusFilter",
     ] {
         schemas.remove(schema);
     }

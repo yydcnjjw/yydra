@@ -137,6 +137,69 @@ impl ReadingEntryState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadingEntryStatusFilter {
+    All,
+    Queued,
+    Completed,
+}
+
+impl ReadingEntryStatusFilter {
+    pub fn parse(value: Option<&str>) -> Result<Self, DomainValidationError> {
+        match value.unwrap_or("all") {
+            "all" => Ok(Self::All),
+            "queued" => Ok(Self::Queued),
+            "completed" => Ok(Self::Completed),
+            _ => Err(DomainValidationError::new(
+                "status",
+                "must be all, queued, or completed",
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Queued => "queued",
+            Self::Completed => "completed",
+        }
+    }
+
+    pub fn persisted_state(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Queued => Some(ReadingEntryState::Queued.as_str()),
+            Self::Completed => Some(ReadingEntryState::Completed.as_str()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadingEntryOrder {
+    OldestFirst,
+    NewestFirst,
+}
+
+impl ReadingEntryOrder {
+    pub fn parse(value: Option<&str>) -> Result<Self, DomainValidationError> {
+        match value.unwrap_or("oldest") {
+            "oldest" => Ok(Self::OldestFirst),
+            "newest" => Ok(Self::NewestFirst),
+            _ => Err(DomainValidationError::new(
+                "sort",
+                "must be oldest or newest",
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OldestFirst => "oldest",
+            Self::NewestFirst => "newest",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadingEntry {
     id: ReadingEntryId,
@@ -259,7 +322,33 @@ impl Error for DomainValidationError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ReadingEntry, ReadingEntryId, ReadingEntryState, ReadingEntryTitle, SourceUrl};
+    use super::{
+        ReadingEntry, ReadingEntryId, ReadingEntryOrder, ReadingEntryState,
+        ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
+    };
+
+    #[test]
+    fn reading_queue_query_context_accepts_only_stable_status_and_order_values() {
+        assert_eq!(
+            ReadingEntryStatusFilter::parse(None).expect("default status filter"),
+            ReadingEntryStatusFilter::All
+        );
+        assert_eq!(
+            ReadingEntryStatusFilter::parse(Some("completed")).expect("completed filter"),
+            ReadingEntryStatusFilter::Completed
+        );
+        assert!(ReadingEntryStatusFilter::parse(Some("done")).is_err());
+
+        assert_eq!(
+            ReadingEntryOrder::parse(None).expect("default order"),
+            ReadingEntryOrder::OldestFirst
+        );
+        assert_eq!(
+            ReadingEntryOrder::parse(Some("newest")).expect("newest order"),
+            ReadingEntryOrder::NewestFirst
+        );
+        assert!(ReadingEntryOrder::parse(Some("title")).is_err());
+    }
 
     #[test]
     fn reading_queue_values_normalize_valid_input_and_reject_invalid_input() {

@@ -12,12 +12,16 @@ import {
   CreateReadingEntryRequest,
   FrameworkContractProfile,
   FrameworkProtectedContract,
+  ListReadingQueueEntriesParams,
   ProblemDetails,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 } from "../../generated/public-api/fetch/schemas";
 import { CreateReadingEntryRequest as StrictCreateReadingEntryRequest } from "../../generated/public-api/request/schemas/createReadingEntryRequest.zod";
-import { ChangeReadingQueueEntryStateParams } from "../../generated/public-api/request/contracts";
+import {
+  ChangeReadingQueueEntryStateParams,
+  ListReadingQueueEntriesQueryParams,
+} from "../../generated/public-api/request/contracts";
 import { ChangeReadingEntryStateRequest as StrictChangeReadingEntryStateRequest } from "../../generated/public-api/request/schemas/changeReadingEntryStateRequest.zod";
 
 export type {
@@ -25,6 +29,7 @@ export type {
   CreateReadingEntryRequest,
   FrameworkContractProfile,
   FrameworkProtectedContract,
+  ListReadingQueueEntriesParams,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 };
@@ -47,6 +52,7 @@ export interface PublicApiClient {
     options?: RequestOptions,
   ): Promise<FrameworkProtectedContract>;
   listReadingQueueEntries(
+    input?: ListReadingQueueEntriesParams,
     options?: RequestOptions,
   ): Promise<ReadingQueueResponse>;
   createReadingQueueEntry(
@@ -271,14 +277,25 @@ export function createPublicApiClient({
           ),
       });
     },
-    listReadingQueueEntries(options) {
+    listReadingQueueEntries(input = {}, options) {
+      const parsed = ListReadingQueueEntriesQueryParams.safeParse(input);
+      if (!parsed.success) {
+        return Promise.reject({
+          kind: "contractViolation",
+          message: "listReadingQueueEntries input violated its query schema",
+        } satisfies FrameworkFailure);
+      }
       return execute<ReadingQueueResponse>({
         name: "listReadingQueueEntries",
         successStatus: 200,
-        problemStatuses: [500],
+        problemStatuses: [400, 500],
         options,
         invoke: (runtimeFetch) =>
-          listReadingQueueEntries({ signal: options?.signal }, runtimeFetch),
+          listReadingQueueEntries(
+            parsed.data,
+            { signal: options?.signal },
+            runtimeFetch,
+          ),
       });
     },
     createReadingQueueEntry(input, options) {
