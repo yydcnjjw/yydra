@@ -23,6 +23,8 @@ spec.
 - Expo-compatible exact patch set is recorded in both template/reference npm
   manifests and lockfiles. `expo install --check` must pass; no compatibility
   override is accepted.
+- Linux CI pins a 4 GiB Gradle heap and at most two workers so D8 dex merging
+  is not subject to the runner's smaller generated default heap.
 - Template, Baseline Skill, Workspace Origin Record, Cargo/npm locks, clean and
   reference inputs, workflow, CLI, fixture, aggregate, and native-runtime
   identities are recorded by `freeze-distribution` in
