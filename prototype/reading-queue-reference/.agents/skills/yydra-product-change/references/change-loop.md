@@ -14,8 +14,11 @@ it.
    generated evidence, not authored code.
 6. Extend the Framework API façade so it validates success and Problem payloads
    before Product Presentation consumes them.
-7. Build accessible H5/native-shared Product Presentation. The UI may choose
-   interaction policy but must not reimplement domain legality.
+7. Write the Product-owned role/name/state assertions in
+   `frontend/e2e/product-presentation.accessibility.spec.ts`, then build the
+   corresponding H5/native-shared Product Presentation with direct React Native
+   accessibility interfaces. The UI may choose interaction policy but must not
+   reimplement domain legality.
 8. Cover domain, persistence/API, façade, presentation, and regression behavior
    in the smallest relevant tests, then run `yydra check .`.
 

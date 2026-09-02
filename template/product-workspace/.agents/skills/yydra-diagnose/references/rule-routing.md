@@ -19,6 +19,10 @@
   not generated client output.
 - `h5.production-export`: reproduce the Metro/static-export failure from the
   locked frontend before changing dependencies.
+- `h5.product-presentation-accessibility`: repair the Product-owned semantic
+  assertion or the direct React Native role/name/state implementation. Reproduce
+  with `npm run test:product-semantics`; do not replace semantic locators with
+  visual text or test-id assertions.
 
 The local prototype may report database, H5 E2E, Android release, or iOS build
 nodes as `not-run`. Execute those only in their declared environment and retain

@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -120,6 +120,10 @@ const NODE_SPECS: &[NodeSpec] = &[
     },
     NodeSpec {
         id: "database.running-service",
+        owner: CiOwner::Linux,
+    },
+    NodeSpec {
+        id: "h5.product-presentation-accessibility",
         owner: CiOwner::Linux,
     },
     NodeSpec {
@@ -326,10 +330,17 @@ fn execute_profile(
             with_live_stack(context, true, |_, _| Ok(()))
         });
         if database_status == NodeStatus::Pass {
+            runner.node(spec("h5.product-presentation-accessibility"), |context| {
+                with_live_stack(context, false, run_h5_product_presentation_accessibility)
+            });
             runner.node(spec("h5.e2e"), |context| {
                 with_live_stack(context, false, run_h5_e2e)
             });
         } else {
+            runner.skipped(
+                spec("h5.product-presentation-accessibility"),
+                "database.running-service did not pass; H5 accessibility prerequisite is unavailable",
+            );
             runner.skipped(
                 spec("h5.e2e"),
                 "database.running-service did not pass; H5 E2E prerequisite is unavailable",
@@ -626,6 +637,38 @@ impl<'a> NodeContext<'a> {
             );
         }
         Ok(())
+    }
+
+    fn capture(
+        &mut self,
+        current_dir: &Path,
+        program: &str,
+        arguments: &[&str],
+        environment: &[(&str, &str)],
+    ) -> Result<Output> {
+        let display = display_command(
+            self.root,
+            &self.evidence_root,
+            current_dir,
+            program,
+            arguments,
+            environment,
+        );
+        self.commands.push(display.clone());
+        writeln!(self.log, "$ {display}")?;
+        self.log.flush()?;
+        let output = Command::new(program)
+            .args(arguments)
+            .envs(environment.iter().copied())
+            .current_dir(current_dir)
+            .output()
+            .inspect_err(|_| {
+                self.infrastructure_error = true;
+            })
+            .with_context(|| format!("start {program} {}", arguments.join(" ")))?;
+        self.log.write_all(&output.stdout)?;
+        self.log.write_all(&output.stderr)?;
+        Ok(output)
     }
 
     fn spawn(
@@ -932,6 +975,93 @@ fn run_h5_e2e(context: &mut NodeContext<'_>, api_base: &str) -> Result<()> {
         ],
     )?;
     context.output(&output)
+}
+
+fn run_h5_product_presentation_accessibility(
+    context: &mut NodeContext<'_>,
+    api_base: &str,
+) -> Result<()> {
+    let frontend = context.root.join("frontend");
+    let spec = frontend.join("e2e/product-presentation.accessibility.spec.ts");
+    if !spec.is_file() {
+        bail!(
+            "ACCESSIBILITY_SPEC_MISSING: expected authored Product Presentation semantics at {}",
+            spec.display()
+        );
+    }
+
+    let output = context
+        .evidence_root
+        .join("artifacts/h5.product-presentation-accessibility/playwright");
+    fs::create_dir_all(&output)?;
+    let report = context
+        .evidence_root
+        .join("artifacts/h5.product-presentation-accessibility/report.json");
+    let output_arg = output.to_string_lossy().into_owned();
+    let command = context.capture(
+        &frontend,
+        "npm",
+        &[
+            "exec",
+            "--",
+            "playwright",
+            "test",
+            "e2e/product-presentation.accessibility.spec.ts",
+            "--forbid-only",
+            "--workers=1",
+            "--retries=0",
+            "--reporter=json",
+        ],
+        &[
+            ("CI", "1"),
+            ("EXPO_PUBLIC_API_URL", api_base),
+            ("YYDRA_PLAYWRIGHT_OUTPUT", &output_arg),
+        ],
+    )?;
+    fs::write(&report, &command.stdout)?;
+    context.output(&report)?;
+    context.output(&output)?;
+
+    validate_product_presentation_accessibility_report(&command.stdout)?;
+    if !command.status.success() {
+        bail!("ACCESSIBILITY_ASSERTION_FAILED: Playwright exited nonzero");
+    }
+    Ok(())
+}
+
+fn validate_product_presentation_accessibility_report(report: &[u8]) -> Result<()> {
+    let parsed: serde_json::Value = serde_json::from_slice(report)
+        .context("ACCESSIBILITY_REPORT_INVALID: Playwright did not emit JSON evidence")?;
+    let stats = parsed
+        .get("stats")
+        .context("ACCESSIBILITY_REPORT_INVALID: Playwright report has no stats")?;
+    let expected = stats
+        .get("expected")
+        .and_then(serde_json::Value::as_u64)
+        .context("ACCESSIBILITY_REPORT_INVALID: expected count is absent")?;
+    let skipped = stats
+        .get("skipped")
+        .and_then(serde_json::Value::as_u64)
+        .context("ACCESSIBILITY_REPORT_INVALID: skipped count is absent")?;
+    let unexpected = stats
+        .get("unexpected")
+        .and_then(serde_json::Value::as_u64)
+        .context("ACCESSIBILITY_REPORT_INVALID: unexpected count is absent")?;
+
+    if skipped > 0 {
+        bail!(
+            "ACCESSIBILITY_FOCUSED_OR_SKIPPED: the canonical semantics spec skipped {skipped} tests"
+        );
+    }
+    if unexpected > 0 {
+        bail!(
+            "ACCESSIBILITY_ASSERTION_FAILED: {unexpected} Product Presentation semantics tests failed"
+        );
+    }
+    if expected == 0 {
+        bail!("ACCESSIBILITY_NO_EXECUTED_TESTS: the canonical semantics spec passed no tests");
+    }
+    Ok(())
 }
 
 fn available_port() -> Result<u16> {
@@ -1617,8 +1747,39 @@ mod tests {
         });
         assert!(counts.values().all(|count| *count == 1));
         assert!(counts.contains_key("database.running-service"));
+        assert!(counts.contains_key("h5.product-presentation-accessibility"));
         assert!(counts.contains_key("h5.e2e"));
         assert!(counts.contains_key("android.release"));
         assert!(counts.contains_key("ios.simulator-release"));
+    }
+
+    #[test]
+    fn accessibility_report_requires_executed_passing_tests() {
+        let passing = br#"{"stats":{"expected":1,"skipped":0,"unexpected":0}}"#;
+        assert!(validate_product_presentation_accessibility_report(passing).is_ok());
+
+        let empty = br#"{"stats":{"expected":0,"skipped":0,"unexpected":0}}"#;
+        assert!(
+            validate_product_presentation_accessibility_report(empty)
+                .unwrap_err()
+                .to_string()
+                .contains("ACCESSIBILITY_NO_EXECUTED_TESTS")
+        );
+
+        let skipped = br#"{"stats":{"expected":0,"skipped":1,"unexpected":0}}"#;
+        assert!(
+            validate_product_presentation_accessibility_report(skipped)
+                .unwrap_err()
+                .to_string()
+                .contains("ACCESSIBILITY_FOCUSED_OR_SKIPPED")
+        );
+
+        let failed = br#"{"stats":{"expected":0,"skipped":0,"unexpected":1}}"#;
+        assert!(
+            validate_product_presentation_accessibility_report(failed)
+                .unwrap_err()
+                .to_string()
+                .contains("ACCESSIBILITY_ASSERTION_FAILED")
+        );
     }
 }

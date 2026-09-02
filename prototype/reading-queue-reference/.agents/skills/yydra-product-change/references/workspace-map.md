@@ -17,6 +17,9 @@ Use the current tree as the final authority; these are the V0 ownership seams.
 - `frontend/src/framework/api/`: validation, transport/error classification,
   and the stable façade over generated code.
 - `frontend/src/product/` and `frontend/app/`: Product Presentation and routing.
+- `frontend/e2e/product-presentation.accessibility.spec.ts`: Product-owned,
+  visible role/name/state assertions executed by the Distribution-owned
+  `h5.product-presentation-accessibility` check node.
 - `frontend/android/` and `frontend/ios/`: ephemeral CNG output, not authored
   source.
 

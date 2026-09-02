@@ -2,7 +2,7 @@
 name: yydra-diagnose
 description: Diagnose Yydra Product Workspace doctor/check failures and choose safe remediation without editing Distribution snapshots, generated authorities, migrations, or quality gates. Use when doctor, generation, or yydra check reports a failure or not-run node.
 metadata:
-  yydra-distribution: "0.0.2-prototype"
+  yydra-distribution: "0.0.3-prototype"
 ---
 
 # Diagnose a Yydra Workspace

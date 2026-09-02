@@ -20,6 +20,7 @@ pub(crate) const BASELINE_SKILL_FILES: &[&str] = &[
     "yydra-diagnose/references/rule-routing.md",
     "yydra-product-change/SKILL.md",
     "yydra-product-change/references/change-loop.md",
+    "yydra-product-change/references/product-presentation-accessibility.md",
     "yydra-product-change/references/workspace-map.md",
 ];
 

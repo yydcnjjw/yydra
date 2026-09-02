@@ -9,6 +9,7 @@
     "export:web": "expo export --platform web",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:product-semantics": "playwright test e2e/product-presentation.accessibility.spec.ts --forbid-only --workers=1 --retries=0",
     "typecheck": "tsc --noEmit",
     "generate:api": "orval --config orval.config.ts"
   },

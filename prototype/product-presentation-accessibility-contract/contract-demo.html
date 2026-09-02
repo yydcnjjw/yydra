@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>THROWAWAY: Product Presentation accessibility contract</title>
+  <style>
+    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background: #f4f1e8; color: #17251e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    header { background: #173e31; color: white; padding: 28px max(20px, calc((100vw - 1080px) / 2)); }
+    header p { color: #d8e8df; max-width: 820px; }
+    main { display: grid; gap: 18px; grid-template-columns: 1.1fr .9fr; margin: 24px auto 96px; max-width: 1080px; padding: 0 20px; }
+    .card { background: #fffdf8; border: 1px solid #d8d2c4; border-radius: 14px; padding: 18px; }
+    .wide { grid-column: 1 / -1; }
+    .warning { color: #8c3f25; font-weight: 750; letter-spacing: .05em; }
+    .controls { display: grid; gap: 10px; }
+    label { align-items: center; display: flex; gap: 9px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    button { background: #f7f2e6; border: 1px solid #8c9b92; border-radius: 9px; cursor: pointer; padding: 9px 12px; }
+    button.primary { background: #1f654c; border-color: #1f654c; color: white; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #e3a827; outline-offset: 2px; }
+    pre { background: #16231d; border-radius: 10px; color: #d7eadf; min-height: 210px; overflow: auto; padding: 14px; white-space: pre-wrap; }
+    .result { border-left: 5px solid #9c7b24; margin-top: 12px; padding: 10px 12px; }
+    .pass { border-color: #287a51; background: #e7f4ec; }
+    .fail { border-color: #a24231; background: #fbe9e4; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tabs button[aria-selected="true"] { background: #173e31; color: white; }
+    .panel[hidden] { display: none; }
+    code { background: #eee8dc; border-radius: 4px; padding: 1px 4px; }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="warning">THROWAWAY DECISION PROTOTYPE</div>
+    <h1>Product Presentation accessibility contract</h1>
+    <p>Free-play the three intervention surfaces and see what becomes discoverable, mechanically checked, and independently graded. This model explains the seam; repository checks provide the executable evidence.</p>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Free play</h2>
+      <div class="controls">
+        <label><input id="skill" type="checkbox" /> Baseline Skill routes presentation changes to semantic assertions</label>
+        <label><input id="pattern" type="checkbox" /> Ordinary source/test pattern is visible</label>
+        <label><input id="node" type="checkbox" /> Required Distribution check node is enabled</label>
+        <label><input id="registered" type="checkbox" /> Product requirement is registered in the visible semantic spec</label>
+        <label><input id="heading" type="checkbox" /> Rendered title has heading semantics</label>
+      </div>
+      <div class="actions">
+        <button id="campaign">Load Campaign C failure</button>
+        <button id="candidate" class="primary">Load candidate correction</button>
+        <button id="run">Run visible check</button>
+        <button id="grade">Run independent grader</button>
+      </div>
+      <div id="result" class="result">Choose a scenario, then run a check.</div>
+    </section>
+
+    <section class="card">
+      <h2>Full relevant state</h2>
+      <pre id="state" aria-live="polite"></pre>
+    </section>
+
+    <section class="card wide">
+      <h2>Guided walkthroughs</h2>
+      <div class="tabs" role="tablist" aria-label="Prototype walkthroughs">
+        <button role="tab" aria-selected="true" aria-controls="failure" id="tab-failure">1. Failure</button>
+        <button role="tab" aria-selected="false" aria-controls="surfaces" id="tab-surfaces">2. Surfaces</button>
+        <button role="tab" aria-selected="false" aria-controls="seam" id="tab-seam">3. Selected seam</button>
+        <button role="tab" aria-selected="false" aria-controls="boundary" id="tab-boundary">4. Evidence boundary</button>
+      </div>
+      <article class="panel" role="tabpanel" id="failure" aria-labelledby="tab-failure">
+        <h3>Why Campaign C failed</h3>
+        <p>The title was visible, but none of six submissions exposed it as a heading. The general behavior test did not ask the browser accessibility tree whether the title had that role.</p>
+      </article>
+      <article class="panel" role="tabpanel" id="surfaces" aria-labelledby="tab-surfaces" hidden>
+        <h3>Why no single surface is enough</h3>
+        <p>Skill prose improves discoverability but cannot fail closed. A pattern is concrete but passive. A generic runner can enforce registered assertions, but it cannot invent missing product meaning without becoming a semantics DSL.</p>
+      </article>
+      <article class="panel" role="tabpanel" id="seam" aria-labelledby="tab-seam" hidden>
+        <h3>Small external interface, deep implementation</h3>
+        <p>Product authors use direct React Native semantics and one ordinary Playwright spec. <code>yydra check .</code> hides runtime orchestration, zero-test/skip detection, evidence, and aggregate accounting.</p>
+      </article>
+      <article class="panel" role="tabpanel" id="boundary" aria-labelledby="tab-boundary" hidden>
+        <h3>What a pass cannot claim</h3>
+        <p>It is H5-only evidence for visible registered assertions. It is not complete WCAG proof, native assistive-technology validation, hidden acceptance, Safe Completion, or evidence that Baseline Skills improve outcomes.</p>
+      </article>
+    </section>
+  </main>
+  <script>
+    const ids = ['skill', 'pattern', 'node', 'registered', 'heading'];
+    const fields = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
+    const stateView = document.getElementById('state');
+    const result = document.getElementById('result');
+    let lastAction = 'none';
+    let lastOutcome = 'not-run';
+
+    function snapshot() {
+      return {
+        surfaces: {
+          baselineSkillRouting: fields.skill.checked,
+          ordinarySourceTestPattern: fields.pattern.checked,
+          distributionCheckNode: fields.node.checked,
+        },
+        productContract: {
+          requirementRegistered: fields.registered.checked,
+          headingSemanticsImplemented: fields.heading.checked,
+        },
+        evidence: { lastAction, lastOutcome },
+        claims: {
+          h5RegisteredSemantics: lastOutcome === 'pass',
+          completeWcag: false,
+          nativeAccessibility: false,
+          safeCompletion: false,
+        },
+      };
+    }
+
+    function render(message, outcome = 'not-run') {
+      lastOutcome = outcome;
+      result.textContent = message;
+      result.className = `result ${outcome === 'pass' ? 'pass' : outcome === 'fail' ? 'fail' : ''}`;
+      stateView.textContent = JSON.stringify(snapshot(), null, 2);
+    }
+
+    function setScenario(values, action) {
+      ids.forEach((id) => { fields[id].checked = values.includes(id); });
+      lastAction = action;
+      render(action === 'campaign-c' ? 'Campaign C: visual title present, heading semantics absent, and no visible focused node.' : 'Candidate: all three surfaces are present and the visible requirement is implemented.');
+    }
+
+    document.getElementById('campaign').addEventListener('click', () => setScenario(['registered'], 'campaign-c'));
+    document.getElementById('candidate').addEventListener('click', () => setScenario(ids, 'candidate-correction'));
+    document.getElementById('run').addEventListener('click', () => {
+      lastAction = 'visible-check';
+      if (!fields.node.checked) return render('NOT-RUN: no required Distribution check node exists.');
+      if (!fields.registered.checked) return render('FAIL: no Product-owned semantic requirement was registered.', 'fail');
+      if (!fields.heading.checked) return render('FAIL: heading role/name assertion resolved to zero elements.', 'fail');
+      return render('PASS: the registered H5 role/name assertion passed.', 'pass');
+    });
+    document.getElementById('grade').addEventListener('click', () => {
+      lastAction = 'independent-grader';
+      render(fields.heading.checked ? 'PASS: independent grader observed the heading.' : 'FAIL: visually rendered title is absent as a heading.', fields.heading.checked ? 'pass' : 'fail');
+    });
+    ids.forEach((id) => fields[id].addEventListener('change', () => { lastAction = 'manual-edit'; render('State edited. Run a check or grader.'); }));
+
+    document.querySelectorAll('[role="tab"]').forEach((tab) => tab.addEventListener('click', () => {
+      document.querySelectorAll('[role="tab"]').forEach((candidate) => candidate.setAttribute('aria-selected', String(candidate === tab)));
+      document.querySelectorAll('[role="tabpanel"]').forEach((panel) => { panel.hidden = panel.id !== tab.getAttribute('aria-controls'); });
+    }));
+
+    setScenario(['registered'], 'campaign-c');
+  </script>
+</body>
+</html>

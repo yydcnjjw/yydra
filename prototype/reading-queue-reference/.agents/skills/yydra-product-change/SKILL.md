@@ -2,7 +2,7 @@
 name: yydra-product-change
 description: Implement an end-to-end Product Domain change in a Yydra Product Workspace across domain rules, use cases, persistence, code-first API, generated client, presentation, and checks. Use for product behavior changes, not Distribution upgrades or Framework internals.
 metadata:
-  yydra-distribution: "0.0.2-prototype"
+  yydra-distribution: "0.0.3-prototype"
 ---
 
 # Yydra Product Change
@@ -18,7 +18,9 @@ exact-Distribution authorities.
    rules in normal Product Domain source.
 3. Read [references/workspace-map.md](references/workspace-map.md) before a
    cross-layer change. Read [references/change-loop.md](references/change-loop.md)
-   when the change reaches persistence, the public API, or presentation.
+   when the change reaches persistence, the public API, or presentation. For any
+   Product Presentation change, also read
+   [references/product-presentation-accessibility.md](references/product-presentation-accessibility.md).
 
 ## Preserve authorities
 

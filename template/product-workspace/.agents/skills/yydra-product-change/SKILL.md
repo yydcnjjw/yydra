@@ -18,7 +18,9 @@ exact-Distribution authorities.
    rules in normal Product Domain source.
 3. Read [references/workspace-map.md](references/workspace-map.md) before a
    cross-layer change. Read [references/change-loop.md](references/change-loop.md)
-   when the change reaches persistence, the public API, or presentation.
+   when the change reaches persistence, the public API, or presentation. For any
+   Product Presentation change, also read
+   [references/product-presentation-accessibility.md](references/product-presentation-accessibility.md).
 
 ## Preserve authorities
 

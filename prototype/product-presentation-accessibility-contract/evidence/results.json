@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-09-02",
+  "distributionCandidate": "0.0.3-prototype",
+  "templateSha256": "1dae5ceb4e1c862075bb498b44bf52c80c6a66f8318f624f8f1a90f18ea0d1a7",
+  "cliTests": {
+    "status": "pass",
+    "passed": 3,
+    "failed": 0
+  },
+  "cleanWorkspace": {
+    "h5ProductPresentationAccessibility": "pass",
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0
+  },
+  "readingQueuePositive": {
+    "hostProfile": "linux-ci",
+    "hostStatus": "fail",
+    "aggregateComplete": false,
+    "h5ProductPresentationAccessibility": "pass",
+    "h5E2e": "pass",
+    "androidRelease": "pass",
+    "iosSimulatorRelease": "not-run",
+    "authoredInputsUnchanged": "pass",
+    "independentFailure": {
+      "node": "frontend.expo-dependencies",
+      "reason": "live Expo compatibility expectations advanced beyond the sealed exact patch versions"
+    },
+    "localManifestSha256": "9b0682c2e98ea14cf46eacd29e34776e778b71c47bbc6599e56df79893229be1",
+    "localSemanticReportSha256": "a7394bca29af3d401662fd9f81bb3729bb48c03cc9b386545b24929ab1b486f0"
+  },
+  "headingRoleMutation": {
+    "mutation": "remove accessibilityRole=header from the dynamic entry title only",
+    "existingBehaviorFlow": "pass",
+    "existingBehaviorPassed": 1,
+    "visibleSemanticContract": "fail",
+    "visibleSemanticUnexpected": 1,
+    "failureLocator": "getByRole(heading, exact dynamic title)",
+    "positiveSourceRestored": true
+  },
+  "claims": {
+    "h5RegisteredSemanticsDiscrimination": true,
+    "aggregateConformance": false,
+    "nativeAccessibility": false,
+    "completeWcag": false,
+    "safeCompletion": false,
+    "baselineSkillEffect": false
+  }
+}

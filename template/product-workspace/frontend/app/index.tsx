@@ -3,7 +3,9 @@ import { StyleSheet, Text, View } from 'react-native';
 export default function IndexRoute() {
   return (
     <View style={styles.container} accessibilityRole="summary">
-      <Text style={styles.title}>__PRODUCT_NAME__</Text>
+      <Text accessibilityRole="header" style={styles.title}>
+        __PRODUCT_NAME__
+      </Text>
       <Text style={styles.body}>Clean Yydra Product Workspace ready.</Text>
     </View>
   );
