@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "__PRODUCT_ID__-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+
+[dependencies]
+axum.workspace = true
+product-application = { package = "__PRODUCT_ID__-application", path = "../application" }
+product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }
+product-transport-http = { package = "__PRODUCT_ID__-transport-http", path = "../transport-http" }
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

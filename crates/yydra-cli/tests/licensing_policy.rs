@@ -55,8 +55,13 @@ fn yydra_authored_sources(repository: &Path) -> BTreeSet<PathBuf> {
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
         .map(|path| PathBuf::from(String::from_utf8(path.to_vec()).expect("UTF-8 source path")))
-        .filter(|path| path != Path::new("Cargo.lock") && !is_complete_license_text(path))
+        .filter(|path| requires_spdx_prologue(path))
         .collect::<BTreeSet<_>>();
+    collect_template_sources(
+        repository,
+        Path::new("crates/yydra-cli/template/product-workspace"),
+        &mut sources,
+    );
     for relative in [
         ".github/workflows/dco.yml",
         "CONTRIBUTING.md",
@@ -71,8 +76,36 @@ fn yydra_authored_sources(repository: &Path) -> BTreeSet<PathBuf> {
     ] {
         sources.insert(relative.into());
     }
-    sources.retain(|path| !is_complete_license_text(path));
+    sources.retain(|path| requires_spdx_prologue(path));
     sources
+}
+
+fn collect_template_sources(repository: &Path, relative: &Path, sources: &mut BTreeSet<PathBuf>) {
+    let absolute = repository.join(relative);
+    for entry in fs::read_dir(&absolute)
+        .unwrap_or_else(|error| panic!("read template directory {}: {error}", absolute.display()))
+    {
+        let entry = entry.expect("read template entry");
+        let path = relative.join(entry.file_name());
+        if entry.file_type().expect("read template file type").is_dir() {
+            collect_template_sources(repository, &path, sources);
+        } else if requires_spdx_prologue(&path) {
+            sources.insert(path);
+        }
+    }
+}
+
+fn requires_spdx_prologue(path: &Path) -> bool {
+    if is_complete_license_text(path) {
+        return false;
+    }
+    if matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("Cargo.lock" | "package-lock.json")
+    ) {
+        return false;
+    }
+    path.extension().and_then(|extension| extension.to_str()) != Some("json")
 }
 
 fn is_complete_license_text(path: &Path) -> bool {

@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
@@ -23,6 +32,9 @@ const LICENSE_APACHE: &[u8] = include_bytes!("../LICENSE-APACHE");
 #[derive(Debug, Parser)]
 #[command(name = "yydra", version, about = "Yydra V0 Distribution CLI")]
 struct Cli {
+    /// Select human-readable output or the versioned JSON Lines interface.
+    #[arg(long, global = true, value_enum, default_value_t = MessageFormat::Human)]
+    message_format: MessageFormat,
     #[command(subcommand)]
     command: Command,
 }
@@ -45,20 +57,208 @@ enum Command {
         #[arg(default_value = ".")]
         workspace: PathBuf,
     },
+    /// Install Cargo and npm dependencies strictly from committed locks.
+    Setup {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+    },
+    /// Run explicit migration, backend, and H5 development phases.
+    Dev {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+    },
+    /// Manage the Product Workspace database explicitly.
+    Db {
+        #[command(subcommand)]
+        command: DbCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DbCommand {
+    /// Apply all committed migrations without starting the server.
+    Migrate {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+    },
+    /// Manage migration source files.
+    Migration {
+        #[command(subcommand)]
+        command: MigrationCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MigrationCommand {
+    /// Create the next sequential SQL migration without applying it.
+    Add {
+        name: String,
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    let reporter = Reporter::new(cli.message_format);
+    match cli.command {
         Command::New {
             destination,
             product_name,
             product_id,
             product_source_license,
         } => {
-            let input = resolve_input(product_name, product_id, product_source_license)?;
-            create_workspace(&destination, &input)
+            let input = reporter.phase(
+                "new.inputs",
+                "NEW_INPUT_VALIDATE",
+                Some(&destination),
+                Some("provide a non-empty product name, a lowercase kebab-case product id, and a valid SPDX expression"),
+                || resolve_input(product_name, product_id, product_source_license),
+            )?;
+            reporter.phase(
+                "new.materialize",
+                "NEW_WORKSPACE_CREATE",
+                Some(&destination),
+                Some("choose an absent or empty destination and retain the exact packaged Distribution"),
+                || create_workspace(&destination, &input),
+            )
         }
-        Command::Doctor { workspace } => doctor(&workspace),
+        Command::Doctor { workspace } => doctor(&workspace, &reporter),
+        Command::Setup { workspace } => setup(&workspace, &reporter),
+        Command::Dev { workspace } => dev(&workspace, &reporter),
+        Command::Db { command } => match command {
+            DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
+            DbCommand::Migration { command } => match command {
+                MigrationCommand::Add { name, workspace } => {
+                    db_migration_add(&workspace, &name, &reporter)
+                }
+            },
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum MessageFormat {
+    Human,
+    Json,
+}
+
+struct Reporter {
+    format: MessageFormat,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StructuredDiagnosticEvent<'a> {
+    schema_version: u64,
+    phase: &'a str,
+    code: &'a str,
+    severity: &'a str,
+    status: &'a str,
+    message: &'a str,
+    location: Option<String>,
+    remediation: Option<&'a str>,
+}
+
+struct Diagnostic<'a> {
+    phase: &'a str,
+    code: &'a str,
+    severity: &'a str,
+    status: &'a str,
+    message: &'a str,
+    location: Option<&'a Path>,
+    remediation: Option<&'a str>,
+}
+
+impl Reporter {
+    fn new(format: MessageFormat) -> Self {
+        Self { format }
+    }
+
+    fn phase<T>(
+        &self,
+        phase: &str,
+        code: &str,
+        location: Option<&Path>,
+        remediation: Option<&str>,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        self.emit(Diagnostic {
+            phase,
+            code,
+            severity: "info",
+            status: "started",
+            message: "phase started",
+            location,
+            remediation: None,
+        });
+        match action() {
+            Ok(value) => {
+                self.emit(Diagnostic {
+                    phase,
+                    code,
+                    severity: "info",
+                    status: "pass",
+                    message: "phase completed",
+                    location,
+                    remediation: None,
+                });
+                Ok(value)
+            }
+            Err(error) => {
+                let message = format!("{error:#}");
+                self.emit(Diagnostic {
+                    phase,
+                    code,
+                    severity: "error",
+                    status: "fail",
+                    message: &message,
+                    location,
+                    remediation,
+                });
+                Err(error)
+            }
+        }
+    }
+
+    fn emit(&self, diagnostic: Diagnostic<'_>) {
+        if self.format == MessageFormat::Json {
+            let event = StructuredDiagnosticEvent {
+                schema_version: 1,
+                phase: diagnostic.phase,
+                code: diagnostic.code,
+                severity: diagnostic.severity,
+                status: diagnostic.status,
+                message: diagnostic.message,
+                location: diagnostic.location.map(|path| path.display().to_string()),
+                remediation: diagnostic.remediation,
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&event).expect("diagnostic event is JSON-encodable")
+            );
+        } else if diagnostic.severity == "error" {
+            let location = diagnostic
+                .location
+                .map(|path| format!(" location={}", path.display()))
+                .unwrap_or_default();
+            eprintln!(
+                "[{}] {} code={}: {}{}",
+                diagnostic.phase, diagnostic.status, diagnostic.code, diagnostic.message, location
+            );
+            if let Some(remediation) = diagnostic.remediation {
+                eprintln!("[{}] remediation: {remediation}", diagnostic.phase);
+            }
+        } else {
+            let location = diagnostic
+                .location
+                .map(|path| format!(" location={}", path.display()))
+                .unwrap_or_default();
+            println!(
+                "[{}] {} code={}: {}{}",
+                diagnostic.phase, diagnostic.status, diagnostic.code, diagnostic.message, location
+            );
+        }
     }
 }
 
@@ -196,9 +396,6 @@ fn create_workspace(destination: &Path, input: &NormalizedInput) -> Result<()> {
     }
     result?;
 
-    println!("created Product Workspace at {}", destination.display());
-    println!("distribution={DISTRIBUTION_VERSION}");
-    println!("template_sha256={template_digest}");
     Ok(())
 }
 
@@ -267,7 +464,7 @@ fn materialize(directory: &Dir<'_>, destination: &Path, render: &RenderContext<'
                 materialize(child, destination, render)?;
             }
             DirEntry::File(file) => {
-                let output = destination.join(file.path());
+                let output = destination.join(materialized_template_path(file.path()));
                 if let Some(parent) = output.parent() {
                     fs::create_dir_all(parent).with_context(|| {
                         format!("create template parent directory '{}'", parent.display())
@@ -287,6 +484,16 @@ fn materialize(directory: &Dir<'_>, destination: &Path, render: &RenderContext<'
         }
     }
     Ok(())
+}
+
+fn materialized_template_path(source: &Path) -> PathBuf {
+    // Cargo excludes nested packages from a published crate. Store embedded
+    // manifests with a packaging-only suffix and expose only canonical names.
+    if source.file_name() == Some(OsStr::new("Cargo.toml.tmpl")) {
+        source.with_file_name("Cargo.toml")
+    } else {
+        source.to_owned()
+    }
 }
 
 fn write_distribution_authorities(destination: &Path) -> Result<()> {
@@ -341,6 +548,11 @@ fn render_template(source: &str, render: &RenderContext<'_>) -> Result<String> {
             "__PRODUCT_NAME_TOML__",
             serde_json::to_string(&render.input.product_name)
                 .context("encode normalized product name")?,
+        ),
+        (
+            "__PRODUCT_NAME_JSON__",
+            serde_json::to_string(&render.input.product_name)
+                .context("encode product name as a JSON and JavaScript string literal")?,
         ),
         (
             "__PRODUCT_ID_TOML__",
@@ -462,6 +674,10 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
     let mut artifacts = template_source_files()
         .into_iter()
         .map(|(path, contents)| {
+            let path = materialized_template_path(Path::new(&path))
+                .to_str()
+                .expect("materialized template paths are UTF-8")
+                .to_owned();
             let (lifecycle, hand_editable_after_creation) = match path.as_str() {
                 "LICENSE-APACHE" | "LICENSE-MIT" => ("exact-distribution-snapshot", false),
                 ".yydra/origin.toml" | ".yydra/product-source-license.toml" => {
@@ -584,15 +800,22 @@ fn collect_files<'a>(directory: &'a Dir<'a>, files: &mut Vec<&'a File<'a>>) {
     }
 }
 
-fn doctor(workspace: &Path) -> Result<()> {
+fn doctor(workspace: &Path, reporter: &Reporter) -> Result<()> {
+    reporter.phase(
+        "doctor.verify",
+        "DOCTOR_WORKSPACE_VERIFY",
+        Some(workspace),
+        Some("restore the reported authority or install the exact Distribution version named by the Workspace Origin Record"),
+        || verify_workspace(workspace).map(|_| ()),
+    )
+}
+
+fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)> {
     let root = find_workspace_root(workspace)?;
     let origin = read_workspace_origin_record(&root)?;
     semver::Version::parse(&origin.distribution_version)
         .context("Workspace Origin Record has invalid distribution version")?;
 
-    println!("workspace={}", root.display());
-    println!("origin_distribution={}", origin.distribution_version);
-    println!("cli_distribution={DISTRIBUTION_VERSION}");
     if origin.distribution_version != DISTRIBUTION_VERSION {
         bail!(
             "distribution mismatch; install exactly with: cargo install yydra-cli --version {} --locked",
@@ -682,8 +905,829 @@ fn doctor(workspace: &Path) -> Result<()> {
             "committed generated provenance drift at '.yydra/product-source-license.toml'; restore the reviewed generated file from version control"
         );
     }
-    println!("status=pass");
+    Ok((root, origin))
+}
+
+fn setup(workspace: &Path, reporter: &Reporter) -> Result<()> {
+    let root = reporter.phase(
+        "setup.verify-workspace",
+        "SETUP_WORKSPACE_VERIFY",
+        Some(workspace),
+        Some("run `yydra doctor` and resolve the reported exact-Distribution mismatch"),
+        || verify_workspace(workspace).map(|(root, _)| root),
+    )?;
+    let shutdown = install_shutdown_handler().context("install setup shutdown handler")?;
+    let cargo_lock = root.join("Cargo.lock");
+    let npm_lock = root.join("frontend/package-lock.json");
+    let (cargo_before, npm_before) = reporter.phase(
+        "setup.snapshot-locks",
+        "SETUP_LOCK_SNAPSHOT",
+        Some(&root),
+        Some("restore both committed lock files from version control before setup"),
+        || {
+            let cargo_before = fs::read(&cargo_lock)
+                .with_context(|| format!("read committed Cargo lock '{}'", cargo_lock.display()))?;
+            let npm_before = fs::read(&npm_lock)
+                .with_context(|| format!("read committed npm lock '{}'", npm_lock.display()))?;
+            Ok((cargo_before, npm_before))
+        },
+    )?;
+
+    let command_result = (|| {
+        reporter.phase(
+            "setup.cargo",
+            "SETUP_CARGO_FETCH",
+            Some(&cargo_lock),
+            Some("restore Cargo.lock and retry with the exact locked dependency graph"),
+            || run_process(&root, "cargo", &["fetch", "--locked"], reporter, &shutdown),
+        )?;
+        reporter.phase(
+            "setup.npm",
+            "SETUP_NPM_CI",
+            Some(&npm_lock),
+            Some("restore frontend/package-lock.json and retry `yydra setup`"),
+            || {
+                run_process(
+                    &root.join("frontend"),
+                    npm_program(),
+                    &["ci"],
+                    reporter,
+                    &shutdown,
+                )
+            },
+        )
+    })();
+    let integrity_result = reporter.phase(
+        "setup.verify-locks",
+        "SETUP_LOCK_INTEGRITY",
+        Some(&root),
+        Some("restore both committed locks; setup never accepts a rewritten resolution"),
+        || verify_and_restore_locks(&[(&cargo_lock, &cargo_before), (&npm_lock, &npm_before)]),
+    );
+    match (command_result, integrity_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(command_error), Ok(())) => Err(command_error),
+        (Ok(()), Err(integrity_error)) => Err(integrity_error),
+        (Err(command_error), Err(integrity_error)) => Err(integrity_error).with_context(|| {
+            format!("setup command also failed before lock verification: {command_error:#}")
+        }),
+    }
+}
+
+fn verify_and_restore_locks(locks: &[(&Path, &[u8])]) -> Result<()> {
+    let mut drifted = Vec::new();
+    for (path, committed) in locks {
+        let unchanged = fs::read(path)
+            .map(|actual| actual == *committed)
+            .unwrap_or(false);
+        if unchanged {
+            continue;
+        }
+        fs::write(path, committed)
+            .with_context(|| format!("restore committed lock '{}'", path.display()))?;
+        drifted.push(path.display().to_string());
+    }
+    if !drifted.is_empty() {
+        bail!(
+            "setup tool changed committed lock file(s); original bytes restored: {}",
+            drifted.join(", ")
+        );
+    }
     Ok(())
+}
+
+fn db_migration_add(workspace: &Path, name: &str, reporter: &Reporter) -> Result<()> {
+    let (root, origin) = reporter.phase(
+        "db.migration.verify-workspace",
+        "DB_WORKSPACE_VERIFY",
+        Some(workspace),
+        Some("run `yydra doctor` and resolve the reported Workspace mismatch"),
+        || verify_workspace(workspace),
+    )?;
+    let migrations = root.join("migrations");
+    let next_version = reporter.phase(
+        "db.migration.plan",
+        "DB_MIGRATION_PLAN",
+        Some(&migrations),
+        Some("use a lowercase snake_case name and inspect existing sequential migration files"),
+        || {
+            validate_migration_name(name)?;
+            next_migration_version(&migrations)
+        },
+    )?;
+    let path = migrations.join(format!("{next_version:04}_{name}.sql"));
+    reporter.phase(
+        "db.migration.create",
+        "DB_MIGRATION_STUB_CREATE",
+        Some(&path),
+        Some("choose another migration name only after inspecting the existing committed files"),
+        || {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .with_context(|| format!("create migration stub '{}'", path.display()))?;
+            writeln!(
+                file,
+                "-- SPDX-License-Identifier: {}\n\n-- Add migration SQL here.",
+                origin.product_source_license
+            )
+            .with_context(|| format!("write migration stub '{}'", path.display()))?;
+            set_mode(&path, 0o644)
+                .with_context(|| format!("set migration mode '{}'", path.display()))
+        },
+    )
+}
+
+fn next_migration_version(migrations: &Path) -> Result<i64> {
+    let mut versions = BTreeSet::new();
+    for entry in fs::read_dir(migrations)
+        .with_context(|| format!("read migrations directory '{}'", migrations.display()))?
+    {
+        let entry = entry.context("read migration directory entry")?;
+        if !entry
+            .file_type()
+            .with_context(|| format!("read migration type '{}'", entry.path().display()))?
+            .is_file()
+        {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            if entry.path().extension() == Some(OsStr::new("sql")) {
+                bail!("migration SQL filename is not valid UTF-8");
+            }
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(".sql") else {
+            continue;
+        };
+        let Some((version, description)) = stem.split_once('_') else {
+            continue;
+        };
+        if description.is_empty() {
+            bail!("migration filename '{name}' has an empty description");
+        }
+        let version = version
+            .parse::<i64>()
+            .with_context(|| format!("migration filename '{name}' has an invalid version"))?;
+        if version <= 0 {
+            bail!("migration filename '{name}' must use a positive version");
+        }
+        if !versions.insert(version) {
+            bail!("migration history contains duplicate version {version}");
+        }
+    }
+    versions
+        .last()
+        .copied()
+        .unwrap_or(0)
+        .checked_add(1)
+        .context("migration version overflow")
+}
+
+fn validate_migration_name(name: &str) -> Result<()> {
+    let valid = !name.is_empty()
+        && name.len() <= 63
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name.as_bytes()[name.len() - 1].is_ascii_alphanumeric();
+    if !valid {
+        bail!(
+            "migration name must start with a lowercase letter, end with a letter or digit, contain only lowercase ASCII letters, digits, or internal underscores, and be at most 63 characters"
+        );
+    }
+    Ok(())
+}
+
+fn db_migrate(workspace: &Path, reporter: &Reporter) -> Result<()> {
+    let root = reporter.phase(
+        "db.migrate.verify-workspace",
+        "DB_WORKSPACE_VERIFY",
+        Some(workspace),
+        Some("run `yydra doctor` and resolve the reported Workspace mismatch"),
+        || verify_workspace(workspace).map(|(root, _)| root),
+    )?;
+    let shutdown = install_shutdown_handler().context("install migration shutdown handler")?;
+    reporter.phase(
+        "db.migrate.apply",
+        "DB_MIGRATE_APPLY",
+        Some(&root.join("migrations")),
+        Some("verify DATABASE_URL and inspect the committed migration history before retrying"),
+        || {
+            run_process(
+                &root,
+                "cargo",
+                &["run", "--locked", "--bin", "migrate"],
+                reporter,
+                &shutdown,
+            )
+        },
+    )
+}
+
+fn dev(workspace: &Path, reporter: &Reporter) -> Result<()> {
+    let root = reporter.phase(
+        "dev.verify-workspace",
+        "DEV_WORKSPACE_VERIFY",
+        Some(workspace),
+        Some("run `yydra doctor` and resolve the reported Workspace mismatch"),
+        || verify_workspace(workspace).map(|(root, _)| root),
+    )?;
+    let shutdown = install_shutdown_handler().context("install development shutdown handler")?;
+    if run_dev_migration(&root, reporter, &shutdown)? {
+        return Ok(());
+    }
+
+    let mut backend = spawn_reported_dev_child(
+        &root,
+        "cargo",
+        &["run", "--locked", "--bin", "server"],
+        "dev.backend",
+        "DEV_BACKEND",
+        "backend",
+        reporter,
+    )?;
+    let mut frontend = match spawn_reported_dev_child(
+        &root.join("frontend"),
+        npm_program(),
+        &["run", "web"],
+        "dev.frontend",
+        "DEV_FRONTEND",
+        "frontend",
+        reporter,
+    ) {
+        Ok(child) => child,
+        Err(error) => {
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "started",
+                message: "terminating backend after frontend spawn failure",
+                location: Some(&root),
+                remediation: None,
+            });
+            terminate_child(&mut backend)
+                .context("terminate backend after frontend start failure")?;
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "pass",
+                message: "backend terminated after frontend spawn failure",
+                location: Some(&root),
+                remediation: None,
+            });
+            return Err(error).context("start frontend development process");
+        }
+    };
+
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "started",
+                message: "shutdown requested; terminating child processes",
+                location: Some(&root),
+                remediation: None,
+            });
+            terminate_child(&mut frontend).context("terminate frontend during shutdown")?;
+            terminate_child(&mut backend).context("terminate backend during shutdown")?;
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "pass",
+                message: "all development child processes terminated",
+                location: Some(&root),
+                remediation: None,
+            });
+            return Ok(());
+        }
+        if let Some(status) = backend.try_wait().context("poll backend child")? {
+            return dev_child_exited(
+                ExitedDevChild {
+                    name: "backend",
+                    code: "DEV_BACKEND",
+                    status,
+                    location: &root.join("crates/server"),
+                },
+                &mut backend,
+                &mut frontend,
+                reporter,
+            );
+        }
+        if let Some(status) = frontend.try_wait().context("poll frontend child")? {
+            return dev_child_exited(
+                ExitedDevChild {
+                    name: "frontend",
+                    code: "DEV_FRONTEND",
+                    status,
+                    location: &root.join("frontend"),
+                },
+                &mut frontend,
+                &mut backend,
+                reporter,
+            );
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn install_shutdown_handler() -> Result<Arc<AtomicBool>> {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&shutdown);
+    ctrlc::set_handler(move || signal.store(true, Ordering::SeqCst))
+        .context("install shutdown handler")?;
+    Ok(shutdown)
+}
+
+fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) -> Result<bool> {
+    let location = root.join("migrations");
+    let mut migration = spawn_reported_dev_child(
+        root,
+        "cargo",
+        &["run", "--locked", "--bin", "migrate"],
+        "dev.migration",
+        "DEV_MIGRATION",
+        "migration",
+        reporter,
+    )?;
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "started",
+                message: "shutdown requested; terminating migration child",
+                location: Some(root),
+                remediation: None,
+            });
+            terminate_child(&mut migration).context("terminate migration during shutdown")?;
+            reporter.emit(Diagnostic {
+                phase: "dev.shutdown",
+                code: "DEV_PEER_SHUTDOWN",
+                severity: "info",
+                status: "pass",
+                message: "migration child terminated before backend or frontend startup",
+                location: Some(root),
+                remediation: None,
+            });
+            return Ok(true);
+        }
+        if let Some(status) = migration.try_wait().context("poll migration child")? {
+            terminate_child(&mut migration)
+                .context("terminate descendants after migration child exit")?;
+            if status.success() {
+                reporter.emit(Diagnostic {
+                    phase: "dev.migration",
+                    code: "DEV_MIGRATION",
+                    severity: "info",
+                    status: "pass",
+                    message: "migration child completed",
+                    location: Some(&location),
+                    remediation: None,
+                });
+                return Ok(false);
+            }
+            let message = format!(
+                "migration child exited with {}",
+                status
+                    .code()
+                    .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+            );
+            reporter.emit(Diagnostic {
+                phase: "dev.migration",
+                code: "DEV_MIGRATION",
+                severity: "error",
+                status: "fail",
+                message: &message,
+                location: Some(&location),
+                remediation: Some(
+                    "verify DATABASE_URL and run `yydra db migrate` for focused diagnostics",
+                ),
+            });
+            bail!(message);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn spawn_reported_dev_child(
+    directory: &Path,
+    program: &str,
+    arguments: &[&str],
+    phase: &str,
+    code: &str,
+    child_name: &str,
+    reporter: &Reporter,
+) -> Result<ManagedChild> {
+    reporter.emit(Diagnostic {
+        phase,
+        code,
+        severity: "info",
+        status: "started",
+        message: &format!("starting {child_name} child"),
+        location: Some(directory),
+        remediation: None,
+    });
+    match spawn_dev_child(directory, program, arguments, reporter) {
+        Ok(child) => Ok(child),
+        Err(error) => {
+            let message = format!("could not spawn {child_name} child: {error:#}");
+            reporter.emit(Diagnostic {
+                phase,
+                code,
+                severity: "error",
+                status: "fail",
+                message: &message,
+                location: Some(directory),
+                remediation: Some(
+                    "verify the locked tool installation and executable permissions, then rerun `yydra dev`",
+                ),
+            });
+            Err(error)
+        }
+    }
+}
+
+fn spawn_dev_child(
+    directory: &Path,
+    program: &str,
+    arguments: &[&str],
+    reporter: &Reporter,
+) -> Result<ManagedChild> {
+    let mut command = ProcessCommand::new(program);
+    command.args(arguments).current_dir(directory);
+    #[cfg(unix)]
+    command.process_group(0);
+    if reporter.format == MessageFormat::Json {
+        command.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("start {program} {}", arguments.join(" ")))?;
+    #[cfg(windows)]
+    let job = match create_kill_on_close_job(&child) {
+        Ok(job) => Some(job),
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error).context("place child in a kill-on-close Windows Job Object");
+        }
+    };
+    let forwarder = if reporter.format == MessageFormat::Json {
+        let mut stdout = child.stdout.take().context("capture child stdout")?;
+        Some(thread::spawn(move || forward_child_output(&mut stdout)))
+    } else {
+        None
+    };
+    Ok(ManagedChild {
+        child,
+        armed: true,
+        forwarder,
+        #[cfg(windows)]
+        job,
+    })
+}
+
+struct ManagedChild {
+    child: Child,
+    armed: bool,
+    forwarder: Option<thread::JoinHandle<()>>,
+    #[cfg(windows)]
+    job: Option<WindowsJob>,
+}
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{Signal, killpg};
+            use nix::unistd::Pid;
+
+            if let Ok(process_group) = i32::try_from(self.child.id()) {
+                let _ = killpg(Pid::from_raw(process_group), Signal::SIGKILL);
+            }
+            let _ = self.child.wait();
+            if let Some(forwarder) = self.forwarder.take() {
+                let _ = forwarder.join();
+            }
+        }
+        #[cfg(windows)]
+        {
+            drop(self.job.take());
+            let _ = self.child.wait();
+            if let Some(forwarder) = self.forwarder.take() {
+                let _ = forwarder.join();
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            if let Some(forwarder) = self.forwarder.take() {
+                let _ = forwarder.join();
+            }
+        }
+    }
+}
+
+fn join_child_output(child: &mut ManagedChild) -> Result<()> {
+    let Some(forwarder) = child.forwarder.take() else {
+        return Ok(());
+    };
+    forwarder
+        .join()
+        .map_err(|_| anyhow::anyhow!("child output forwarder panicked"))
+}
+
+fn forward_child_output(stdout: &mut impl Read) {
+    let mut buffer = [0_u8; 8192];
+    let mut sink_open = true;
+    loop {
+        let read = match stdout.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if sink_open {
+            sink_open = write_forwarded_chunk(&buffer[..read]);
+        }
+    }
+}
+
+fn write_forwarded_chunk(bytes: &[u8]) -> bool {
+    let mut stderr = io::stderr();
+    write_forwarded_chunk_to(&mut stderr, bytes, Duration::from_secs(1))
+}
+
+fn write_forwarded_chunk_to(writer: &mut impl Write, mut bytes: &[u8], max_wait: Duration) -> bool {
+    let deadline = Instant::now() + max_wait;
+    while !bytes.is_empty() {
+        match writer.write(bytes) {
+            Ok(0) => return false,
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+impl Deref for ManagedChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl DerefMut for ManagedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+#[cfg(windows)]
+struct WindowsJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for WindowsJob {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn create_kill_on_close_job(child: &Child) -> Result<WindowsJob> {
+    use std::mem::size_of;
+    use std::os::windows::io::AsRawHandle;
+    use std::ptr;
+
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error()).context("create Windows Job Object");
+    }
+    let job = WindowsJob(handle);
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job.0,
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
+                .context("Windows Job Object configuration size overflow")?,
+        )
+    };
+    if configured == 0 {
+        return Err(io::Error::last_os_error()).context("configure Windows Job Object");
+    }
+    let assigned = unsafe {
+        AssignProcessToJobObject(
+            job.0,
+            child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+        )
+    };
+    if assigned == 0 {
+        return Err(io::Error::last_os_error()).context("assign child to Windows Job Object");
+    }
+    Ok(job)
+}
+
+struct ExitedDevChild<'a> {
+    name: &'a str,
+    code: &'a str,
+    status: std::process::ExitStatus,
+    location: &'a Path,
+}
+
+fn dev_child_exited(
+    exit: ExitedDevChild<'_>,
+    exited: &mut ManagedChild,
+    peer: &mut ManagedChild,
+    reporter: &Reporter,
+) -> Result<()> {
+    let message = format!(
+        "{} child exited unexpectedly with {}",
+        exit.name,
+        exit.status
+            .code()
+            .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+    );
+    reporter.emit(Diagnostic {
+        phase: &format!("dev.{}", exit.name),
+        code: exit.code,
+        severity: "error",
+        status: "fail",
+        message: &message,
+        location: Some(exit.location),
+        remediation: Some(
+            "inspect the forwarded child diagnostics, correct the failure, and rerun `yydra dev`",
+        ),
+    });
+    reporter.emit(Diagnostic {
+        phase: "dev.shutdown",
+        code: "DEV_PEER_SHUTDOWN",
+        severity: "info",
+        status: "started",
+        message: "terminating development child process groups after a child exit",
+        location: exit.location.parent(),
+        remediation: None,
+    });
+    terminate_child(exited).context("terminate descendants of exited development child")?;
+    terminate_child(peer).context("terminate remaining development child")?;
+    reporter.emit(Diagnostic {
+        phase: "dev.shutdown",
+        code: "DEV_PEER_SHUTDOWN",
+        severity: "info",
+        status: "pass",
+        message: "development child process groups terminated",
+        location: exit.location.parent(),
+        remediation: None,
+    });
+    bail!(message)
+}
+
+fn terminate_child(child: &mut ManagedChild) -> Result<()> {
+    let already_reaped = child
+        .try_wait()
+        .context("poll child before termination")?
+        .is_some();
+
+    #[cfg(unix)]
+    {
+        use nix::errno::Errno;
+        use nix::sys::signal::{Signal, killpg};
+        use nix::unistd::Pid;
+
+        let process_group = Pid::from_raw(
+            i32::try_from(child.id()).context("child process id does not fit Unix pid_t")?,
+        );
+        if let Err(error) = killpg(process_group, Signal::SIGTERM)
+            && error != Errno::ESRCH
+        {
+            return Err(error).context("signal child process group");
+        }
+        let mut reaped = already_reaped;
+        for _ in 0..40 {
+            if !reaped && child.try_wait().context("poll signalled child")?.is_some() {
+                reaped = true;
+            }
+            match killpg(process_group, None) {
+                Err(Errno::ESRCH) => {
+                    if !reaped {
+                        child.wait().context("reap terminated child")?;
+                    }
+                    child.armed = false;
+                    return join_child_output(child);
+                }
+                Ok(()) => {}
+                Err(error) => return Err(error).context("probe child process group"),
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        if let Err(error) = killpg(process_group, Signal::SIGKILL)
+            && error != Errno::ESRCH
+        {
+            return Err(error).context("force-terminate child process group");
+        }
+        if !reaped {
+            child.wait().context("reap terminated child")?;
+        }
+        child.armed = false;
+        join_child_output(child)
+    }
+
+    #[cfg(windows)]
+    {
+        drop(child.job.take());
+        if !already_reaped {
+            child.wait().context("reap terminated Windows child")?;
+        }
+        child.armed = false;
+        join_child_output(child)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        if already_reaped {
+            child.armed = false;
+            return join_child_output(child);
+        }
+        child.kill().context("terminate child")?;
+        child.wait().context("reap terminated child")?;
+        child.armed = false;
+        join_child_output(child)
+    }
+}
+
+fn npm_program() -> &'static str {
+    npm_program_for(cfg!(windows))
+}
+
+fn npm_program_for(windows: bool) -> &'static str {
+    if windows { "npm.cmd" } else { "npm" }
+}
+
+fn run_process(
+    directory: &Path,
+    program: &str,
+    arguments: &[&str],
+    reporter: &Reporter,
+    shutdown: &AtomicBool,
+) -> Result<()> {
+    let mut child = spawn_dev_child(directory, program, arguments, reporter)?;
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            terminate_child(&mut child)
+                .with_context(|| format!("terminate {program} after shutdown request"))?;
+            bail!(
+                "shutdown requested while running {program} {}",
+                arguments.join(" ")
+            );
+        }
+        if let Some(status) = child.try_wait().context("poll supervised child")? {
+            terminate_child(&mut child)
+                .with_context(|| format!("terminate descendants after {program} exit"))?;
+            if !status.success() {
+                bail!(
+                    "{program} {} exited with {}",
+                    arguments.join(" "),
+                    status
+                        .code()
+                        .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+                );
+            }
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn find_workspace_root(start: &Path) -> Result<PathBuf> {
@@ -719,4 +1763,70 @@ fn read_workspace_origin_record(root: &Path) -> Result<WorkspaceOriginRecord> {
     let origin = fs::read_to_string(&origin_path)
         .with_context(|| format!("read Workspace Origin Record '{}'", origin_path.display()))?;
     toml::from_str(&origin).context("invalid Workspace Origin Record")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::time::Duration;
+
+    use super::{npm_program_for, write_forwarded_chunk_to};
+
+    #[test]
+    fn npm_executable_uses_the_windows_command_shim() {
+        assert_eq!(npm_program_for(true), "npm.cmd");
+        assert_eq!(npm_program_for(false), "npm");
+    }
+
+    #[test]
+    fn diagnostic_sink_backpressure_never_changes_child_status() {
+        struct WouldBlockOnce {
+            blocked: bool,
+            output: Vec<u8>,
+        }
+
+        impl Write for WouldBlockOnce {
+            fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+                if !self.blocked {
+                    self.blocked = true;
+                    return Err(io::Error::from(io::ErrorKind::WouldBlock));
+                }
+                self.output.extend_from_slice(buffer);
+                Ok(buffer.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut sink = WouldBlockOnce {
+            blocked: false,
+            output: Vec::new(),
+        };
+        assert!(write_forwarded_chunk_to(
+            &mut sink,
+            b"complete detail",
+            Duration::from_secs(1),
+        ));
+        assert_eq!(sink.output, b"complete detail");
+
+        struct AlwaysWouldBlock;
+
+        impl Write for AlwaysWouldBlock {
+            fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::WouldBlock))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        assert!(!write_forwarded_chunk_to(
+            &mut AlwaysWouldBlock,
+            b"discardable detail",
+            Duration::ZERO,
+        ));
+    }
 }

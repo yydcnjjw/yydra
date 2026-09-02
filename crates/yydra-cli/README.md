@@ -26,5 +26,20 @@ and notices, and both complete Yydra license texts ship with the package and the
 new Workspace. `.yydra/distribution-inventory.json` records lifecycle,
 provenance, mode, digest, license-notice authority, and edit authority.
 
+Continue only through supported commands:
+
+```console
+yydra setup ./reader
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
+  yydra db migrate ./reader
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
+  yydra dev ./reader
+```
+
+`setup` consumes both committed locks. Migration creation (`yydra db migration
+add`) and application are explicit; the server only verifies that PostgreSQL
+matches its compiled history. Add `--message-format=json` before the subcommand
+for versioned JSON Lines diagnostics.
+
 Creation does not establish a template rerun, synchronization, upgrade,
 compatibility-range, or Distribution-version override contract.

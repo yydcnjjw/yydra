@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
@@ -203,6 +203,1152 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
                     && rule["workspace_source_authority"] == false)
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_uses_both_committed_locks_and_emits_versioned_json_lines() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("setup-reader");
+    create_with_flags(&workspace, "Setup Reader", "setup-reader");
+    let cargo_lock = workspace.join("Cargo.lock");
+    let npm_lock = workspace.join("frontend/package-lock.json");
+    let locks_before = [
+        fs::read(&cargo_lock).expect("read committed Cargo lock"),
+        fs::read(&npm_lock).expect("read committed npm lock"),
+    ];
+
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    let fake_tool = r#"#!/bin/sh
+printf '%s:%s\n' "$PWD" "$*" >> "$YYDRA_TOOL_LOG"
+"#;
+    for tool in ["cargo", "npm"] {
+        write_executable(&fake_bin.join(tool), fake_tool);
+    }
+    let path = std::env::join_paths(std::iter::once(fake_bin.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").expect("PATH")),
+    ))
+    .expect("join fake PATH");
+    let tool_log = sandbox.path().join("tool.log");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "setup",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_TOOL_LOG", &tool_log)
+        .output()
+        .expect("run setup");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        locks_before[0],
+        fs::read(&cargo_lock).expect("reread Cargo lock")
+    );
+    assert_eq!(
+        locks_before[1],
+        fs::read(&npm_lock).expect("reread npm lock")
+    );
+    let calls = fs::read_to_string(tool_log).expect("read tool calls");
+    assert!(
+        calls.contains(&format!("{}:fetch --locked", workspace.display())),
+        "calls: {calls}"
+    );
+    assert!(
+        calls.contains(&format!("{}:ci", workspace.join("frontend").display())),
+        "calls: {calls}"
+    );
+
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    for event in &events {
+        assert_eq!(event["schemaVersion"], 1);
+        assert!(event["phase"].is_string());
+        assert!(event["code"].is_string());
+        assert!(event["severity"].is_string());
+        assert!(event["status"].is_string());
+        assert!(event.get("location").is_some());
+        assert!(event.get("remediation").is_some());
+    }
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_CARGO_FETCH" && event["status"] == "pass" })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["code"] == "SETUP_NPM_CI" && event["status"] == "pass")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_LOCK_INTEGRITY" && event["status"] == "pass" })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn json_mode_forwards_complete_large_leaf_output_before_exit() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("output-reader");
+    create_with_flags(&workspace, "Output Reader", "output-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+printf 'BEGIN-LEAF-OUTPUT\n'
+/usr/bin/head -c 131072 /dev/zero | /usr/bin/tr '\000' x
+printf '\nEND-LEAF-OUTPUT\n'
+"#,
+    );
+    write_executable(&fake_bin.join("npm"), "#!/bin/sh\nexit 0\n");
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "setup",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run setup with large leaf output");
+    assert!(output.status.success());
+    let diagnostics = String::from_utf8(output.stdout).expect("UTF-8 diagnostics");
+    for line in diagnostics.lines() {
+        serde_json::from_str::<serde_json::Value>(line).expect("stdout remains JSON Lines only");
+    }
+    let forwarded = String::from_utf8(output.stderr).expect("UTF-8 forwarded detail");
+    assert!(forwarded.starts_with("BEGIN-LEAF-OUTPUT\n"));
+    assert!(forwarded.ends_with("\nEND-LEAF-OUTPUT\n"));
+    assert_eq!(
+        forwarded.bytes().filter(|byte| *byte == b'x').count(),
+        131072
+    );
+}
+
+#[test]
+fn doctor_human_and_json_views_share_the_stable_phase_code() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("diagnostic-reader");
+    create_with_flags(&workspace, "Diagnostic Reader", "diagnostic-reader");
+
+    let human = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args(["doctor", workspace.to_str().expect("UTF-8 workspace")])
+        .output()
+        .expect("run human doctor");
+    let json = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "doctor",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .output()
+        .expect("run JSON doctor");
+
+    assert!(human.status.success());
+    assert!(json.status.success());
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(human_stdout.contains("[doctor.verify] pass"));
+    assert!(human_stdout.contains("code=DOCTOR_WORKSPACE_VERIFY"));
+    assert!(human_stdout.contains(&format!("location={}", workspace.display())));
+    let events = String::from_utf8(json.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| {
+            event["code"] == "DOCTOR_WORKSPACE_VERIFY" && event["status"] == "pass"
+        })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_fails_loudly_and_restores_both_committed_locks_after_tool_drift() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("drift-reader");
+    create_with_flags(&workspace, "Drift Reader", "drift-reader");
+    let cargo_lock = workspace.join("Cargo.lock");
+    let npm_lock = workspace.join("frontend/package-lock.json");
+    let cargo_before = fs::read(&cargo_lock).expect("read committed Cargo lock");
+    let npm_before = fs::read(&npm_lock).expect("read committed npm lock");
+
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        "#!/bin/sh\nprintf 'rewritten by cargo\\n' > Cargo.lock\n",
+    );
+    write_executable(
+        &fake_bin.join("npm"),
+        "#!/bin/sh\nprintf 'rewritten by npm\\n' > package-lock.json\n",
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "setup",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run drifting setup");
+
+    assert!(!output.status.success(), "setup accepted rewritten locks");
+    assert_eq!(
+        cargo_before,
+        fs::read(&cargo_lock).expect("restored Cargo lock")
+    );
+    assert_eq!(npm_before, fs::read(&npm_lock).expect("restored npm lock"));
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    let failure = events
+        .iter()
+        .find(|event| event["code"] == "SETUP_LOCK_INTEGRITY" && event["status"] == "fail")
+        .expect("lock integrity failure event");
+    assert_eq!(failure["severity"], "error");
+    assert!(failure["location"].is_string());
+    assert!(failure["remediation"].is_string());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_restores_a_lock_even_when_the_mutating_tool_itself_fails() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("failed-tool-reader");
+    create_with_flags(&workspace, "Failed Tool Reader", "failed-tool-reader");
+    let cargo_lock = workspace.join("Cargo.lock");
+    let cargo_before = fs::read(&cargo_lock).expect("read committed Cargo lock");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        "#!/bin/sh\nprintf 'rewritten before failure\\n' > Cargo.lock\nexit 12\n",
+    );
+    write_executable(&fake_bin.join("npm"), "#!/bin/sh\nexit 99\n");
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "setup",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run failed setup tool");
+
+    assert!(!output.status.success());
+    assert_eq!(
+        cargo_before,
+        fs::read(cargo_lock).expect("restored Cargo lock after tool failure")
+    );
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_CARGO_FETCH" && event["status"] == "fail" })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_LOCK_INTEGRITY" && event["status"] == "fail" })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_shutdown_terminates_tool_group_and_restores_the_committed_lock() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("setup-shutdown-reader");
+    create_with_flags(&workspace, "Setup Shutdown Reader", "setup-shutdown-reader");
+    let cargo_lock = workspace.join("Cargo.lock");
+    let cargo_before = fs::read(&cargo_lock).expect("read committed Cargo lock");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+printf 'rewritten while setup runs\n' > Cargo.lock
+printf '%s\n' "$$" > "$YYDRA_SETUP_PID"
+sleep 30 &
+printf '%s\n' "$!" > "$YYDRA_SETUP_WORKER_PID"
+wait
+"#,
+    );
+    write_executable(&fake_bin.join("npm"), "#!/bin/sh\nexit 99\n");
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let setup_pid = sandbox.path().join("setup.pid");
+    let setup_worker_pid = sandbox.path().join("setup-worker.pid");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "setup",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_SETUP_PID", &setup_pid)
+        .env("YYDRA_SETUP_WORKER_PID", &setup_worker_pid)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start setup orchestration");
+    for _ in 0..100 {
+        if setup_pid.is_file() && setup_worker_pid.is_file() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(setup_pid.is_file() && setup_worker_pid.is_file());
+    assert_ne!(
+        cargo_before,
+        fs::read(&cargo_lock).expect("read drifted Cargo lock")
+    );
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status()
+            .expect("signal setup")
+            .success()
+    );
+    let output = child.wait_with_output().expect("wait for setup shutdown");
+    assert!(!output.status.success());
+    assert_eq!(
+        cargo_before,
+        fs::read(&cargo_lock).expect("read restored Cargo lock")
+    );
+    for pid_path in [&setup_pid, &setup_worker_pid] {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read setup process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe setup process")
+                .status
+                .success(),
+            "setup process {pid} survived shutdown"
+        );
+    }
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_CARGO_FETCH" && event["status"] == "fail" })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "SETUP_LOCK_INTEGRITY" && event["status"] == "fail" })
+    );
+}
+
+#[test]
+fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("migration-reader");
+    create_with_flags(&workspace, "Migration Reader", "migration-reader");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "db",
+            "migration",
+            "add",
+            "add_reading_queue",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .output()
+        .expect("add migration stub");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(workspace.join("migrations/0001_baseline.sql").is_file());
+    let added = workspace.join("migrations/0002_add_reading_queue.sql");
+    let contents = fs::read_to_string(&added).expect("read migration stub");
+    assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
+    assert!(contents.contains("-- Add migration SQL here."));
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["code"] == "DB_MIGRATION_STUB_CREATE"
+            && event["status"] == "pass"
+            && event["location"] == added.display().to_string()
+    }));
+}
+
+#[test]
+fn migration_add_rejects_incompatible_existing_version_histories_without_writing() {
+    let sandbox = tempdir().expect("create test sandbox");
+    for (case, filename, expected) in [
+        ("invalid", "abc_bad.sql", "invalid version"),
+        ("duplicate", "1_duplicate.sql", "duplicate version 1"),
+        (
+            "overflow",
+            "9223372036854775807_last.sql",
+            "migration version overflow",
+        ),
+    ] {
+        let workspace = sandbox.path().join(case);
+        create_with_flags(&workspace, "Migration Reader", "migration-reader");
+        fs::write(
+            workspace.join("migrations").join(filename),
+            "-- SPDX-License-Identifier: MIT OR Apache-2.0\n",
+        )
+        .expect("write incompatible migration fixture");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .args([
+                "--message-format=json",
+                "db",
+                "migration",
+                "add",
+                "must_not_exist",
+                workspace.to_str().expect("UTF-8 workspace"),
+            ])
+            .output()
+            .expect("reject incompatible history");
+        assert!(!output.status.success(), "accepted {case} history");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !workspace
+                .join("migrations/0002_must_not_exist.sql")
+                .exists()
+        );
+        let events = String::from_utf8(output.stdout)
+            .expect("UTF-8 diagnostics")
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+            .collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| { event["code"] == "DB_MIGRATION_PLAN" && event["status"] == "fail" })
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn db_migrate_is_an_explicit_locked_leaf_command() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("migrate-reader");
+    create_with_flags(&workspace, "Migrate Reader", "migrate-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+printf '%s:%s\n' "$PWD" "$*" > "$YYDRA_TOOL_LOG"
+"#,
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let tool_log = sandbox.path().join("tool.log");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "db",
+            "migrate",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_TOOL_LOG", &tool_log)
+        .output()
+        .expect("run explicit migration command");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(tool_log).expect("read migration command"),
+        format!("{}:run --locked --bin migrate\n", workspace.display())
+    );
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DB_MIGRATE_APPLY" && event["status"] == "pass" })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn db_migrate_shutdown_terminates_the_migration_process_group() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("migrate-shutdown-reader");
+    create_with_flags(
+        &workspace,
+        "Migrate Shutdown Reader",
+        "migrate-shutdown-reader",
+    );
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+printf '%s\n' "$$" > "$YYDRA_DB_MIGRATE_PID"
+sleep 30 &
+printf '%s\n' "$!" > "$YYDRA_DB_MIGRATE_WORKER_PID"
+wait
+"#,
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let migrate_pid = sandbox.path().join("db-migrate.pid");
+    let migrate_worker_pid = sandbox.path().join("db-migrate-worker.pid");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "db",
+            "migrate",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_DB_MIGRATE_PID", &migrate_pid)
+        .env("YYDRA_DB_MIGRATE_WORKER_PID", &migrate_worker_pid)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start explicit migration");
+    for _ in 0..100 {
+        if migrate_pid.is_file() && migrate_worker_pid.is_file() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(migrate_pid.is_file() && migrate_worker_pid.is_file());
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status()
+            .expect("signal explicit migration")
+            .success()
+    );
+    let output = child
+        .wait_with_output()
+        .expect("wait for migration shutdown");
+    assert!(!output.status.success());
+    for pid_path in [&migrate_pid, &migrate_worker_pid] {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read migration process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe migration process")
+                .status
+                .success(),
+            "migration process {pid} survived shutdown"
+        );
+    }
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DB_MIGRATE_APPLY" && event["status"] == "fail" })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dev_sequences_migration_then_terminates_the_peer_when_a_child_fails() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("dev-reader");
+    create_with_flags(&workspace, "Dev Reader", "dev-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+case "$*" in
+  *"--bin migrate"*)
+    printf 'migration\n' >> "$YYDRA_DEV_LOG"
+    exit 0
+    ;;
+  *"--bin server"*)
+    printf '%s\n' "$$" > "$YYDRA_BACKEND_PID"
+    printf 'backend\n' >> "$YYDRA_DEV_LOG"
+    sleep 30 &
+    printf '%s\n' "$!" > "$YYDRA_BACKEND_WORKER_PID"
+    wait
+    ;;
+esac
+exit 91
+"#,
+    );
+    write_executable(
+        &fake_bin.join("npm"),
+        r#"#!/bin/sh
+printf 'frontend\n' >> "$YYDRA_DEV_LOG"
+printf '%s\n' "$$" > "$YYDRA_FRONTEND_PID"
+sleep 30 &
+printf '%s\n' "$!" > "$YYDRA_FRONTEND_WORKER_PID"
+exit 17
+"#,
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let dev_log = sandbox.path().join("dev.log");
+    let backend_pid = sandbox.path().join("backend.pid");
+    let backend_worker_pid = sandbox.path().join("backend-worker.pid");
+    let frontend_pid = sandbox.path().join("frontend.pid");
+    let frontend_worker_pid = sandbox.path().join("frontend-worker.pid");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "dev",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_DEV_LOG", &dev_log)
+        .env("YYDRA_BACKEND_PID", &backend_pid)
+        .env("YYDRA_BACKEND_WORKER_PID", &backend_worker_pid)
+        .env("YYDRA_FRONTEND_PID", &frontend_pid)
+        .env("YYDRA_FRONTEND_WORKER_PID", &frontend_worker_pid)
+        .output()
+        .expect("run dev orchestration");
+
+    assert!(!output.status.success(), "dev accepted a failed frontend");
+    let calls = fs::read_to_string(dev_log).expect("read dev sequence");
+    assert!(calls.starts_with("migration\n"), "calls: {calls}");
+    assert!(calls.contains("backend\n"), "calls: {calls}");
+    assert!(calls.contains("frontend\n"), "calls: {calls}");
+    for pid_path in [
+        &backend_pid,
+        &backend_worker_pid,
+        &frontend_pid,
+        &frontend_worker_pid,
+    ] {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read development process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe development process")
+                .status
+                .success(),
+            "development process {pid} survived frontend failure"
+        );
+    }
+
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    let position = |code: &str, status: &str| {
+        events
+            .iter()
+            .position(|event| event["code"] == code && event["status"] == status)
+            .unwrap_or_else(|| panic!("missing {code}/{status}"))
+    };
+    assert!(position("DEV_MIGRATION", "pass") < position("DEV_BACKEND", "started"));
+    assert!(position("DEV_BACKEND", "started") < position("DEV_FRONTEND", "started"));
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DEV_FRONTEND" && event["status"] == "fail" })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DEV_PEER_SHUTDOWN" && event["status"] == "pass" })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dev_shutdown_during_migration_terminates_its_group_before_other_phases_start() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("migration-shutdown-reader");
+    create_with_flags(
+        &workspace,
+        "Migration Shutdown Reader",
+        "migration-shutdown-reader",
+    );
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+case "$*" in
+  *"--bin migrate"*)
+    printf '%s\n' "$$" > "$YYDRA_MIGRATION_PID"
+    sleep 30 &
+    printf '%s\n' "$!" > "$YYDRA_MIGRATION_WORKER_PID"
+    wait
+    ;;
+esac
+printf 'unexpected backend\n' >> "$YYDRA_UNEXPECTED_PHASES"
+exit 99
+"#,
+    );
+    write_executable(
+        &fake_bin.join("npm"),
+        "#!/bin/sh\nprintf 'unexpected frontend\\n' >> \"$YYDRA_UNEXPECTED_PHASES\"\nexit 99\n",
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let migration_pid = sandbox.path().join("migration.pid");
+    let migration_worker_pid = sandbox.path().join("migration-worker.pid");
+    let unexpected_phases = sandbox.path().join("unexpected-phases.log");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "dev",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_MIGRATION_PID", &migration_pid)
+        .env("YYDRA_MIGRATION_WORKER_PID", &migration_worker_pid)
+        .env("YYDRA_UNEXPECTED_PHASES", &unexpected_phases)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start dev during migration");
+    for _ in 0..100 {
+        if migration_pid.is_file() && migration_worker_pid.is_file() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(migration_pid.is_file() && migration_worker_pid.is_file());
+
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status()
+            .expect("signal dev during migration")
+            .success()
+    );
+    let output = child
+        .wait_with_output()
+        .expect("wait for migration shutdown");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for pid_path in [&migration_pid, &migration_worker_pid] {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read migration process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe migration process")
+                .status
+                .success(),
+            "migration process {pid} survived shutdown"
+        );
+    }
+    assert!(
+        !unexpected_phases.exists(),
+        "backend or frontend started after migration shutdown"
+    );
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DEV_PEER_SHUTDOWN" && event["status"] == "pass" })
+    );
+    assert!(!events.iter().any(|event| event["code"] == "DEV_BACKEND"));
+    assert!(!events.iter().any(|event| event["code"] == "DEV_FRONTEND"));
+}
+
+#[cfg(unix)]
+#[test]
+fn dev_backend_spawn_failure_uses_the_stable_diagnostic_contract() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("spawn-failure-reader");
+    create_with_flags(&workspace, "Spawn Failure Reader", "spawn-failure-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        "#!/bin/sh\n/bin/rm -- \"$0\"\nexit 0\n",
+    );
+    write_executable(&fake_bin.join("npm"), "#!/bin/sh\nexit 99\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "dev",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", fake_bin)
+        .output()
+        .expect("run dev with missing backend executable");
+    assert!(!output.status.success());
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    let failure = events
+        .iter()
+        .find(|event| event["code"] == "DEV_BACKEND" && event["status"] == "fail")
+        .expect("stable backend spawn failure");
+    assert_eq!(failure["location"], workspace.display().to_string());
+    assert!(failure["remediation"].is_string());
+}
+
+#[cfg(unix)]
+#[test]
+fn production_h5_runner_signal_terminates_export_process_group() {
+    if !Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return;
+    }
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("runner-shutdown-reader");
+    create_with_flags(
+        &workspace,
+        "Runner Shutdown Reader",
+        "runner-shutdown-reader",
+    );
+    let fake_npm_cli = sandbox.path().join("fake-npm-cli.mjs");
+    fs::write(
+        &fake_npm_cli,
+        r#"// SPDX-License-Identifier: MIT OR Apache-2.0
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+writeFileSync(process.env.YYDRA_RUNNER_CHILD_PID, String(process.pid));
+const worker = spawn('sleep', ['30'], { stdio: 'ignore' });
+writeFileSync(process.env.YYDRA_RUNNER_WORKER_PID, String(worker.pid));
+await new Promise((resolve) => worker.once('exit', resolve));
+"#,
+    )
+    .expect("write fake npm CLI");
+    let child_pid = sandbox.path().join("runner-child.pid");
+    let worker_pid = sandbox.path().join("runner-worker.pid");
+    let child = Command::new("node")
+        .arg("scripts/run-h5-e2e.mjs")
+        .current_dir(workspace.join("frontend"))
+        .env("npm_execpath", fake_npm_cli)
+        .env("YYDRA_RUNNER_CHILD_PID", &child_pid)
+        .env("YYDRA_RUNNER_WORKER_PID", &worker_pid)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start production H5 runner");
+    for _ in 0..100 {
+        if child_pid.is_file() && worker_pid.is_file() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(child_pid.is_file() && worker_pid.is_file());
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status()
+            .expect("signal production H5 runner")
+            .success()
+    );
+    let output = child.wait_with_output().expect("wait for H5 runner");
+    assert!(!output.status.success(), "signal should be observable");
+    for pid_path in [&child_pid, &worker_pid] {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read runner process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe runner process")
+                .status
+                .success(),
+            "runner process {pid} survived shutdown"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dev_broken_diagnostic_pipe_still_terminates_managed_child_groups() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("broken-pipe-reader");
+    create_with_flags(&workspace, "Broken Pipe Reader", "broken-pipe-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    write_executable(
+        &fake_bin.join("cargo"),
+        r#"#!/bin/sh
+case "$*" in
+  *"--bin migrate"*) exit 0 ;;
+esac
+printf '%s\n' "$$" > "$YYDRA_BACKEND_PID"
+sleep 30 &
+printf '%s\n' "$!" > "$YYDRA_BACKEND_WORKER_PID"
+wait
+"#,
+    );
+    write_executable(
+        &fake_bin.join("npm"),
+        r#"#!/bin/sh
+printf '%s\n' "$$" > "$YYDRA_FRONTEND_PID"
+while [ ! -f "$YYDRA_FRONTEND_EXIT" ]; do :; done
+printf 'frontend detail after consumer closes pipes\n'
+exit 17
+"#,
+    );
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+    let pid_paths = [
+        sandbox.path().join("broken-backend.pid"),
+        sandbox.path().join("broken-backend-worker.pid"),
+        sandbox.path().join("broken-frontend.pid"),
+    ];
+    let exit_marker = sandbox.path().join("frontend-exit");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "dev",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_BACKEND_PID", &pid_paths[0])
+        .env("YYDRA_BACKEND_WORKER_PID", &pid_paths[1])
+        .env("YYDRA_FRONTEND_PID", &pid_paths[2])
+        .env("YYDRA_FRONTEND_EXIT", &exit_marker)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start dev with diagnostic pipe");
+    let stdout = child.stdout.take().expect("capture diagnostic stdout");
+    let stderr = child.stderr.take().expect("capture forwarded detail");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        assert_ne!(
+            reader.read_line(&mut line).expect("read diagnostic line"),
+            0,
+            "dev exited before frontend started"
+        );
+        if line.contains(r#""code":"DEV_FRONTEND""#) && line.contains(r#""status":"started""#) {
+            break;
+        }
+    }
+    for _ in 0..100 {
+        if pid_paths.iter().all(|path| path.is_file()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(pid_paths.iter().all(|path| path.is_file()));
+    drop(reader);
+    drop(stderr);
+    let shutdown_started = std::time::Instant::now();
+    fs::write(&exit_marker, b"exit\n").expect("trigger frontend failure");
+    assert!(!child.wait().expect("wait for broken-pipe dev").success());
+    assert!(
+        shutdown_started.elapsed() < std::time::Duration::from_secs(5),
+        "managed children were not terminated promptly"
+    );
+    for pid_path in pid_paths {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read managed process pid")
+            .trim()
+            .to_owned();
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid])
+                .output()
+                .expect("probe managed process")
+                .status
+                .success(),
+            "managed process {pid} survived diagnostic panic"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dev_shutdown_signal_terminates_both_child_process_groups() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("shutdown-reader");
+    create_with_flags(&workspace, "Shutdown Reader", "shutdown-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    let long_lived_tool = r#"#!/bin/sh
+case "$*" in
+  *"--bin migrate"*) exit 0 ;;
+esac
+prefix="$YYDRA_PROCESS_PREFIX"
+case "$0" in
+  *cargo) prefix="backend" ;;
+  *npm) prefix="frontend" ;;
+esac
+printf '%s\n' "$$" > "$YYDRA_PID_DIR/$prefix.pid"
+sleep 30 &
+printf '%s\n' "$!" > "$YYDRA_PID_DIR/$prefix-worker.pid"
+wait
+"#;
+    for tool in ["cargo", "npm"] {
+        write_executable(&fake_bin.join(tool), long_lived_tool);
+    }
+    let path = std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    )))
+    .expect("join fake PATH");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "dev",
+            workspace.to_str().expect("UTF-8 workspace"),
+        ])
+        .env("PATH", path)
+        .env("YYDRA_PID_DIR", sandbox.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start dev orchestration");
+    let pid_paths = [
+        sandbox.path().join("backend.pid"),
+        sandbox.path().join("backend-worker.pid"),
+        sandbox.path().join("frontend.pid"),
+        sandbox.path().join("frontend-worker.pid"),
+    ];
+    for _ in 0..100 {
+        if pid_paths.iter().all(|path| path.is_file()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        pid_paths.iter().all(|path| path.is_file()),
+        "development children did not start"
+    );
+
+    let signal = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("signal dev process");
+    assert!(signal.success());
+    let output = child.wait_with_output().expect("wait for dev shutdown");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for pid_path in pid_paths {
+        let pid = fs::read_to_string(pid_path)
+            .expect("read development process pid")
+            .trim()
+            .to_owned();
+        let probe = Command::new("kill")
+            .args(["-0", &pid])
+            .output()
+            .expect("probe development process");
+        assert!(
+            !probe.status.success(),
+            "development process {pid} survived shutdown"
+        );
+    }
+    let events = String::from_utf8(output.stdout)
+        .expect("UTF-8 diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
+        .collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["code"] == "DEV_PEER_SHUTDOWN" && event["status"] == "pass" })
+    );
 }
 
 #[test]
@@ -445,6 +1591,48 @@ fn product_input_is_rendered_as_data_not_as_a_template_token() {
 }
 
 #[test]
+fn product_name_is_encoded_as_data_in_json_jsx_and_test_literals() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("encoded-name-workspace");
+    let product_name = "Reader \"quote\" 'apostrophe' {__PRODUCT_ID__} </Text>";
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "new",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--product-name",
+            product_name,
+            "--product-id",
+            "encoded-reader",
+            "--product-source-license",
+            "Apache-2.0",
+        ])
+        .output()
+        .expect("create Workspace with source-sensitive name");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let app: serde_json::Value = serde_json::from_slice(
+        &fs::read(workspace.join("frontend/app.json")).expect("read app JSON"),
+    )
+    .expect("product name must not break app JSON");
+    assert_eq!(app["expo"]["name"], product_name);
+    let encoded = serde_json::to_string(product_name).expect("encode JS string literal");
+    let route =
+        fs::read_to_string(workspace.join("frontend/app/index.tsx")).expect("read product route");
+    assert!(
+        route.contains(&format!("{{{encoded}}}")),
+        "route must embed the name as a JSX expression string: {route}"
+    );
+    let e2e = fs::read_to_string(workspace.join("frontend/e2e/clean-workspace.spec.ts"))
+        .expect("read H5 spec");
+    assert!(e2e.contains(&format!("name: {encoded}")));
+}
+
+#[test]
 fn identical_inputs_produce_identical_path_mode_and_byte_inventories() {
     let sandbox = tempdir().expect("create test sandbox");
     let first = sandbox.path().join("first");
@@ -507,7 +1695,15 @@ fn an_existing_empty_destination_is_safely_materialized() {
     create_with_flags(&destination, "Acme Reader", "acme-reader");
 
     assert!(destination.join(".yydra/origin.toml").is_file());
-    assert_eq!(tracked_inventory(&destination).len(), 7);
+    let inventory = tracked_inventory(&destination);
+    for required in [
+        PathBuf::from("Cargo.lock"),
+        PathBuf::from("crates/server/src/main.rs"),
+        PathBuf::from("frontend/app/index.tsx"),
+        PathBuf::from("migrations/0001_baseline.sql"),
+    ] {
+        assert!(inventory.contains_key(&required), "missing {required:?}");
+    }
 }
 
 #[test]
@@ -766,4 +1962,11 @@ fn tracked_inventory(root: &Path) -> BTreeMap<PathBuf, (u32, Vec<u8>)> {
             (relative, (mode, bytes))
         })
         .collect()
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, contents: &str) {
+    fs::write(path, contents).expect("write executable fixture");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("set executable fixture mode");
 }
