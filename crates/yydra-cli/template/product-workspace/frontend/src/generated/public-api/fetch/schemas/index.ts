@@ -4,11 +4,14 @@
  * Do not edit manually.
  */
 
+export * from "./changeReadingEntryStateRequest.zod";
+export * from "./changeReadingQueueEntryStateBody.zod";
 export * from "./createReadingEntryRequest.zod";
 export * from "./createReadingQueueEntryBody.zod";
 export * from "./frameworkContractCreate.zod";
 export * from "./frameworkContractPatch.zod";
 export * from "./frameworkContractProfile.zod";
+export * from "./frameworkProtectedContract.zod";
 export * from "./problemDetails.zod";
 export * from "./readingQueueEntryResponse.zod";
 export * from "./readingQueueEntryState.zod";

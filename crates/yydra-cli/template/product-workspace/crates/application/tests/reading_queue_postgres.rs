@@ -5,6 +5,7 @@
 use std::env;
 
 use product_application::{
+    ChangeReadingEntryState, ChangeReadingEntryStateCommand, ChangeReadingEntryStateError,
     CreateReadingEntry, CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntries,
     ReadingQueueEntryState,
 };
@@ -28,6 +29,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     cleanup.commit().await.expect("commit fixture cleanup");
 
     let create = CreateReadingEntry::new(database.clone());
+    let change = ChangeReadingEntryState::new(database.clone());
     let list = ListReadingEntries::new(database.clone());
     let created = create
         .execute(CreateReadingEntryCommand {
@@ -40,8 +42,54 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     assert_eq!(created.state, ReadingQueueEntryState::Queued);
     assert_eq!(
         list.execute().await.expect("list committed entry"),
-        vec![created]
+        vec![created.clone()]
     );
+
+    let completed = change
+        .execute(ChangeReadingEntryStateCommand {
+            id: created.id.clone(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .expect("complete a queued entry");
+    assert_eq!(completed.state, ReadingQueueEntryState::Completed);
+    let conflict = change
+        .execute(ChangeReadingEntryStateCommand {
+            id: created.id.clone(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .expect_err("completing twice must conflict");
+    assert!(matches!(
+        conflict,
+        ChangeReadingEntryStateError::Conflict { .. }
+    ));
+    assert_eq!(
+        list.execute()
+            .await
+            .expect("conflict leaves committed state")[0]
+            .state,
+        ReadingQueueEntryState::Completed
+    );
+    let reopened = change
+        .execute(ChangeReadingEntryStateCommand {
+            id: created.id.clone(),
+            target: ReadingQueueEntryState::Queued,
+        })
+        .await
+        .expect("reopen a completed entry");
+    assert_eq!(reopened.state, ReadingQueueEntryState::Queued);
+    let missing = change
+        .execute(ChangeReadingEntryStateCommand {
+            id: "missing-opaque-entry".to_owned(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .expect_err("missing entry must not be created by transition");
+    assert!(matches!(
+        missing,
+        ChangeReadingEntryStateError::NotFound { .. }
+    ));
 
     let invalid = create
         .execute(CreateReadingEntryCommand {

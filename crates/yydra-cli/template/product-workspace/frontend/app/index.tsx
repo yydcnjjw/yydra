@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 
-import { useFrameworkClient } from "@/framework/runtime";
+import { isFrameworkFailure, useFrameworkClient } from "@/framework/runtime";
 
 const readingQueueKey = ["reading-queue"] as const;
 
@@ -33,6 +33,18 @@ export default function IndexRoute() {
     async onSuccess() {
       setTitle("");
       setSourceUrl("");
+      await queryClient.invalidateQueries({ queryKey: readingQueueKey });
+    },
+  });
+  const changeEntryState = useMutation({
+    mutationFn: ({
+      id,
+      state,
+    }: {
+      id: string;
+      state: "queued" | "completed";
+    }) => client.changeReadingQueueEntryState(id, { state }),
+    async onSuccess() {
       await queryClient.invalidateQueries({ queryKey: readingQueueKey });
     },
   });
@@ -118,11 +130,49 @@ export default function IndexRoute() {
         {queue.data?.entries.length === 0 ? (
           <Text>The queue is empty.</Text>
         ) : null}
+        {changeEntryState.isError ? (
+          <View style={styles.status}>
+            <Text accessibilityRole="alert">
+              {isFrameworkFailure(changeEntryState.error) &&
+              changeEntryState.error.kind === "problem" &&
+              changeEntryState.error.problem.type ===
+                "https://yydra.dev/problems/reading-entry-transition-conflict"
+                ? "This entry changed. Refresh the queue and try again."
+                : "Could not update this entry."}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                changeEntryState.reset();
+                void queue.refetch();
+              }}
+            >
+              <Text>Refresh queue</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {queue.data?.entries.map((entry) => (
           <View key={entry.id} style={styles.entry}>
             <Text style={styles.entryTitle}>{entry.title}</Text>
             <Text>{entry.sourceUrl}</Text>
             <Text>State: {entry.state}</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={changeEntryState.isPending}
+              onPress={() =>
+                changeEntryState.mutate({
+                  id: entry.id,
+                  state: entry.state === "queued" ? "completed" : "queued",
+                })
+              }
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>
+                {entry.state === "queued"
+                  ? `Complete ${entry.title}`
+                  : `Reopen ${entry.title}`}
+              </Text>
+            </Pressable>
           </View>
         ))}
       </View>

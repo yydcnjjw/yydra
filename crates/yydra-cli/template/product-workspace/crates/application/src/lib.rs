@@ -10,10 +10,12 @@ use std::future::Future;
 use std::pin::Pin;
 
 use product_domain::{
-    DomainValidationError, ReadingEntry, ReadingEntryState, ReadingEntryTitle, SourceUrl,
+    DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryState, ReadingEntryTitle,
+    SourceUrl,
 };
 use product_persistence_postgres::{
     Database, PersistenceError, insert_reading_entry, list_reading_entries,
+    lock_reading_entry_for_update, update_reading_entry_state,
 };
 
 #[derive(Clone)]
@@ -45,15 +47,17 @@ pub struct CreateReadingEntryCommand {
     pub source_url: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadingQueueEntryState {
     Queued,
+    Completed,
 }
 
 impl From<ReadingEntryState> for ReadingQueueEntryState {
     fn from(state: ReadingEntryState) -> Self {
         match state {
             ReadingEntryState::Queued => Self::Queued,
+            ReadingEntryState::Completed => Self::Completed,
         }
     }
 }
@@ -160,6 +164,81 @@ impl ListReadingEntries {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeReadingEntryStateCommand {
+    pub id: String,
+    pub target: ReadingQueueEntryState,
+}
+
+#[derive(Clone)]
+pub struct ChangeReadingEntryState {
+    database: Database,
+}
+
+impl ChangeReadingEntryState {
+    pub fn new(database: Database) -> Self {
+        Self { database }
+    }
+
+    pub async fn execute(
+        &self,
+        command: ChangeReadingEntryStateCommand,
+    ) -> Result<ReadingQueueEntry, ChangeReadingEntryStateError> {
+        let id = ReadingEntryId::parse(command.id)?;
+        let mut transaction = self
+            .database
+            .begin()
+            .await
+            .map_err(ChangeReadingEntryStateError::storage)?;
+        let mut entry = match lock_reading_entry_for_update(&mut transaction, &id).await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(ChangeReadingEntryStateError::storage)?;
+                return Err(ChangeReadingEntryStateError::NotFound {
+                    id: id.as_str().to_owned(),
+                });
+            }
+            Err(error) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(ChangeReadingEntryStateError::storage)?;
+                return Err(ChangeReadingEntryStateError::storage(error));
+            }
+        };
+        let transition = match command.target {
+            ReadingQueueEntryState::Completed => entry.complete(),
+            ReadingQueueEntryState::Queued => entry.reopen(),
+        };
+        if let Err(error) = transition {
+            let conflict = ChangeReadingEntryStateError::Conflict {
+                current: error.current().into(),
+                requested: error.requested().into(),
+            };
+            transaction
+                .rollback()
+                .await
+                .map_err(ChangeReadingEntryStateError::storage)?;
+            return Err(conflict);
+        }
+        if let Err(error) = update_reading_entry_state(&mut transaction, &entry).await {
+            transaction
+                .rollback()
+                .await
+                .map_err(ChangeReadingEntryStateError::storage)?;
+            return Err(ChangeReadingEntryStateError::storage(error));
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(ChangeReadingEntryStateError::storage)?;
+        Ok(entry.into())
+    }
+}
+
 #[derive(Debug)]
 pub enum CreateReadingEntryError {
     InvalidInput {
@@ -223,6 +302,60 @@ impl Error for ListReadingEntriesError {
     }
 }
 
+#[derive(Debug)]
+pub enum ChangeReadingEntryStateError {
+    InvalidInput {
+        field: &'static str,
+        message: &'static str,
+    },
+    NotFound {
+        id: String,
+    },
+    Conflict {
+        current: ReadingQueueEntryState,
+        requested: ReadingQueueEntryState,
+    },
+    Storage(Box<dyn Error + Send + Sync>),
+}
+
+impl ChangeReadingEntryStateError {
+    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
+        Self::Storage(Box::new(error))
+    }
+}
+
+impl From<DomainValidationError> for ChangeReadingEntryStateError {
+    fn from(error: DomainValidationError) -> Self {
+        Self::InvalidInput {
+            field: error.field(),
+            message: error.message(),
+        }
+    }
+}
+
+impl fmt::Display for ChangeReadingEntryStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput { field, message } => write!(formatter, "{field} {message}"),
+            Self::NotFound { id } => write!(formatter, "reading entry {id} was not found"),
+            Self::Conflict { current, requested } => write!(
+                formatter,
+                "cannot transition reading entry from {current:?} to {requested:?}"
+            ),
+            Self::Storage(_) => formatter.write_str("reading entry transition storage failed"),
+        }
+    }
+}
+
+impl Error for ChangeReadingEntryStateError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Storage(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
+
 impl From<PersistenceError> for ListReadingEntriesError {
     fn from(error: PersistenceError) -> Self {
         Self::storage(error)
@@ -240,19 +373,26 @@ pub trait ReadingQueueApplication: Send + Sync {
     fn list(
         &self,
     ) -> ApplicationFuture<'_, Result<Vec<ReadingQueueEntry>, ListReadingEntriesError>>;
+
+    fn change<'a>(
+        &'a self,
+        command: ChangeReadingEntryStateCommand,
+    ) -> ApplicationFuture<'a, Result<ReadingQueueEntry, ChangeReadingEntryStateError>>;
 }
 
 #[derive(Clone)]
 pub struct ReadingQueueService {
     create: CreateReadingEntry,
     list: ListReadingEntries,
+    change: ChangeReadingEntryState,
 }
 
 impl ReadingQueueService {
     pub fn new(database: Database) -> Self {
         Self {
             create: CreateReadingEntry::new(database.clone()),
-            list: ListReadingEntries::new(database),
+            list: ListReadingEntries::new(database.clone()),
+            change: ChangeReadingEntryState::new(database),
         }
     }
 }
@@ -269,5 +409,12 @@ impl ReadingQueueApplication for ReadingQueueService {
         &self,
     ) -> ApplicationFuture<'_, Result<Vec<ReadingQueueEntry>, ListReadingEntriesError>> {
         Box::pin(self.list.execute())
+    }
+
+    fn change<'a>(
+        &'a self,
+        command: ChangeReadingEntryStateCommand,
+    ) -> ApplicationFuture<'a, Result<ReadingQueueEntry, ChangeReadingEntryStateError>> {
+        Box::pin(self.change.execute(command))
     }
 }

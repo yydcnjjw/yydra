@@ -63,6 +63,7 @@ fn materializes_the_public_api_authority_chain() {
         "crates/transport-http/src/bin/export-openapi.rs",
         "crates/transport-http/tests/public_api_contract.rs",
         "migrations/0002_reading_queue.sql",
+        "migrations/0003_reading_entry_transitions.sql",
         "frontend/orval.config.mjs",
         "frontend/src/generated/public-api/fetch/client.ts",
         "frontend/src/generated/public-api/fetch/schemas/index.ts",
@@ -82,22 +83,31 @@ fn materializes_the_public_api_authority_chain() {
     assert!(transport.contains("operation_id = \"getFrameworkContractProfile\""));
     assert!(transport.contains("operation_id = \"createReadingQueueEntry\""));
     assert!(transport.contains("operation_id = \"listReadingQueueEntries\""));
+    assert!(transport.contains("operation_id = \"changeReadingQueueEntryState\""));
+    assert!(transport.contains("operation_id = \"getFrameworkProtectedContract\""));
+    assert!(transport.contains("RouteAccess::Anonymous"));
+    assert!(transport.contains("RouteAccess::Protected"));
 
     let domain = fs::read_to_string(workspace.join("crates/domain/src/lib.rs"))
         .expect("read Product Domain source");
     assert!(domain.contains("pub struct ReadingEntryTitle"));
     assert!(domain.contains("pub enum ReadingEntryState"));
+    assert!(domain.contains("pub fn complete"));
+    assert!(domain.contains("pub fn reopen"));
 
     let application = fs::read_to_string(workspace.join("crates/application/src/lib.rs"))
         .expect("read application source");
     assert!(application.contains("pub struct CreateReadingEntry"));
     assert!(application.contains("pub struct ListReadingEntries"));
+    assert!(application.contains("pub struct ChangeReadingEntryState"));
     assert!(application.contains("SET TRANSACTION READ ONLY"));
 
     let persistence = fs::read_to_string(workspace.join("crates/persistence-postgres/src/lib.rs"))
         .expect("read PostgreSQL persistence source");
     assert!(persistence.contains("pub async fn insert_reading_entry"));
     assert!(persistence.contains("pub async fn list_reading_entries"));
+    assert!(persistence.contains("FOR UPDATE"));
+    assert!(persistence.contains("pub async fn update_reading_entry_state"));
 
     let generated =
         fs::read_to_string(workspace.join("frontend/src/generated/public-api/fetch/client.ts"))
@@ -105,6 +115,8 @@ fn materializes_the_public_api_authority_chain() {
     assert!(generated.contains("getFrameworkContractProfile"));
     assert!(generated.contains("createReadingQueueEntry"));
     assert!(generated.contains("listReadingQueueEntries"));
+    assert!(generated.contains("changeReadingQueueEntryState"));
+    assert!(generated.contains("getFrameworkProtectedContract"));
     assert!(generated.contains("fetchFn"));
     let create_schema =
         fs::read_to_string(workspace.join(
@@ -124,6 +136,7 @@ fn materializes_the_public_api_authority_chain() {
         fs::read_to_string(workspace.join("crates/transport-http/tests/public_api_contract.rs"))
             .expect("read runtime contract fixture");
     assert!(contract_fixture.contains("an undocumented Product Domain state must fail"));
+    assert!(contract_fixture.contains("invalid_requests_transitions_and_auth"));
     assert!(contract_fixture.contains(r#""state":"invented""#));
 }
 
@@ -701,7 +714,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(workspace.join("migrations/0001_baseline.sql").is_file());
-    let added = workspace.join("migrations/0003_add_reading_notes.sql");
+    let added = workspace.join("migrations/0004_add_reading_notes.sql");
     let contents = fs::read_to_string(&added).expect("read migration stub");
     assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
     assert!(contents.contains("-- Add migration SQL here."));
@@ -2469,12 +2482,13 @@ fn api_generation_allows_product_owned_reading_queue_replacement() {
     openapi["paths"]
         .as_object_mut()
         .expect("OpenAPI paths")
-        .remove("/api/v1/reading-queue/entries");
+        .retain(|path, _| !path.starts_with("/api/v1/reading-queue"));
     let schemas = openapi["components"]["schemas"]
         .as_object_mut()
         .expect("OpenAPI schemas");
     for schema in [
         "CreateReadingEntryRequest",
+        "ChangeReadingEntryStateRequest",
         "ReadingQueueEntryResponse",
         "ReadingQueueEntryState",
         "ReadingQueueResponse",

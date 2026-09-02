@@ -1,22 +1,30 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import {
+  changeReadingQueueEntryState,
   createReadingQueueEntry,
   getFrameworkContractProfile,
+  getFrameworkProtectedContract,
   listReadingQueueEntries,
 } from "../../generated/public-api/fetch/client";
 import {
+  ChangeReadingEntryStateRequest,
   CreateReadingEntryRequest,
   FrameworkContractProfile,
+  FrameworkProtectedContract,
   ProblemDetails,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 } from "../../generated/public-api/fetch/schemas";
 import { CreateReadingEntryRequest as StrictCreateReadingEntryRequest } from "../../generated/public-api/request/schemas/createReadingEntryRequest.zod";
+import { ChangeReadingQueueEntryStateParams } from "../../generated/public-api/request/contracts";
+import { ChangeReadingEntryStateRequest as StrictChangeReadingEntryStateRequest } from "../../generated/public-api/request/schemas/changeReadingEntryStateRequest.zod";
 
 export type {
+  ChangeReadingEntryStateRequest,
   CreateReadingEntryRequest,
   FrameworkContractProfile,
+  FrameworkProtectedContract,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 };
@@ -35,11 +43,19 @@ export interface PublicApiClient {
   frameworkContractProfile(
     options?: RequestOptions,
   ): Promise<FrameworkContractProfile>;
+  frameworkProtectedContract(
+    options?: RequestOptions,
+  ): Promise<FrameworkProtectedContract>;
   listReadingQueueEntries(
     options?: RequestOptions,
   ): Promise<ReadingQueueResponse>;
   createReadingQueueEntry(
     input: CreateReadingEntryRequest,
+    options?: RequestOptions,
+  ): Promise<ReadingQueueEntryResponse>;
+  changeReadingQueueEntryState(
+    id: string,
+    input: ChangeReadingEntryStateRequest,
     options?: RequestOptions,
   ): Promise<ReadingQueueEntryResponse>;
 }
@@ -141,6 +157,14 @@ export function createPublicApiClient({
             `status ${response.status} used undocumented content type ${contentType ?? "missing"}`,
           );
         }
+        if (
+          response.status === 401 &&
+          !response.headers.get("www-authenticate")?.trim()
+        ) {
+          throw new ContractViolation(
+            "status 401 is missing the required WWW-Authenticate challenge",
+          );
+        }
         let body: unknown;
         try {
           body = await response.clone().json();
@@ -234,6 +258,19 @@ export function createPublicApiClient({
           ),
       });
     },
+    frameworkProtectedContract(options) {
+      return execute<FrameworkProtectedContract>({
+        name: "getFrameworkProtectedContract",
+        successStatus: 200,
+        problemStatuses: [401, 403],
+        options,
+        invoke: (runtimeFetch) =>
+          getFrameworkProtectedContract(
+            { signal: options?.signal },
+            runtimeFetch,
+          ),
+      });
+    },
     listReadingQueueEntries(options) {
       return execute<ReadingQueueResponse>({
         name: "listReadingQueueEntries",
@@ -255,7 +292,7 @@ export function createPublicApiClient({
       return execute<ReadingQueueEntryResponse>({
         name: "createReadingQueueEntry",
         successStatus: 201,
-        problemStatuses: [422, 500],
+        problemStatuses: [400, 422, 500],
         options,
         invoke: (runtimeFetch) =>
           createReadingQueueEntry(
@@ -265,17 +302,56 @@ export function createPublicApiClient({
           ),
       });
     },
+    changeReadingQueueEntryState(id, input, options) {
+      const parsedParams = ChangeReadingQueueEntryStateParams.safeParse({
+        entry_id: id,
+      });
+      const parsedInput = StrictChangeReadingEntryStateRequest.safeParse(input);
+      if (!parsedParams.success || !parsedInput.success) {
+        return Promise.reject({
+          kind: "contractViolation",
+          message:
+            "changeReadingQueueEntryState input violated its request schema",
+        } satisfies FrameworkFailure);
+      }
+      return execute<ReadingQueueEntryResponse>({
+        name: "changeReadingQueueEntryState",
+        successStatus: 200,
+        problemStatuses: [400, 404, 409, 422, 500],
+        options,
+        invoke: (runtimeFetch) =>
+          changeReadingQueueEntryState(
+            encodeURIComponent(parsedParams.data.entry_id),
+            parsedInput.data,
+            { signal: options?.signal },
+            runtimeFetch,
+          ),
+      });
+    },
   };
 }
 
 export function isFrameworkFailure(value: unknown): value is FrameworkFailure {
+  if (typeof value !== "object" || value === null || !("kind" in value)) {
+    return false;
+  }
+  if (value.kind === "problem") {
+    return (
+      "problem" in value &&
+      typeof value.problem === "object" &&
+      value.problem !== null &&
+      "type" in value.problem &&
+      typeof value.problem.type === "string" &&
+      "status" in value.problem &&
+      typeof value.problem.status === "number"
+    );
+  }
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
-    ["problem", "transport", "cancelled", "contractViolation"].includes(
+    ["transport", "cancelled", "contractViolation"].includes(
       String(value.kind),
-    )
+    ) &&
+    "message" in value &&
+    typeof value.message === "string"
   );
 }
 

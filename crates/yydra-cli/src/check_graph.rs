@@ -128,8 +128,8 @@ const NODE_SPECS: &[NodeSpec] = &[
         id: "api.runtime-conformance",
         prerequisites: &["api.generated-contract"],
         remediation: "align the public-route handler status, content type, headers, and response body with the committed Public API Contract",
-        proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject undocumented status, content type, and malformed bodies",
-        does_not_prove: "exhaustive generated-input coverage, authentication policy, or database-backed Product Domain behavior",
+        proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject invalid JSON, unknown request fields, undocumented status or content type, malformed bodies, prohibited transitions, and incorrect 401/403 authentication meanings",
+        does_not_prove: "exhaustive generated-input coverage, a full Identity system, or database-backed Product Domain behavior",
     },
     NodeSpec {
         id: "frontend.format",
@@ -163,7 +163,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         id: "api.client-contract",
         prerequisites: &["api.generated-contract", "frontend.typecheck"],
         remediation: "restore the generated runtime schemas and fix the handwritten Framework facade without importing Generated Client internals from Product code",
-        proves: "the handwritten facade injects transport concerns and classifies declared Problems, transport, caller cancellation, timeout, and malformed or undocumented responses",
+        proves: "the handwritten facade injects credentials and transport concerns, validates 401 challenges, and classifies typed Problems, transport, caller cancellation, timeout, and malformed or undocumented responses without parsing Problem prose for behavior",
         does_not_prove: "browser or native runtime behavior against a deployed service",
     },
     NodeSpec {
@@ -189,8 +189,8 @@ const NODE_SPECS: &[NodeSpec] = &[
             "infrastructure.playwright-chromium",
         ],
         remediation: "inspect the node log, run yydra db migrate and the focused production H5 test, then fix the first semantic failure",
-        proves: "the production H5 export creates and reloads a Reading Queue entry through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; the focused rollback fixture also passes",
-        does_not_prove: "Reading Queue transitions or pagination, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
+        proves: "the production H5 export creates, completes, reopens, and reloads a Reading Queue entry through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; stable request, transition, and authentication Problems plus the focused rollback fixture also pass",
+        does_not_prove: "Reading Queue pagination, a full Identity system, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
     },
     NodeSpec {
         id: INPUTS_UNCHANGED_NODE,
@@ -2439,6 +2439,89 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
     entries: [{ title: entryTitle, sourceUrl, state: "queued" }],
   });
   expect(queue.body.entries[0].id).toEqual(expect.any(String));
+  const entryId = queue.body.entries[0].id;
+  const directComplete = await page.evaluate(async ({ baseUrl, id }) => {
+    const response = await fetch(
+      `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: "completed" }),
+      },
+    );
+    return { body: await response.json(), status: response.status };
+  }, { baseUrl: apiUrl, id: entryId });
+  expect(directComplete).toMatchObject({ body: { state: "completed" }, status: 200 });
+  await page.getByRole("button", { name: `Complete ${entryTitle}` }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "This entry changed. Refresh the queue and try again.",
+  );
+  await page.getByRole("button", { name: "Refresh queue" }).click();
+  await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Reopen ${entryTitle}` }).click();
+  await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Complete ${entryTitle}` }).click();
+  await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
+  const negatives = await page.evaluate(async ({ baseUrl, id }) => {
+    const transition = `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`;
+    const unknown = await fetch(transition, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "queued", unknown: true }),
+    });
+    const malformed = await fetch(transition, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    const missingAuth = await fetch(`${baseUrl}/api/v1/framework-auth-contract`);
+    const forbidden = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
+      headers: { authorization: "Bearer local-framework-forbidden" },
+    });
+    const authorized = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
+      headers: { authorization: "Bearer local-framework-contract" },
+    });
+    const validation = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "   ",
+        sourceUrl: "https://example.test/rejected-direct",
+      }),
+    });
+    return {
+      authorized: { body: await authorized.json(), status: authorized.status },
+      forbidden: { body: await forbidden.json(), status: forbidden.status },
+      malformed: { body: await malformed.json(), status: malformed.status },
+      missingAuth: {
+        body: await missingAuth.json(),
+        challenge: missingAuth.headers.get("www-authenticate"),
+        status: missingAuth.status,
+      },
+      unknown: { body: await unknown.json(), status: unknown.status },
+      validation: { body: await validation.json(), status: validation.status },
+    };
+  }, { baseUrl: apiUrl, id: entryId });
+  for (const invalid of [negatives.unknown, negatives.malformed]) {
+    expect(invalid).toMatchObject({
+      body: { type: "https://yydra.dev/problems/invalid-request-body" },
+      status: 400,
+    });
+  }
+  expect(negatives.missingAuth).toMatchObject({
+    body: { type: "https://yydra.dev/problems/authentication-required" },
+    challenge: expect.stringContaining("Bearer"),
+    status: 401,
+  });
+  expect(negatives.forbidden).toMatchObject({
+    body: { type: "https://yydra.dev/problems/access-forbidden" },
+    status: 403,
+  });
+  expect(negatives.authorized).toEqual({ body: { access: "granted" }, status: 200 });
+  expect(negatives.validation).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-entry" },
+    status: 422,
+  });
   await page.getByLabel("Entry title").fill("   ");
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
   await page.getByRole("button", { name: "Add entry" }).click();
@@ -2448,6 +2531,7 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
   await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
   await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
+  await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
 });
 "#;
     context.tool_versions.insert(

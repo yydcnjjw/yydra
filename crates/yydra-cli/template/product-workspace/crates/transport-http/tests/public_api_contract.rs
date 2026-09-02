@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, Response, StatusCode, header};
 use product_application::{
-    ApplicationFuture, CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntriesError,
+    ApplicationFuture, ChangeReadingEntryStateCommand, ChangeReadingEntryStateError,
+    CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntriesError,
     ReadingQueueApplication, ReadingQueueEntry, ReadingQueueEntryState,
 };
 use serde_json::Value;
@@ -25,6 +26,7 @@ struct OperationFixture {
     path: &'static str,
     body: &'static str,
     content_type: Option<&'static str>,
+    authorization: Option<&'static str>,
 }
 
 const OPERATION_FIXTURES: &[OperationFixture] = &[
@@ -34,6 +36,15 @@ const OPERATION_FIXTURES: &[OperationFixture] = &[
         path: "/api/v1/reading-queue/entries",
         body: r#"{"title":"Contract fixture","sourceUrl":"https://example.test/contract"}"#,
         content_type: Some("application/json"),
+        authorization: None,
+    },
+    OperationFixture {
+        operation_id: "changeReadingQueueEntryState",
+        method: "patch",
+        path: "/api/v1/reading-queue/entries/opaque-contract-entry",
+        body: r#"{"state":"completed"}"#,
+        content_type: Some("application/json"),
+        authorization: None,
     },
     OperationFixture {
         operation_id: "getFrameworkContractProfile",
@@ -41,6 +52,15 @@ const OPERATION_FIXTURES: &[OperationFixture] = &[
         path: "/api/v1/framework-contract",
         body: "",
         content_type: None,
+        authorization: None,
+    },
+    OperationFixture {
+        operation_id: "getFrameworkProtectedContract",
+        method: "get",
+        path: "/api/v1/framework-auth-contract",
+        body: "",
+        content_type: None,
+        authorization: Some("Bearer contract-test"),
     },
     OperationFixture {
         operation_id: "listReadingQueueEntries",
@@ -48,6 +68,7 @@ const OPERATION_FIXTURES: &[OperationFixture] = &[
         path: "/api/v1/reading-queue/entries",
         body: "",
         content_type: None,
+        authorization: None,
     },
 ];
 
@@ -62,6 +83,11 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
     let (router, collected) = product_transport_http::public_routes()
         .with_state(product_transport_http::ReadingQueueHttpState::new(
             FixtureReadingQueue,
+            product_transport_http::BearerAuthentication::new(
+                "contract-test",
+                "contract-forbidden",
+            )
+            .expect("fixture authentication"),
         ))
         .split_for_parts();
     let collected: Value = serde_json::to_value(collected).expect("serialize collected OpenAPI");
@@ -83,12 +109,20 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
     for fixture in OPERATION_FIXTURES {
         let operation = &operations[fixture.operation_id];
         assert_eq!(operation.method, fixture.method);
-        assert_eq!(operation.path, fixture.path);
+        assert_eq!(
+            operation
+                .path
+                .replace("{entry_id}", "opaque-contract-entry"),
+            fixture.path
+        );
         let method = Method::from_bytes(fixture.method.to_ascii_uppercase().as_bytes())
             .expect("fixture HTTP method");
         let mut request = Request::builder().method(method).uri(fixture.path);
         if let Some(content_type) = fixture.content_type {
             request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        if let Some(authorization) = fixture.authorization {
+            request = request.header(header::AUTHORIZATION, authorization);
         }
         let response = router
             .clone()
@@ -135,6 +169,157 @@ impl ReadingQueueApplication for FixtureReadingQueue {
             }])
         })
     }
+
+    fn change<'a>(
+        &'a self,
+        command: ChangeReadingEntryStateCommand,
+    ) -> ApplicationFuture<'a, Result<ReadingQueueEntry, ChangeReadingEntryStateError>> {
+        Box::pin(async move {
+            match command.id.as_str() {
+                "missing" => Err(ChangeReadingEntryStateError::NotFound { id: command.id }),
+                "conflict" => Err(ChangeReadingEntryStateError::Conflict {
+                    current: ReadingQueueEntryState::Completed,
+                    requested: command.target,
+                }),
+                _ => Ok(ReadingQueueEntry {
+                    id: command.id,
+                    title: "Contract fixture".to_owned(),
+                    source_url: "https://example.test/contract".to_owned(),
+                    state: command.target,
+                }),
+            }
+        })
+    }
+}
+
+fn fixture_router() -> axum::Router {
+    product_transport_http::public_routes()
+        .with_state(product_transport_http::ReadingQueueHttpState::new(
+            FixtureReadingQueue,
+            product_transport_http::BearerAuthentication::new(
+                "contract-test",
+                "contract-forbidden",
+            )
+            .expect("fixture authentication"),
+        ))
+        .into()
+}
+
+#[tokio::test]
+async fn invalid_requests_transitions_and_auth_have_stable_problem_semantics() {
+    let unauthorized = fixture_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/framework-auth-contract")
+                .body(Body::empty())
+                .expect("unauthorized request"),
+        )
+        .await
+        .expect("call protected route");
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthorized.headers()[header::WWW_AUTHENTICATE],
+        "Bearer realm=\"yydra-framework-contract\""
+    );
+    assert_problem_type(
+        unauthorized,
+        "https://yydra.dev/problems/authentication-required",
+    )
+    .await;
+
+    let invalid_credential = fixture_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/framework-auth-contract")
+                .header(header::AUTHORIZATION, "Bearer unknown")
+                .body(Body::empty())
+                .expect("invalid credential request"),
+        )
+        .await
+        .expect("call protected route");
+    assert_eq!(invalid_credential.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        invalid_credential
+            .headers()
+            .contains_key(header::WWW_AUTHENTICATE)
+    );
+    assert_problem_type(
+        invalid_credential,
+        "https://yydra.dev/problems/authentication-required",
+    )
+    .await;
+
+    let forbidden = fixture_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/framework-auth-contract")
+                .header(header::AUTHORIZATION, "Bearer contract-forbidden")
+                .body(Body::empty())
+                .expect("forbidden request"),
+        )
+        .await
+        .expect("call protected route");
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert!(!forbidden.headers().contains_key(header::WWW_AUTHENTICATE));
+    assert_problem_type(forbidden, "https://yydra.dev/problems/access-forbidden").await;
+
+    for body in [
+        "not-json",
+        r#"{"title":"Example","sourceUrl":"https://example.test","unknown":true}"#,
+    ] {
+        let invalid = fixture_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/reading-queue/entries")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .expect("invalid JSON request"),
+            )
+            .await
+            .expect("call create route");
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_problem_type(invalid, "https://yydra.dev/problems/invalid-request-body").await;
+    }
+
+    for (id, status, problem_type) in [
+        (
+            "missing",
+            StatusCode::NOT_FOUND,
+            "https://yydra.dev/problems/reading-entry-not-found",
+        ),
+        (
+            "conflict",
+            StatusCode::CONFLICT,
+            "https://yydra.dev/problems/reading-entry-transition-conflict",
+        ),
+    ] {
+        let response = fixture_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PATCH)
+                    .uri(format!("/api/v1/reading-queue/entries/{id}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"state":"completed"}"#))
+                    .expect("transition request"),
+            )
+            .await
+            .expect("call transition route");
+        assert_eq!(response.status(), status);
+        assert_problem_type(response, problem_type).await;
+    }
+}
+
+async fn assert_problem_type(response: Response<Body>, expected: &str) {
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read Problem body");
+    let body: Value = serde_json::from_slice(&body).expect("parse Problem body");
+    assert_eq!(body["type"], expected);
 }
 
 #[tokio::test]

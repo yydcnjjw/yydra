@@ -95,6 +95,46 @@ pub async fn list_reading_entries(
     .collect()
 }
 
+pub async fn lock_reading_entry_for_update(
+    connection: &mut PgConnection,
+    id: &ReadingEntryId,
+) -> Result<Option<ReadingEntry>, PersistenceError> {
+    sqlx::query_as::<_, ReadingEntryRow>(
+        r#"
+        SELECT id::text AS id, title, source_url, state
+        FROM reading_queue_entries
+        WHERE id::text = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(id.as_str())
+    .fetch_optional(connection)
+    .await?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
+pub async fn update_reading_entry_state(
+    connection: &mut PgConnection,
+    entry: &ReadingEntry,
+) -> Result<(), PersistenceError> {
+    let updated = sqlx::query(
+        r#"
+        UPDATE reading_queue_entries
+        SET state = $2
+        WHERE id::text = $1
+        "#,
+    )
+    .bind(entry.id().as_str())
+    .bind(entry.state().as_str())
+    .execute(connection)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(PersistenceError::ConcurrentChange);
+    }
+    Ok(())
+}
+
 pub async fn apply_migrations(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::connect(database_url, 1).await?;
     MIGRATOR.run(&database.pool).await?;
@@ -182,6 +222,7 @@ impl TryFrom<ReadingEntryRow> for ReadingEntry {
 pub enum PersistenceError {
     Database(sqlx::Error),
     CorruptDomain(DomainValidationError),
+    ConcurrentChange,
 }
 
 impl fmt::Display for PersistenceError {
@@ -194,6 +235,9 @@ impl fmt::Display for PersistenceError {
                     "persisted Product Domain state is invalid: {error}"
                 )
             }
+            Self::ConcurrentChange => {
+                formatter.write_str("reading entry changed after it was locked")
+            }
         }
     }
 }
@@ -203,6 +247,7 @@ impl Error for PersistenceError {
         match self {
             Self::Database(error) => Some(error),
             Self::CorruptDomain(error) => Some(error),
+            Self::ConcurrentChange => None,
         }
     }
 }

@@ -66,6 +66,141 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
     ],
   });
   expect(persistedQueue.body.entries[0].id).toEqual(expect.any(String));
+  const entryId = persistedQueue.body.entries[0].id as string;
+
+  const directComplete = await page.evaluate(
+    async ({ baseUrl, id }) => {
+      const response = await fetch(
+        `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ state: "completed" }),
+        },
+      );
+      return { body: await response.json(), status: response.status };
+    },
+    { baseUrl: apiUrl, id: entryId },
+  );
+  expect(directComplete).toMatchObject({
+    body: { id: entryId, state: "completed" },
+    status: 200,
+  });
+
+  await page.getByRole("button", { name: `Complete ${entryTitle}` }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "This entry changed. Refresh the queue and try again.",
+  );
+  await page.getByRole("button", { name: "Refresh queue" }).click();
+  await expect(
+    page.getByText("State: completed", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: `Reopen ${entryTitle}` }).click();
+  await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Complete ${entryTitle}` }).click();
+  await expect(
+    page.getByText("State: completed", { exact: true }),
+  ).toBeVisible();
+
+  const requestProblems = await page.evaluate(
+    async ({ baseUrl, id }) => {
+      const transitionUrl = `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`;
+      const unknown = await fetch(transitionUrl, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: "queued", unknown: true }),
+      });
+      const malformed = await fetch(transitionUrl, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      });
+      const missing = await fetch(
+        `${baseUrl}/api/v1/reading-queue/entries/missing-opaque-entry`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ state: "completed" }),
+        },
+      );
+      const validation = await fetch(
+        `${baseUrl}/api/v1/reading-queue/entries`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: "   ",
+            sourceUrl: "https://example.test/rejected-direct",
+          }),
+        },
+      );
+      return {
+        malformed: { body: await malformed.json(), status: malformed.status },
+        missing: { body: await missing.json(), status: missing.status },
+        unknown: { body: await unknown.json(), status: unknown.status },
+        validation: {
+          body: await validation.json(),
+          status: validation.status,
+        },
+      };
+    },
+    { baseUrl: apiUrl, id: entryId },
+  );
+  expect(requestProblems.unknown).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-request-body" },
+    status: 400,
+  });
+  expect(requestProblems.malformed).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-request-body" },
+    status: 400,
+  });
+  expect(requestProblems.missing).toMatchObject({
+    body: { type: "https://yydra.dev/problems/reading-entry-not-found" },
+    status: 404,
+  });
+  expect(requestProblems.validation).toMatchObject({
+    body: { type: "https://yydra.dev/problems/invalid-reading-entry" },
+    status: 422,
+  });
+
+  const authentication = await page.evaluate(async (baseUrl) => {
+    const missing = await fetch(`${baseUrl}/api/v1/framework-auth-contract`);
+    const forbidden = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
+      headers: { authorization: "Bearer local-framework-forbidden" },
+    });
+    const authorized = await fetch(
+      `${baseUrl}/api/v1/framework-auth-contract`,
+      { headers: { authorization: "Bearer local-framework-contract" } },
+    );
+    return {
+      authorized: {
+        body: await authorized.json(),
+        status: authorized.status,
+      },
+      forbidden: {
+        body: await forbidden.json(),
+        status: forbidden.status,
+      },
+      missing: {
+        body: await missing.json(),
+        challenge: missing.headers.get("www-authenticate"),
+        status: missing.status,
+      },
+    };
+  }, apiUrl);
+  expect(authentication.missing).toMatchObject({
+    body: { type: "https://yydra.dev/problems/authentication-required" },
+    challenge: expect.stringContaining("Bearer"),
+    status: 401,
+  });
+  expect(authentication.forbidden).toMatchObject({
+    body: { type: "https://yydra.dev/problems/access-forbidden" },
+    status: 403,
+  });
+  expect(authentication.authorized).toEqual({
+    body: { access: "granted" },
+    status: 200,
+  });
 
   await page.getByLabel("Entry title").fill("   ");
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
@@ -79,4 +214,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
   await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
   await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("State: completed", { exact: true }),
+  ).toBeVisible();
 });

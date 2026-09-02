@@ -1,6 +1,18 @@
 {
   "components": {
     "schemas": {
+      "ChangeReadingEntryStateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ReadingQueueEntryState"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
       "CreateReadingEntryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -102,6 +114,18 @@
         ],
         "type": "object"
       },
+      "FrameworkProtectedContract": {
+        "additionalProperties": true,
+        "properties": {
+          "access": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "access"
+        ],
+        "type": "object"
+      },
       "ProblemDetails": {
         "additionalProperties": true,
         "description": "RFC 9457 Problem Details shared by declared public failures.",
@@ -158,7 +182,8 @@
       },
       "ReadingQueueEntryState": {
         "enum": [
-          "queued"
+          "queued",
+          "completed"
         ],
         "type": "string"
       },
@@ -185,6 +210,46 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/framework-auth-contract": {
+      "get": {
+        "operationId": "getFrameworkProtectedContract",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkProtectedContract"
+                }
+              }
+            },
+            "description": "Protected authentication-contract fixture"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Missing credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Credentials lack access"
+          }
+        },
+        "tags": [
+          "framework"
+        ]
+      }
+    },
     "/api/v1/framework-contract": {
       "get": {
         "operationId": "getFrameworkContractProfile",
@@ -267,6 +332,16 @@
             },
             "description": "Reading entry created"
           },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid JSON or unknown request field"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -276,6 +351,97 @@
               }
             },
             "description": "Invalid reading entry"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Storage failure"
+          }
+        },
+        "tags": [
+          "readingQueue"
+        ]
+      }
+    },
+    "/api/v1/reading-queue/entries/{entry_id}": {
+      "patch": {
+        "operationId": "changeReadingQueueEntryState",
+        "parameters": [
+          {
+            "description": "Opaque Product Domain identifier",
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReadingEntryStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingQueueEntryResponse"
+                }
+              }
+            },
+            "description": "Reading entry state changed"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid JSON or unknown request field"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Reading entry not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Prohibited state transition"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid opaque identifier"
           },
           "500": {
             "content": {

@@ -4,16 +4,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
 
 import {
+  ChangeReadingEntryStateRequest,
   CreateReadingEntryRequest,
   createPublicApiClient,
   FrameworkContractProfile,
   FrameworkFailure,
+  FrameworkProtectedContract,
   isTransportFailure,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 } from "./api/client";
 
-export { isTransportFailure } from "./api/client";
+export { isFrameworkFailure, isTransportFailure } from "./api/client";
 
 export interface HealthStatus {
   status: string;
@@ -25,9 +27,17 @@ export interface FrameworkClient {
   frameworkContractProfile(
     signal?: AbortSignal,
   ): Promise<FrameworkContractProfile>;
+  frameworkProtectedContract(
+    signal?: AbortSignal,
+  ): Promise<FrameworkProtectedContract>;
   listReadingQueueEntries(signal?: AbortSignal): Promise<ReadingQueueResponse>;
   createReadingQueueEntry(
     input: CreateReadingEntryRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadingQueueEntryResponse>;
+  changeReadingQueueEntryState(
+    id: string,
+    input: ChangeReadingEntryStateRequest,
     signal?: AbortSignal,
   ): Promise<ReadingQueueEntryResponse>;
 }
@@ -38,19 +48,7 @@ export function FrameworkRuntime({
   children,
   client,
 }: PropsWithChildren<{ client?: FrameworkClient }>) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            retry(failureCount, error) {
-              return isTransportFailure(error) && failureCount < 2;
-            },
-          },
-          mutations: { retry: false },
-        },
-      }),
-  );
+  const [queryClient] = useState(() => createFrameworkQueryClient());
   const [runtimeClient] = useState(
     () => client ?? createFrameworkClient(globalThis.fetch),
   );
@@ -60,6 +58,19 @@ export function FrameworkRuntime({
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </FrameworkClientContext.Provider>
   );
+}
+
+export function createFrameworkQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry(failureCount, error) {
+          return isTransportFailure(error) && failureCount < 2;
+        },
+      },
+      mutations: { retry: false },
+    },
+  });
 }
 
 export function useFrameworkClient(): FrameworkClient {
@@ -73,17 +84,28 @@ export function useFrameworkClient(): FrameworkClient {
 export function createFrameworkClient(
   fetchImplementation: typeof fetch,
   baseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:4000",
+  credentialHeaders?: () => HeadersInit | Promise<HeadersInit>,
 ): FrameworkClient {
-  const publicApi = createPublicApiClient({ baseUrl, fetchImplementation });
+  const publicApi = createPublicApiClient({
+    baseUrl,
+    fetchImplementation,
+    credentialHeaders,
+  });
   return {
     frameworkContractProfile(signal) {
       return publicApi.frameworkContractProfile({ signal });
+    },
+    frameworkProtectedContract(signal) {
+      return publicApi.frameworkProtectedContract({ signal });
     },
     listReadingQueueEntries(signal) {
       return publicApi.listReadingQueueEntries({ signal });
     },
     createReadingQueueEntry(input, signal) {
       return publicApi.createReadingQueueEntry(input, { signal });
+    },
+    changeReadingQueueEntryState(id, input, signal) {
+      return publicApi.changeReadingQueueEntryState(id, input, { signal });
     },
     async health(signal) {
       let response: Response;
