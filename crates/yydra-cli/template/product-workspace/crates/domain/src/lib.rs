@@ -114,12 +114,14 @@ impl SourceUrl {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadingEntryState {
     Queued,
+    Completed,
 }
 
 impl ReadingEntryState {
     pub fn parse_persisted(value: &str) -> Result<Self, DomainValidationError> {
         match value {
             "queued" => Ok(Self::Queued),
+            "completed" => Ok(Self::Completed),
             _ => Err(DomainValidationError::new(
                 "state",
                 "contains an unknown persisted reading-entry state",
@@ -130,6 +132,7 @@ impl ReadingEntryState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
+            Self::Completed => "completed",
         }
     }
 }
@@ -172,7 +175,59 @@ impl ReadingEntry {
     pub fn state(&self) -> ReadingEntryState {
         self.state
     }
+
+    pub fn complete(&mut self) -> Result<(), DomainTransitionError> {
+        self.transition(ReadingEntryState::Queued, ReadingEntryState::Completed)
+    }
+
+    pub fn reopen(&mut self) -> Result<(), DomainTransitionError> {
+        self.transition(ReadingEntryState::Completed, ReadingEntryState::Queued)
+    }
+
+    fn transition(
+        &mut self,
+        expected: ReadingEntryState,
+        requested: ReadingEntryState,
+    ) -> Result<(), DomainTransitionError> {
+        if self.state != expected {
+            return Err(DomainTransitionError {
+                current: self.state,
+                requested,
+            });
+        }
+        self.state = requested;
+        Ok(())
+    }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DomainTransitionError {
+    current: ReadingEntryState,
+    requested: ReadingEntryState,
+}
+
+impl DomainTransitionError {
+    pub fn current(&self) -> ReadingEntryState {
+        self.current
+    }
+
+    pub fn requested(&self) -> ReadingEntryState {
+        self.requested
+    }
+}
+
+impl fmt::Display for DomainTransitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "cannot transition reading entry from {} to {}",
+            self.current.as_str(),
+            self.requested.as_str()
+        )
+    }
+}
+
+impl Error for DomainTransitionError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DomainValidationError {
@@ -247,5 +302,23 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn only_complete_and_reopen_transitions_are_allowed() {
+        let mut entry = ReadingEntry::restore(
+            ReadingEntryId::parse("opaque-entry-3").expect("opaque identifier"),
+            ReadingEntryTitle::parse("State transitions").expect("title"),
+            SourceUrl::parse("https://example.test/transitions").expect("source URL"),
+            "queued",
+        )
+        .expect("queued entry");
+
+        entry.complete().expect("queued entry can complete");
+        assert_eq!(entry.state(), ReadingEntryState::Completed);
+        assert!(entry.complete().is_err(), "completed cannot complete twice");
+        entry.reopen().expect("completed entry can reopen");
+        assert_eq!(entry.state(), ReadingEntryState::Queued);
+        assert!(entry.reopen().is_err(), "queued cannot reopen twice");
     }
 }

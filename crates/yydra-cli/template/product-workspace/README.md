@@ -40,18 +40,32 @@ terminates their process groups together on failure or shutdown.
 
 ## Reading Queue slice
 
-The initial Product Domain slice creates and lists Reading Queue entries. Its
-title, source URL, entity-specific identifier, and queued-state rules live in
+The initial Product Domain slice creates, lists, completes, and reopens Reading
+Queue entries. Its title, source URL, entity-specific identifier, and
+queued/completed transition rules live in
 `crates/domain` without transport, persistence, React, router, or query-library
-dependencies. The concrete create and list use cases in `crates/application`
-own their SQLx transactions; `crates/persistence-postgres` contains only the
-Product Workspace PostgreSQL operations, and migration `0002` retains final
-database constraints. There is no generic repository or Unit of Work.
+dependencies. The concrete create, list, and change-state use cases in
+`crates/application` own their SQLx transactions;
+`crates/persistence-postgres` contains only the Product Workspace PostgreSQL
+operations, and append-only migrations `0002` and `0003` retain final database
+constraints. There is no generic repository or Unit of Work.
 
 The H5 Product Presentation submits `title` and `sourceUrl` through the
-handwritten Framework client facade, then reloads the queue through the same
-Public API seam. Public identifiers are opaque strings. Reading Queue
-transitions and cursor pagination are not part of this slice.
+handwritten Framework client facade, then completes or reopens entries and
+reloads the queue through the same Public API seam. Public identifiers are
+opaque strings. Invalid JSON, unknown request fields, missing entries, and
+prohibited transitions produce stable RFC 9457 Problem types. Mutations never
+retry automatically.
+
+The Framework authentication seam declares anonymous and protected routes and
+injects credentials through the same client assembly path. The protected
+`/api/v1/framework-auth-contract` probe distinguishes a missing credential as
+`401` with `WWW-Authenticate` from a rejected credential as `403`; its default
+authorized local token is `local-framework-contract`, while the valid but
+denied fixture token is `local-framework-forbidden`. These non-secret fixture
+values may be replaced through `YYDRA_AUTH_CONTRACT_TOKEN` and
+`YYDRA_AUTH_CONTRACT_FORBIDDEN_TOKEN`. This bounded probe is not an Identity
+system. Cursor pagination is not part of this slice.
 
 The supported quality entrypoint is read-only for authored, snapshot,
 committed-generated, lock, migration, and configuration inputs:
@@ -96,9 +110,10 @@ the change non-breaking. Product code calls the handwritten facade in
 `frontend/src/framework/api/`, never the generated directory directly.
 
 The focused production H5 acceptance command exports static web assets, serves
-them locally, creates and reloads a Reading Queue entry against the real Axum
-and PostgreSQL service, and runs the focused transaction/constraint rollback
-fixture. Start the
+them locally, creates, completes, reopens, and reloads a Reading Queue entry
+against the real Axum and PostgreSQL service, verifies stable request,
+transition, and authentication Problems, and runs the focused
+transaction/constraint rollback fixture. Start the
 diagnostic-only server leaf in one terminal:
 
 ```console

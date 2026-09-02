@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 
 use product_application::{HealthService, ReadingQueueService};
 use product_persistence_postgres::Database;
+use product_transport_http::BearerAuthentication;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 
@@ -17,10 +18,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = env::var("DATABASE_URL")?;
     let database = Database::connect(&database_url, 4).await?;
     database.verify_compiled_migrations().await?;
+    let authentication = BearerAuthentication::new(
+        env::var("YYDRA_AUTH_CONTRACT_TOKEN")
+            .unwrap_or_else(|_| "local-framework-contract".to_owned()),
+        env::var("YYDRA_AUTH_CONTRACT_FORBIDDEN_TOKEN")
+            .unwrap_or_else(|_| "local-framework-forbidden".to_owned()),
+    )?;
 
     let app = product_transport_http::router(
         HealthService::new(database.clone()),
         ReadingQueueService::new(database),
+        authentication,
     )
     .layer(CorsLayer::permissive())
     .layer(TraceLayer::new_for_http());

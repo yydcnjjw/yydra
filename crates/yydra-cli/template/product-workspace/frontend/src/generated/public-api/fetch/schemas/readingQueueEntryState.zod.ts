@@ -5,7 +5,7 @@
  */
 import * as zod from "zod";
 
-export const ReadingQueueEntryState = zod.enum(["queued"]);
+export const ReadingQueueEntryState = zod.enum(["queued", "completed"]);
 
 export type ReadingQueueEntryState = zod.input<typeof ReadingQueueEntryState>;
 export type ReadingQueueEntryStateOutput = zod.output<

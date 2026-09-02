@@ -89,6 +89,128 @@ describe("Framework Public API facade", () => {
     );
   });
 
+  it("changes state through the generated operation and validates strict input before Fetch", async () => {
+    const fetchImplementation = vi.fn<typeof globalThis.fetch>(
+      async (input, init) => {
+        expect(String(input)).toBe(
+          "https://service.test/api/v1/reading-queue/entries/opaque%2Fentry",
+        );
+        expect(init?.method).toBe("PATCH");
+        expect(JSON.parse(String(init?.body))).toEqual({ state: "completed" });
+        return Response.json({ ...validEntry, state: "completed" });
+      },
+    );
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation,
+    });
+
+    await expect(
+      client.changeReadingQueueEntryState("opaque/entry", {
+        state: "completed",
+      }),
+    ).resolves.toMatchObject({ state: "completed" });
+    await expect(
+      client.changeReadingQueueEntryState("opaque-entry", {
+        state: "queued",
+        unknown: true,
+      } as never),
+    ).rejects.toMatchObject({ kind: "contractViolation" });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses structured conflict and authentication Problems without parsing prose", async () => {
+    const conflict = {
+      type: "https://yydra.dev/problems/reading-entry-transition-conflict",
+      title: "arbitrary display prose",
+      status: 409,
+    };
+    const conflictClient = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation: async () =>
+        new Response(JSON.stringify(conflict), {
+          status: 409,
+          headers: { "content-type": "application/problem+json" },
+        }),
+    });
+    await expect(
+      conflictClient.changeReadingQueueEntryState("opaque", {
+        state: "completed",
+      }),
+    ).rejects.toMatchObject({
+      kind: "problem",
+      problem: { type: conflict.type, status: 409 },
+    });
+
+    const authenticatedFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ access: "granted" }),
+    );
+    const authenticated = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation: authenticatedFetch,
+      credentialHeaders: () => ({ Authorization: "Bearer contract-test" }),
+    });
+    await expect(authenticated.frameworkProtectedContract()).resolves.toEqual({
+      access: "granted",
+    });
+    expect(
+      new Headers(authenticatedFetch.mock.calls[0][1]?.headers).get(
+        "authorization",
+      ),
+    ).toBe("Bearer contract-test");
+
+    const unauthenticated = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            type: "https://yydra.dev/problems/authentication-required",
+            title: "display only",
+            status: 401,
+          }),
+          {
+            status: 401,
+            headers: {
+              "content-type": "application/problem+json",
+              "www-authenticate": 'Bearer realm="fixture"',
+            },
+          },
+        ),
+    });
+    await expect(
+      unauthenticated.frameworkProtectedContract(),
+    ).rejects.toMatchObject({
+      kind: "problem",
+      problem: {
+        type: "https://yydra.dev/problems/authentication-required",
+        status: 401,
+      },
+    });
+  });
+
+  it("rejects a 401 without WWW-Authenticate as a contract violation", async () => {
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation: async () =>
+        new Response(
+          JSON.stringify({
+            type: "https://yydra.dev/problems/authentication-required",
+            title: "Authentication required",
+            status: 401,
+          }),
+          {
+            status: 401,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+
+    await expect(client.frameworkProtectedContract()).rejects.toMatchObject({
+      kind: "contractViolation",
+      message: expect.stringContaining("WWW-Authenticate"),
+    });
+  });
+
   it("rejects unknown create fields before Fetch and exposes declared validation Problems", async () => {
     const fetchImplementation = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json(

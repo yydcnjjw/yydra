@@ -5,10 +5,76 @@
  */
 import {
   FrameworkContractProfile,
+  FrameworkProtectedContract,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
 } from "./schemas";
-import type { CreateReadingEntryRequest, ProblemDetails } from "./schemas";
+import type {
+  ChangeReadingEntryStateRequest,
+  CreateReadingEntryRequest,
+  ProblemDetails,
+} from "./schemas";
+
+export type getFrameworkProtectedContractResponse200 = {
+  data: FrameworkProtectedContract;
+  status: 200;
+};
+
+export type getFrameworkProtectedContractResponse401 = {
+  data: ProblemDetails;
+  status: 401;
+};
+
+export type getFrameworkProtectedContractResponse403 = {
+  data: ProblemDetails;
+  status: 403;
+};
+
+export type getFrameworkProtectedContractResponseSuccess =
+  getFrameworkProtectedContractResponse200 & {
+    headers: Headers;
+  };
+export type getFrameworkProtectedContractResponseError = (
+  | getFrameworkProtectedContractResponse401
+  | getFrameworkProtectedContractResponse403
+) & {
+  headers: Headers;
+};
+
+export type getFrameworkProtectedContractResponse =
+  | getFrameworkProtectedContractResponseSuccess
+  | getFrameworkProtectedContractResponseError;
+
+export const getGetFrameworkProtectedContractUrl = () => {
+  return `/api/v1/framework-auth-contract`;
+};
+
+export const getFrameworkProtectedContract = async (
+  options?: RequestInit,
+  fetchFn?: typeof globalThis.fetch,
+): Promise<getFrameworkProtectedContractResponse> => {
+  const res = await (fetchFn ?? fetch)(getGetFrameworkProtectedContractUrl(), {
+    ...options,
+    method: "GET",
+  });
+
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const parsedBody = body
+    ? contentType.includes("json")
+      ? JSON.parse(body)
+      : body
+    : {};
+  const data = contentType.includes("json")
+    ? FrameworkProtectedContract.parse(parsedBody)
+    : parsedBody;
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as getFrameworkProtectedContractResponse;
+};
 
 export type getFrameworkContractProfileResponse200 = {
   data: FrameworkContractProfile;
@@ -122,6 +188,11 @@ export type createReadingQueueEntryResponse201 = {
   status: 201;
 };
 
+export type createReadingQueueEntryResponse400 = {
+  data: ProblemDetails;
+  status: 400;
+};
+
 export type createReadingQueueEntryResponse422 = {
   data: ProblemDetails;
   status: 422;
@@ -137,7 +208,9 @@ export type createReadingQueueEntryResponseSuccess =
     headers: Headers;
   };
 export type createReadingQueueEntryResponseError = (
-  createReadingQueueEntryResponse422 | createReadingQueueEntryResponse500
+  | createReadingQueueEntryResponse400
+  | createReadingQueueEntryResponse422
+  | createReadingQueueEntryResponse500
 ) & {
   headers: Headers;
 };
@@ -188,4 +261,101 @@ export const createReadingQueueEntry = async (
     status: res.status,
     headers: res.headers,
   } as createReadingQueueEntryResponse;
+};
+
+export type changeReadingQueueEntryStateResponse200 = {
+  data: ReadingQueueEntryResponse;
+  status: 200;
+};
+
+export type changeReadingQueueEntryStateResponse400 = {
+  data: ProblemDetails;
+  status: 400;
+};
+
+export type changeReadingQueueEntryStateResponse404 = {
+  data: ProblemDetails;
+  status: 404;
+};
+
+export type changeReadingQueueEntryStateResponse409 = {
+  data: ProblemDetails;
+  status: 409;
+};
+
+export type changeReadingQueueEntryStateResponse422 = {
+  data: ProblemDetails;
+  status: 422;
+};
+
+export type changeReadingQueueEntryStateResponse500 = {
+  data: ProblemDetails;
+  status: 500;
+};
+
+export type changeReadingQueueEntryStateResponseSuccess =
+  changeReadingQueueEntryStateResponse200 & {
+    headers: Headers;
+  };
+export type changeReadingQueueEntryStateResponseError = (
+  | changeReadingQueueEntryStateResponse400
+  | changeReadingQueueEntryStateResponse404
+  | changeReadingQueueEntryStateResponse409
+  | changeReadingQueueEntryStateResponse422
+  | changeReadingQueueEntryStateResponse500
+) & {
+  headers: Headers;
+};
+
+export type changeReadingQueueEntryStateResponse =
+  | changeReadingQueueEntryStateResponseSuccess
+  | changeReadingQueueEntryStateResponseError;
+
+export const getChangeReadingQueueEntryStateUrl = (entryId: string) => {
+  return `/api/v1/reading-queue/entries/${entryId}`;
+};
+
+export const changeReadingQueueEntryState = async (
+  entryId: string,
+  changeReadingEntryStateRequest: ChangeReadingEntryStateRequest,
+  options?: RequestInit,
+  fetchFn?: typeof globalThis.fetch,
+): Promise<changeReadingQueueEntryStateResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+  const res = await (fetchFn ?? fetch)(
+    getChangeReadingQueueEntryStateUrl(entryId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...getHeaders(options?.headers),
+      },
+      body: JSON.stringify(changeReadingEntryStateRequest),
+    },
+  );
+
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const parsedBody = body
+    ? contentType.includes("json")
+      ? JSON.parse(body)
+      : body
+    : {};
+  const data = contentType.includes("json")
+    ? ReadingQueueEntryResponse.parse(parsedBody)
+    : parsedBody;
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as changeReadingQueueEntryStateResponse;
 };

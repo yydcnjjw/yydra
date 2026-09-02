@@ -4,16 +4,16 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::http::{StatusCode, header};
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use product_application::{
-    CreateReadingEntryCommand, CreateReadingEntryError, HealthService, ReadingQueueApplication,
-    ReadingQueueEntry, ReadingQueueEntryState as ApplicationReadingQueueEntryState,
-    ReadingQueueService,
+    ChangeReadingEntryStateCommand, ChangeReadingEntryStateError, CreateReadingEntryCommand,
+    CreateReadingEntryError, HealthService, ReadingQueueApplication, ReadingQueueEntry,
+    ReadingQueueEntryState as ApplicationReadingQueueEntryState, ReadingQueueService,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::schema::{AdditionalProperties, Schema};
@@ -97,10 +97,11 @@ pub struct CreateReadingEntryRequest {
     pub source_url: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ReadingQueueEntryState {
     Queued,
+    Completed,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -117,6 +118,7 @@ impl From<ReadingQueueEntry> for ReadingQueueEntryResponse {
     fn from(entry: ReadingQueueEntry) -> Self {
         let state = match entry.state {
             ApplicationReadingQueueEntryState::Queued => ReadingQueueEntryState::Queued,
+            ApplicationReadingQueueEntryState::Completed => ReadingQueueEntryState::Completed,
         };
         Self {
             id: entry.id,
@@ -133,15 +135,125 @@ pub struct ReadingQueueResponse {
     pub entries: Vec<ReadingQueueEntryResponse>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChangeReadingEntryStateRequest {
+    pub state: ReadingQueueEntryState,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameworkProtectedContract {
+    pub access: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteAccess {
+    Anonymous,
+    Protected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthenticationDecision {
+    Authorized,
+    MissingCredentials,
+    Forbidden,
+}
+
+pub trait Authentication: Send + Sync {
+    fn authenticate(&self, headers: &HeaderMap) -> AuthenticationDecision;
+}
+
+#[derive(Clone)]
+pub struct BearerAuthentication {
+    authorized: Arc<str>,
+    forbidden: Arc<str>,
+}
+
+impl BearerAuthentication {
+    pub fn new(
+        authorized: impl Into<String>,
+        forbidden: impl Into<String>,
+    ) -> Result<Self, AuthenticationConfigurationError> {
+        let authorized = authorized.into();
+        let forbidden = forbidden.into();
+        if authorized.is_empty()
+            || authorized.chars().any(char::is_whitespace)
+            || forbidden.is_empty()
+            || forbidden.chars().any(char::is_whitespace)
+            || authorized == forbidden
+        {
+            return Err(AuthenticationConfigurationError);
+        }
+        Ok(Self {
+            authorized: Arc::from(authorized),
+            forbidden: Arc::from(forbidden),
+        })
+    }
+}
+
+impl Authentication for BearerAuthentication {
+    fn authenticate(&self, headers: &HeaderMap) -> AuthenticationDecision {
+        let Some(value) = headers.get(header::AUTHORIZATION) else {
+            return AuthenticationDecision::MissingCredentials;
+        };
+        let Ok(value) = value.to_str() else {
+            return AuthenticationDecision::MissingCredentials;
+        };
+        let Some(token) = value.strip_prefix("Bearer ") else {
+            return AuthenticationDecision::MissingCredentials;
+        };
+        if token == self.authorized.as_ref() {
+            AuthenticationDecision::Authorized
+        } else if token == self.forbidden.as_ref() {
+            AuthenticationDecision::Forbidden
+        } else {
+            AuthenticationDecision::MissingCredentials
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AuthenticationConfigurationError;
+
+impl std::fmt::Display for AuthenticationConfigurationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "authentication fixture credentials must be distinct and non-empty without whitespace",
+        )
+    }
+}
+
+impl std::error::Error for AuthenticationConfigurationError {}
+
+const READING_QUEUE_ACCESS: RouteAccess = RouteAccess::Anonymous;
+const FRAMEWORK_PROTECTED_ACCESS: RouteAccess = RouteAccess::Protected;
+
 #[derive(Clone)]
 pub struct ReadingQueueHttpState {
     application: Arc<dyn ReadingQueueApplication>,
+    authentication: Arc<dyn Authentication>,
 }
 
 impl ReadingQueueHttpState {
-    pub fn new(application: impl ReadingQueueApplication + 'static) -> Self {
+    pub fn new(
+        application: impl ReadingQueueApplication + 'static,
+        authentication: impl Authentication + 'static,
+    ) -> Self {
         Self {
             application: Arc::new(application),
+            authentication: Arc::new(authentication),
+        }
+    }
+
+    fn authorize(&self, access: RouteAccess, headers: &HeaderMap) -> Result<(), ProblemResponse> {
+        if access == RouteAccess::Anonymous {
+            return Ok(());
+        }
+        match self.authentication.authenticate(headers) {
+            AuthenticationDecision::Authorized => Ok(()),
+            AuthenticationDecision::MissingCredentials => Err(ProblemResponse::unauthorized()),
+            AuthenticationDecision::Forbidden => Err(ProblemResponse::forbidden()),
         }
     }
 }
@@ -165,6 +277,71 @@ impl ProblemResponse {
         }
     }
 
+    fn invalid_json() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/invalid-request-body".to_owned(),
+                title: "Invalid request body".to_owned(),
+                status: StatusCode::BAD_REQUEST.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn not_found() -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/reading-entry-not-found".to_owned(),
+                title: "Reading entry not found".to_owned(),
+                status: StatusCode::NOT_FOUND.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn conflict() -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/reading-entry-transition-conflict".to_owned(),
+                title: "Reading entry transition conflict".to_owned(),
+                status: StatusCode::CONFLICT.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn unauthorized() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/authentication-required".to_owned(),
+                title: "Authentication required".to_owned(),
+                status: StatusCode::UNAUTHORIZED.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
+    fn forbidden() -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/access-forbidden".to_owned(),
+                title: "Access forbidden".to_owned(),
+                status: StatusCode::FORBIDDEN.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+
     fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -181,12 +358,20 @@ impl ProblemResponse {
 
 impl IntoResponse for ProblemResponse {
     fn into_response(self) -> Response {
-        (
+        let unauthorized = self.status == StatusCode::UNAUTHORIZED;
+        let mut response = (
             self.status,
             [(header::CONTENT_TYPE, "application/problem+json")],
             Json(self.body),
         )
-            .into_response()
+            .into_response();
+        if unauthorized {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=\"yydra-framework-contract\""),
+            );
+        }
+        response
     }
 }
 
@@ -224,6 +409,27 @@ async fn get_framework_contract_profile() -> Json<FrameworkContractProfile> {
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/framework-auth-contract",
+    operation_id = "getFrameworkProtectedContract",
+    tag = "framework",
+    responses(
+        (status = 200, description = "Protected authentication-contract fixture", body = FrameworkProtectedContract, content_type = "application/json"),
+        (status = 401, description = "Missing credentials", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 403, description = "Credentials lack access", body = ProblemDetails, content_type = "application/problem+json")
+    )
+)]
+async fn get_framework_protected_contract(
+    State(state): State<ReadingQueueHttpState>,
+    headers: HeaderMap,
+) -> Result<Json<FrameworkProtectedContract>, ProblemResponse> {
+    state.authorize(FRAMEWORK_PROTECTED_ACCESS, &headers)?;
+    Ok(Json(FrameworkProtectedContract {
+        access: "granted".to_owned(),
+    }))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/reading-queue/entries",
     operation_id = "createReadingQueueEntry",
@@ -231,15 +437,18 @@ async fn get_framework_contract_profile() -> Json<FrameworkContractProfile> {
     request_body(content = CreateReadingEntryRequest, content_type = "application/json"),
     responses(
         (status = 201, description = "Reading entry created", body = ReadingQueueEntryResponse, content_type = "application/json"),
+        (status = 400, description = "Invalid JSON or unknown request field", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 422, description = "Invalid reading entry", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
     )
 )]
 async fn create_reading_queue_entry(
     State(state): State<ReadingQueueHttpState>,
+    headers: HeaderMap,
     payload: Result<Json<CreateReadingEntryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ReadingQueueEntryResponse>), ProblemResponse> {
-    let Json(payload) = payload.map_err(|error| ProblemResponse::invalid(error.body_text()))?;
+    state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let Json(payload) = payload.map_err(|_| ProblemResponse::invalid_json())?;
     let entry = state
         .application
         .create(CreateReadingEntryCommand {
@@ -268,7 +477,9 @@ async fn create_reading_queue_entry(
 )]
 async fn list_reading_queue_entries(
     State(state): State<ReadingQueueHttpState>,
+    headers: HeaderMap,
 ) -> Result<Json<ReadingQueueResponse>, ProblemResponse> {
+    state.authorize(READING_QUEUE_ACCESS, &headers)?;
     let entries = state
         .application
         .list()
@@ -279,15 +490,65 @@ async fn list_reading_queue_entries(
     }))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/reading-queue/entries/{entry_id}",
+    operation_id = "changeReadingQueueEntryState",
+    tag = "readingQueue",
+    params(
+        ("entry_id" = String, Path, description = "Opaque Product Domain identifier")
+    ),
+    request_body(content = ChangeReadingEntryStateRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Reading entry state changed", body = ReadingQueueEntryResponse, content_type = "application/json"),
+        (status = 400, description = "Invalid JSON or unknown request field", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Reading entry not found", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 409, description = "Prohibited state transition", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 422, description = "Invalid opaque identifier", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
+    )
+)]
+async fn change_reading_queue_entry_state(
+    State(state): State<ReadingQueueHttpState>,
+    Path(entry_id): Path<String>,
+    headers: HeaderMap,
+    payload: Result<Json<ChangeReadingEntryStateRequest>, JsonRejection>,
+) -> Result<Json<ReadingQueueEntryResponse>, ProblemResponse> {
+    state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let Json(payload) = payload.map_err(|_| ProblemResponse::invalid_json())?;
+    let target = match payload.state {
+        ReadingQueueEntryState::Queued => ApplicationReadingQueueEntryState::Queued,
+        ReadingQueueEntryState::Completed => ApplicationReadingQueueEntryState::Completed,
+    };
+    let entry = state
+        .application
+        .change(ChangeReadingEntryStateCommand {
+            id: entry_id,
+            target,
+        })
+        .await
+        .map_err(|error| match error {
+            ChangeReadingEntryStateError::InvalidInput { field, message } => {
+                ProblemResponse::invalid(format!("{field} {message}"))
+            }
+            ChangeReadingEntryStateError::NotFound { .. } => ProblemResponse::not_found(),
+            ChangeReadingEntryStateError::Conflict { .. } => ProblemResponse::conflict(),
+            ChangeReadingEntryStateError::Storage(_) => ProblemResponse::internal(),
+        })?;
+    Ok(Json(entry.into()))
+}
+
 /// The only registration seam for routes consumed by the Generated Client.
 pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
     let openapi = OpenApi::new(Info::new("Yydra Product Public API", "1.0.0"), Paths::new());
     let mut router = OpenApiRouter::with_openapi(openapi)
         .routes(routes!(get_framework_contract_profile))
+        .routes(routes!(get_framework_protected_contract))
         .routes(routes!(
             create_reading_queue_entry,
             list_reading_queue_entries
-        ));
+        ))
+        .routes(routes!(change_reading_queue_entry_state));
     let schemas = &mut router
         .get_openapi_mut()
         .components
@@ -303,6 +564,7 @@ pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
     );
     for response_schema in [
         "FrameworkContractProfile",
+        "FrameworkProtectedContract",
         "ProblemDetails",
         "ReadingQueueEntryResponse",
         "ReadingQueueResponse",
@@ -326,9 +588,13 @@ pub fn normalized_openapi_json() -> Result<String, serde_json::Error> {
     })
 }
 
-pub fn router(service: HealthService, reading_queue: ReadingQueueService) -> Router {
+pub fn router(
+    service: HealthService,
+    reading_queue: ReadingQueueService,
+    authentication: BearerAuthentication,
+) -> Router {
     let public_router: Router = public_routes()
-        .with_state(ReadingQueueHttpState::new(reading_queue))
+        .with_state(ReadingQueueHttpState::new(reading_queue, authentication))
         .into();
     Router::new()
         .route("/health", get(health))

@@ -10,7 +10,7 @@ export const ReadingQueueResponse = zod.object({
     zod.object({
       id: zod.string().describe("Opaque Product Domain identifier."),
       sourceUrl: zod.string(),
-      state: zod.enum(["queued"]),
+      state: zod.enum(["queued", "completed"]),
       title: zod.string(),
     }),
   ),
