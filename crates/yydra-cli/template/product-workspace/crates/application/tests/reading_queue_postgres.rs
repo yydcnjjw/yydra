@@ -3,10 +3,12 @@
 #![forbid(unsafe_code)]
 
 use std::env;
+use std::time::Duration;
 
 use product_application::{
-    ChangeReadingEntryState, ChangeReadingEntryStateCommand, ChangeReadingEntryStateError,
-    CreateReadingEntry, CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntries,
+    ChangeReadingEntryState, ChangeReadingEntryStateAndRecordProgress,
+    ChangeReadingEntryStateCommand, ChangeReadingEntryStateError, CreateReadingEntry,
+    CreateReadingEntryCommand, CreateReadingEntryError, GetReadingProgress, ListReadingEntries,
     ListReadingEntriesError, ListReadingEntriesQuery, ReadingQueueEntryState,
 };
 use product_persistence_postgres::{Database, apply_migrations};
@@ -21,6 +23,81 @@ fn all_entries_query() -> ListReadingEntriesQuery {
         cursor: None,
         authorization_scope: "anonymous".to_owned(),
     }
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated migrated PostgreSQL database supplied by yydra check"]
+async fn applied_migration_history_rejects_mutation_and_deletion() {
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL from yydra check");
+    apply_migrations(&database_url)
+        .await
+        .expect("apply compiled migrations");
+    let database = Database::connect(&database_url, 2)
+        .await
+        .expect("connect to PostgreSQL");
+    database
+        .verify_compiled_migrations()
+        .await
+        .expect("fresh applied history is compatible");
+
+    let mut fixture = database.begin().await.expect("begin migration fixture");
+    sqlx::query(
+        "CREATE TABLE yydra_migration_fixture AS SELECT * FROM _sqlx_migrations WITH NO DATA",
+    )
+    .execute(&mut *fixture)
+    .await
+    .expect("create migration backup table");
+    sqlx::query(
+        "INSERT INTO yydra_migration_fixture SELECT * FROM _sqlx_migrations WHERE version = 5",
+    )
+    .execute(&mut *fixture)
+    .await
+    .expect("back up latest migration row");
+    fixture.commit().await.expect("commit migration fixture");
+
+    let mut mutation = database.begin().await.expect("begin checksum mutation");
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') WHERE version = 5")
+        .execute(&mut *mutation)
+        .await
+        .expect("mutate applied checksum");
+    mutation.commit().await.expect("commit checksum mutation");
+    assert!(
+        database.verify_compiled_migrations().await.is_err(),
+        "an edited applied migration must fail closed"
+    );
+    let mut restore = database.begin().await.expect("begin checksum restore");
+    sqlx::query(
+        "UPDATE _sqlx_migrations AS applied SET checksum = fixture.checksum FROM yydra_migration_fixture AS fixture WHERE applied.version = fixture.version",
+    )
+    .execute(&mut *restore)
+    .await
+    .expect("restore applied checksum");
+    restore.commit().await.expect("commit checksum restore");
+
+    let mut deletion = database.begin().await.expect("begin applied deletion");
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 5")
+        .execute(&mut *deletion)
+        .await
+        .expect("delete applied migration");
+    deletion.commit().await.expect("commit applied deletion");
+    assert!(
+        database.verify_compiled_migrations().await.is_err(),
+        "a deleted applied migration must fail closed"
+    );
+    let mut cleanup = database.begin().await.expect("begin migration restore");
+    sqlx::query("INSERT INTO _sqlx_migrations SELECT * FROM yydra_migration_fixture")
+        .execute(&mut *cleanup)
+        .await
+        .expect("restore deleted migration");
+    sqlx::query("DROP TABLE yydra_migration_fixture")
+        .execute(&mut *cleanup)
+        .await
+        .expect("drop migration backup table");
+    cleanup.commit().await.expect("commit migration restore");
+    database
+        .verify_compiled_migrations()
+        .await
+        .expect("restored applied history is compatible");
 }
 
 #[tokio::test]
@@ -171,6 +248,232 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
         .execute(&mut *cleanup)
         .await
         .expect("remove transaction fixture entry");
+    cleanup.commit().await.expect("commit final cleanup");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated migrated PostgreSQL database supplied by yydra check"]
+async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_together() {
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL from yydra check");
+    apply_migrations(&database_url)
+        .await
+        .expect("apply compiled migrations");
+    let database = Database::connect(&database_url, 4)
+        .await
+        .expect("connect to PostgreSQL");
+    let mut fixture = database.begin().await.expect("begin fixture reset");
+    sqlx::query("DELETE FROM reading_queue_entries")
+        .execute(&mut *fixture)
+        .await
+        .expect("clear reading entries");
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+        .execute(&mut *fixture)
+        .await
+        .expect("reset reading progress");
+    fixture.commit().await.expect("commit fixture reset");
+
+    let create = CreateReadingEntry::new(database.clone());
+    let change = ChangeReadingEntryStateAndRecordProgress::new(database.clone());
+    let progress = GetReadingProgress::new(database.clone());
+    let list = ListReadingEntries::new(database.clone(), CURSOR_SIGNING_KEY)
+        .expect("valid cursor signing key");
+    assert_eq!(
+        progress
+            .execute()
+            .await
+            .expect("initial progress")
+            .completed_entries,
+        0
+    );
+    let entry = create
+        .execute(CreateReadingEntryCommand {
+            title: "Transactional orchestration".to_owned(),
+            source_url: "https://example.test/orchestration".to_owned(),
+        })
+        .await
+        .expect("create queued entry");
+    change
+        .execute(ChangeReadingEntryStateCommand {
+            id: entry.id.clone(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .expect("complete and record progress in one transaction");
+    assert_eq!(
+        progress
+            .execute()
+            .await
+            .expect("completed progress")
+            .completed_entries,
+        1
+    );
+    change
+        .execute(ChangeReadingEntryStateCommand {
+            id: entry.id.clone(),
+            target: ReadingQueueEntryState::Queued,
+        })
+        .await
+        .expect("reopen and record progress in one transaction");
+    assert_eq!(
+        progress
+            .execute()
+            .await
+            .expect("reopened progress")
+            .completed_entries,
+        0
+    );
+
+    let mut remove_progress = database.begin().await.expect("begin fault fixture");
+    sqlx::query("DELETE FROM reading_progress")
+        .execute(&mut *remove_progress)
+        .await
+        .expect("remove progress singleton");
+    remove_progress
+        .commit()
+        .await
+        .expect("commit fault fixture");
+    let failure = change
+        .execute(ChangeReadingEntryStateCommand {
+            id: entry.id.clone(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .expect_err("progress failure must reject the whole orchestration");
+    assert!(matches!(failure, ChangeReadingEntryStateError::Storage(_)));
+    assert_eq!(
+        list.execute(all_entries_query())
+            .await
+            .expect("list after orchestration rollback")
+            .entries[0]
+            .state,
+        ReadingQueueEntryState::Queued,
+        "the Reading Queue transition must roll back with Reading Progress"
+    );
+
+    let mut cleanup = database.begin().await.expect("begin final cleanup");
+    sqlx::query("DELETE FROM reading_queue_entries")
+        .execute(&mut *cleanup)
+        .await
+        .expect("remove entry fixture");
+    sqlx::query(
+        "INSERT INTO reading_progress (singleton, completed_entries) VALUES (TRUE, 0) ON CONFLICT (singleton) DO UPDATE SET completed_entries = 0",
+    )
+    .execute(&mut *cleanup)
+    .await
+    .expect("restore progress singleton");
+    cleanup.commit().await.expect("commit final cleanup");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated migrated PostgreSQL database supplied by yydra check"]
+async fn read_committed_row_lock_serializes_conflicting_commands_without_retry() {
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL from yydra check");
+    apply_migrations(&database_url)
+        .await
+        .expect("apply compiled migrations");
+    let database = Database::connect(&database_url, 6)
+        .await
+        .expect("connect to PostgreSQL");
+    let mut fixture = database.begin().await.expect("begin fixture reset");
+    let isolation = sqlx::query_scalar::<_, String>("SHOW transaction_isolation")
+        .fetch_one(&mut *fixture)
+        .await
+        .expect("read transaction isolation");
+    assert_eq!(isolation, "read committed");
+    sqlx::query("DELETE FROM reading_queue_entries")
+        .execute(&mut *fixture)
+        .await
+        .expect("clear reading entries");
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+        .execute(&mut *fixture)
+        .await
+        .expect("reset reading progress");
+    fixture.commit().await.expect("commit fixture reset");
+
+    let create = CreateReadingEntry::new(database.clone());
+    let change = ChangeReadingEntryStateAndRecordProgress::new(database.clone());
+    let progress = GetReadingProgress::new(database.clone());
+    let entry = create
+        .execute(CreateReadingEntryCommand {
+            title: "Deterministic contention".to_owned(),
+            source_url: "https://example.test/contention".to_owned(),
+        })
+        .await
+        .expect("create contention entry");
+
+    let mut blocker = database.begin().await.expect("begin row-lock fixture");
+    sqlx::query("SELECT id FROM reading_queue_entries WHERE id::text = $1 FOR SHARE")
+        .bind(&entry.id)
+        .fetch_one(&mut *blocker)
+        .await
+        .expect("hold a shared lock that the demonstrated exclusive lock must wait behind");
+    let blocked_change = change.clone();
+    let blocked_id = entry.id.clone();
+    let mut blocked = tokio::spawn(async move {
+        blocked_change
+            .execute(ChangeReadingEntryStateCommand {
+                id: blocked_id,
+                target: ReadingQueueEntryState::Completed,
+            })
+            .await
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), &mut blocked)
+            .await
+            .is_err(),
+        "the command must wait for the selected row lock"
+    );
+    blocker.rollback().await.expect("release row-lock fixture");
+    blocked
+        .await
+        .expect("contention task must not panic")
+        .expect("command completes after the row lock is released");
+    change
+        .execute(ChangeReadingEntryStateCommand {
+            id: entry.id.clone(),
+            target: ReadingQueueEntryState::Queued,
+        })
+        .await
+        .expect("reopen before simultaneous commands");
+
+    let first = change.execute(ChangeReadingEntryStateCommand {
+        id: entry.id.clone(),
+        target: ReadingQueueEntryState::Completed,
+    });
+    let second = change.execute(ChangeReadingEntryStateCommand {
+        id: entry.id.clone(),
+        target: ReadingQueueEntryState::Completed,
+    });
+    let results = tokio::join!(first, second);
+    let successes = [&results.0, &results.1]
+        .into_iter()
+        .filter(|result| result.is_ok())
+        .count();
+    let conflicts = [results.0, results.1]
+        .into_iter()
+        .filter(|result| matches!(result, Err(ChangeReadingEntryStateError::Conflict { .. })))
+        .count();
+    assert_eq!(successes, 1, "exactly one command may commit");
+    assert_eq!(conflicts, 1, "the losing command is visible, not retried");
+    assert_eq!(
+        progress
+            .execute()
+            .await
+            .expect("progress after contention")
+            .completed_entries,
+        1,
+        "the synchronous derived state changes exactly once"
+    );
+
+    let mut cleanup = database.begin().await.expect("begin final cleanup");
+    sqlx::query("DELETE FROM reading_queue_entries")
+        .execute(&mut *cleanup)
+        .await
+        .expect("remove contention entry");
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+        .execute(&mut *cleanup)
+        .await
+        .expect("reset progress after contention");
     cleanup.commit().await.expect("commit final cleanup");
 }
 

@@ -58,8 +58,10 @@ fn check(workspace: &Path, evidence: &Path, nodes: &[&str]) -> Output {
         .iter()
         .any(|node| {
             node.starts_with("api.")
+                || node.starts_with("database.runtime-")
                 || node.starts_with("frontend.")
                 || node.starts_with("h5.")
+                || node.starts_with("runtime.")
                 || matches!(
                     *node,
                     "rust.compile" | "rust.clippy" | "rust.test" | "rust.doctest"
@@ -100,6 +102,340 @@ fn node<'a>(events: &'a [serde_json::Value], id: &str) -> &'a serde_json::Value 
         .iter()
         .find(|event| event["event"] == "check-node" && event["nodeId"] == id)
         .unwrap_or_else(|| panic!("missing check-node event for {id}: {events:#?}"))
+}
+
+#[test]
+fn migration_history_node_rejects_distribution_and_comparison_base_changes_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("migration-policy-reader");
+    create_workspace(&workspace, "migration-policy-reader");
+
+    let clean = check(
+        &workspace,
+        &sandbox.path().join("clean-evidence"),
+        &["database.migration-history"],
+    );
+    assert!(
+        clean.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    assert_eq!(
+        node(&events(&clean), "database.migration-history")["outcome"],
+        "pass"
+    );
+
+    let baseline = workspace.join("migrations/0001_baseline.sql");
+    let baseline_source = fs::read(&baseline).expect("read baseline migration");
+    fs::write(&baseline, b"-- edited migration\n").expect("edit baseline migration");
+    let mutated = check(
+        &workspace,
+        &sandbox.path().join("mutated-evidence"),
+        &["database.migration-history"],
+    );
+    assert!(!mutated.status.success());
+    assert_eq!(
+        node(&events(&mutated), "database.migration-history")["cause"]["code"],
+        "DB_MIGRATION_DISTRIBUTION_BASE_MUTATED"
+    );
+    assert_eq!(
+        fs::read(&baseline).expect("read unchanged mutation"),
+        b"-- edited migration\n"
+    );
+    fs::write(&baseline, &baseline_source).expect("restore baseline fixture");
+    fs::remove_file(&baseline).expect("delete baseline migration");
+    let deleted = check(
+        &workspace,
+        &sandbox.path().join("deleted-evidence"),
+        &["database.migration-history"],
+    );
+    assert!(!deleted.status.success());
+    assert_eq!(
+        node(&events(&deleted), "database.migration-history")["cause"]["code"],
+        "DB_MIGRATION_DISTRIBUTION_BASE_DELETED"
+    );
+    assert!(
+        !baseline.exists(),
+        "check mode must not restore a deleted migration"
+    );
+    fs::write(&baseline, &baseline_source).expect("restore deleted baseline fixture");
+
+    let git = |arguments: &[&str]| {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(&workspace)
+            .output()
+            .expect("run git fixture command");
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=Yydra Check",
+        "-c",
+        "user.email=check@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "comparison base",
+    ]);
+    let product_migration = workspace.join("migrations/0006_product_change.sql");
+    fs::write(&product_migration, b"SELECT 1;\n").expect("add product migration");
+    git(&["add", "migrations/0006_product_change.sql"]);
+    git(&[
+        "-c",
+        "user.name=Yydra Check",
+        "-c",
+        "user.email=check@example.test",
+        "commit",
+        "--quiet",
+        "-m",
+        "add product migration",
+    ]);
+    fs::write(&product_migration, b"SELECT 2;\n").expect("mutate product migration");
+
+    let comparison = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("comparison-evidence")
+                .to_str()
+                .expect("UTF-8 evidence path"),
+            "--comparison-base",
+            "HEAD",
+            "--node",
+            "database.migration-history",
+        ])
+        .output()
+        .expect("run comparison-base migration check");
+    assert!(!comparison.status.success());
+    assert_eq!(
+        node(&events(&comparison), "database.migration-history")["cause"]["code"],
+        "DB_MIGRATION_COMPARISON_BASE_MUTATED"
+    );
+    assert_eq!(
+        fs::read(&product_migration).expect("read unchanged product migration"),
+        b"SELECT 2;\n"
+    );
+    fs::remove_file(&product_migration).expect("delete comparison-base migration");
+    let comparison_deleted = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("comparison-deleted-evidence")
+                .to_str()
+                .expect("UTF-8 evidence path"),
+            "--comparison-base",
+            "HEAD",
+            "--node",
+            "database.migration-history",
+        ])
+        .output()
+        .expect("run deleted comparison-base migration check");
+    assert!(!comparison_deleted.status.success());
+    assert_eq!(
+        node(&events(&comparison_deleted), "database.migration-history")["cause"]["code"],
+        "DB_MIGRATION_COMPARISON_BASE_DELETED"
+    );
+    assert!(
+        !product_migration.exists(),
+        "check mode must not restore the deleted comparison-base migration"
+    );
+}
+
+#[test]
+#[ignore = "requires Docker and the pinned PostgreSQL image"]
+fn database_runtime_invariant_failure_is_discriminating_and_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("database-invariant-reader");
+    create_workspace(&workspace, "database-invariant-reader");
+    let before = fs::read(workspace.join("crates/persistence-postgres/src/lib.rs"))
+        .expect("read persistence fixture");
+
+    let passing = check(
+        &workspace,
+        &sandbox.path().join("database-pass-evidence"),
+        &["database.runtime-invariants"],
+    );
+    assert!(
+        passing.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&passing.stderr)
+    );
+    assert_eq!(
+        node(&events(&passing), "database.runtime-invariants")["outcome"],
+        "pass"
+    );
+
+    let source = String::from_utf8(before.clone()).expect("UTF-8 persistence fixture");
+    let broken = source.replacen("        FOR UPDATE\n", "        FOR UPDATE NOWAIT\n", 1);
+    assert_ne!(broken, source, "row-lock fixture must change source");
+    fs::write(
+        workspace.join("crates/persistence-postgres/src/lib.rs"),
+        broken,
+    )
+    .expect("write missing row-lock fixture");
+    let failing = check(
+        &workspace,
+        &sandbox.path().join("database-fail-evidence"),
+        &["database.runtime-invariants"],
+    );
+    assert!(!failing.status.success());
+    assert_eq!(
+        node(&events(&failing), "database.runtime-invariants")["cause"]["code"],
+        "DATABASE_RUNTIME_INVARIANTS_FAILED"
+    );
+    assert_ne!(
+        fs::read(workspace.join("crates/persistence-postgres/src/lib.rs"))
+            .expect("read unchanged negative fixture"),
+        before,
+        "check mode must not repair the authored negative fixture"
+    );
+    fs::write(
+        workspace.join("crates/persistence-postgres/src/lib.rs"),
+        &before,
+    )
+    .expect("restore contention fixture");
+
+    let application_path = workspace.join("crates/application/src/lib.rs");
+    let application = fs::read_to_string(&application_path).expect("read application fixture");
+    let committed_failure = application.replacen(
+        "if let Err(error) = adjust_reading_progress(&mut transaction, completed_delta).await {\n            transaction\n                .rollback()",
+        "if let Err(error) = adjust_reading_progress(&mut transaction, completed_delta).await {\n            transaction\n                .commit()",
+        1,
+    );
+    assert_ne!(
+        committed_failure, application,
+        "rollback fixture must change the source transaction"
+    );
+    fs::write(&application_path, &committed_failure).expect("commit a failed orchestration");
+    let transaction_failure = check(
+        &workspace,
+        &sandbox.path().join("database-transaction-fail-evidence"),
+        &["database.runtime-invariants"],
+    );
+    assert!(!transaction_failure.status.success());
+    assert_eq!(
+        node(&events(&transaction_failure), "database.runtime-invariants")["cause"]["code"],
+        "DATABASE_RUNTIME_INVARIANTS_FAILED"
+    );
+    assert_eq!(
+        fs::read_to_string(&application_path).expect("read unchanged transaction fixture"),
+        committed_failure,
+        "check mode must not repair the broken rollback behavior"
+    );
+    fs::write(&application_path, application).expect("restore transaction fixture");
+
+    let tests_path = workspace.join("crates/application/tests/reading_queue_postgres.rs");
+    let tests = fs::read_to_string(&tests_path).expect("read database tests fixture");
+    let renamed = tests.replacen(
+        "applied_migration_history_rejects_mutation_and_deletion",
+        "renamed_database_test_that_must_not_satisfy_the_distribution_rule",
+        1,
+    );
+    assert_ne!(renamed, tests, "required database test name must change");
+    fs::write(&tests_path, &renamed).expect("rename required database fixture");
+    let missing_test = check(
+        &workspace,
+        &sandbox.path().join("database-missing-test-evidence"),
+        &["database.runtime-invariants"],
+    );
+    assert!(!missing_test.status.success());
+    assert_eq!(
+        node(&events(&missing_test), "database.runtime-invariants")["cause"]["code"],
+        "DATABASE_RUNTIME_INVARIANT_TEST_MISSING"
+    );
+    assert_eq!(
+        fs::read_to_string(&tests_path).expect("read unchanged missing-test fixture"),
+        renamed,
+        "check mode must not repair or recreate the required database test"
+    );
+}
+
+#[test]
+fn post_commit_executor_node_rejects_behavior_and_missing_tests_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("post-commit-executor-reader");
+    create_workspace(&workspace, "post-commit-executor-reader");
+
+    let passing = check(
+        &workspace,
+        &sandbox.path().join("post-commit-pass-evidence"),
+        &["runtime.post-commit-executor"],
+    );
+    assert!(
+        passing.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&passing.stderr)
+    );
+    assert_eq!(
+        node(&events(&passing), "runtime.post-commit-executor")["outcome"],
+        "pass"
+    );
+
+    let source_path = workspace.join("crates/application/src/post_commit.rs");
+    let source = fs::read_to_string(&source_path).expect("read post-commit executor fixture");
+    let broken = source.replacen(
+        "Err(_) => PostCommitTaskOutcome::TimedOut,",
+        "Err(_) => PostCommitTaskOutcome::Completed,",
+        1,
+    );
+    assert_ne!(broken, source, "timeout fixture must change source");
+    fs::write(&source_path, &broken).expect("remove timeout outcome fixture");
+    let failing = check(
+        &workspace,
+        &sandbox.path().join("post-commit-fail-evidence"),
+        &["runtime.post-commit-executor"],
+    );
+    assert!(!failing.status.success());
+    assert_eq!(
+        node(&events(&failing), "runtime.post-commit-executor")["cause"]["code"],
+        "POST_COMMIT_EXECUTOR_FAILED"
+    );
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("read unchanged negative fixture"),
+        broken,
+        "check mode must not repair the authored negative fixture"
+    );
+    fs::write(&source_path, source).expect("restore executor fixture");
+
+    let tests_path = workspace.join("crates/application/tests/post_commit_executor.rs");
+    let tests = fs::read_to_string(&tests_path).expect("read executor tests fixture");
+    let renamed = tests.replacen(
+        "bounded_lossy_executor_reports_admission_deadline_timeout_failure_and_crash_without_retry",
+        "renamed_executor_test_that_must_not_satisfy_the_distribution_rule",
+        1,
+    );
+    assert_ne!(renamed, tests, "required test name fixture must change");
+    fs::write(&tests_path, &renamed).expect("rename required executor fixture");
+    let missing_test = check(
+        &workspace,
+        &sandbox.path().join("post-commit-missing-test-evidence"),
+        &["runtime.post-commit-executor"],
+    );
+    assert!(!missing_test.status.success());
+    assert_eq!(
+        node(&events(&missing_test), "runtime.post-commit-executor")["cause"]["code"],
+        "POST_COMMIT_EXECUTOR_TEST_MISSING"
+    );
+    assert_eq!(
+        fs::read_to_string(&tests_path).expect("read unchanged missing-test fixture"),
+        renamed,
+        "check mode must not repair or recreate the required test"
+    );
 }
 
 #[test]
@@ -860,6 +1196,8 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
     }
     fs::remove_file(rust_workspace.join("crates/application/tests/reading_queue_postgres.rs"))
         .expect("remove PostgreSQL application test");
+    fs::remove_file(rust_workspace.join("crates/application/tests/post_commit_executor.rs"))
+        .expect("remove post-commit application test");
     fs::remove_file(rust_workspace.join("crates/transport-http/tests/public_api_contract.rs"))
         .expect("remove Public API Rust tests");
     let rust = check(

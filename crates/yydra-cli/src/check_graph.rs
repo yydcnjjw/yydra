@@ -34,6 +34,7 @@ const INPUTS_UNCHANGED_NODE: &str = "ownership.authored-inputs-unchanged";
 pub(crate) struct CheckRequest {
     pub(crate) workspace: PathBuf,
     pub(crate) evidence_dir: Option<PathBuf>,
+    pub(crate) comparison_base: Option<String>,
     pub(crate) selected_nodes: Vec<String>,
 }
 
@@ -67,6 +68,13 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "restore committed generated and exact snapshot authorities from reviewed version control; do not regenerate them inside check mode",
         proves: "the current Distribution-owned origin, inventory, provenance, and license snapshot authorities retain their exact bytes",
         does_not_prove: "future generated Public API or native-host drift owned by later graph nodes",
+    },
+    NodeSpec {
+        id: "database.migration-history",
+        prerequisites: &["origin.exact-distribution"],
+        remediation: "restore every edited or deleted migration that existed in the exact Distribution or requested Git comparison base, then add a new forward migration for corrections",
+        proves: "the Product Workspace has one root SQLx migration authority, exact-Distribution migrations retain their bytes, and a requested Git comparison base contains no edited or deleted migration",
+        does_not_prove: "that later Product migrations absent from the requested comparison base have been applied, or that a database accepts the complete history",
     },
     NodeSpec {
         id: "rust.architecture",
@@ -172,6 +180,24 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "install Docker with Compose support and make its daemon available, then rerun yydra check",
         proves: "the required container engine and Compose client are reachable for this invocation",
         does_not_prove: "that PostgreSQL, the backend, or H5 semantics will pass",
+    },
+    NodeSpec {
+        id: "database.runtime-invariants",
+        prerequisites: &[
+            "database.migration-history",
+            "rust.compile",
+            "infrastructure.docker",
+        ],
+        remediation: "inspect the node log, restore append-only migrations and the named application transaction, row-lock, derived-state, and rollback contracts, then rerun the focused database node",
+        proves: "fresh and applied migration histories, explicit use-case transactions, cross-domain synchronous derived state, rollback paths, and the selected READ COMMITTED row-lock contention behavior pass against real PostgreSQL without command retry",
+        does_not_prove: "all possible Product Domain invariants, SERIALIZABLE behavior, asynchronous projections, durable work, or production database operations",
+    },
+    NodeSpec {
+        id: "runtime.post-commit-executor",
+        prerequisites: &["rust.compile"],
+        remediation: "restore the named bounded lossy post-commit executor lifecycle, including capacity rejection, admission-anchored task deadlines, cancellation, tracing, terminal failures, and deadline-bound shutdown; keep business invariants synchronous",
+        proves: "the non-durable post-commit seam rejects excess admission, enforces admission-anchored task deadlines across queue wait and execution, runs named tasks without retry, exposes structured lifecycle tracing and metrics, distinguishes failure, timeout, panic, and cancellation, and bounds shutdown",
+        does_not_prove: "durable delivery, retry, process-crash recovery, exactly-once execution, or correctness for any business invariant deferred to this lossy seam",
     },
     NodeSpec {
         id: "infrastructure.playwright-chromium",
@@ -442,6 +468,7 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
                 &evidence_root,
                 &shutdown,
                 &baselines,
+                request.comparison_base.as_deref(),
             )?
         };
         emit_node(&result, format);
@@ -869,6 +896,7 @@ fn execute_node(
     evidence_root: &Path,
     shutdown: &AtomicBool,
     baselines: &InputBaselines<'_>,
+    comparison_base: Option<&str>,
 ) -> Result<NodeResult> {
     let log_path = evidence_root.join("logs").join(format!("{}.log", spec.id));
     let log = create_private_file(&log_path)?;
@@ -888,6 +916,11 @@ fn execute_node(
         "ownership.generated-snapshots" => verify_snapshot_authorities(root).map_err(|error| {
             NodeFailure::fail("GENERATED_SNAPSHOT_DRIFT", format!("{error:#}"))
         }),
+        "database.migration-history" => check_migration_history(
+            &mut context,
+            baselines.original_root,
+            comparison_base,
+        ),
         "rust.architecture" => check_rust_architecture(&mut context),
         "rust.format" => context.command(
             root,
@@ -942,6 +975,8 @@ fn execute_node(
         "frontend.test" => check_frontend_tests(&mut context),
         "api.client-contract" => check_api_client_contract(&mut context),
         "infrastructure.docker" => check_docker(&mut context),
+        "database.runtime-invariants" => check_database_runtime_invariants(&mut context),
+        "runtime.post-commit-executor" => check_post_commit_executor(&mut context),
         "infrastructure.playwright-chromium" => context.infrastructure_command(
             &root.join("frontend"),
             "node",
@@ -1365,6 +1400,224 @@ struct MetadataDependency {
     name: String,
     kind: Option<String>,
     target: Option<String>,
+}
+
+fn check_migration_history(
+    context: &mut NodeContext<'_>,
+    original_root: &Path,
+    comparison_base: Option<&str>,
+) -> std::result::Result<(), NodeFailure> {
+    let migrations = context.root.join("migrations");
+    let entries = fs::read_dir(&migrations).map_err(|error| {
+        NodeFailure::fail(
+            "DB_MIGRATION_HISTORY_MISSING",
+            format!("read '{}': {error}", migrations.display()),
+        )
+    })?;
+    let mut versions = BTreeMap::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            NodeFailure::fail("DB_MIGRATION_HISTORY_INVALID", error.to_string())
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            NodeFailure::fail("DB_MIGRATION_HISTORY_INVALID", error.to_string())
+        })?;
+        let name = entry.file_name().into_string().map_err(|_| {
+            NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                "migration filenames must be UTF-8",
+            )
+        })?;
+        if !file_type.is_file() || !name.ends_with(".sql") {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                format!("migration authority contains non-SQL entry {name:?}"),
+            ));
+        }
+        let Some((version, description)) = name.split_once('_') else {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                format!("migration {name:?} must use <version>_<description>.sql"),
+            ));
+        };
+        let version = version.parse::<i64>().map_err(|_| {
+            NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                format!("migration {name:?} has an invalid version"),
+            )
+        })?;
+        if version <= 0 || description == ".sql" {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                format!("migration {name:?} has an invalid version or description"),
+            ));
+        }
+        if let Some(existing) = versions.insert(version, name.clone()) {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_HISTORY_INVALID",
+                format!("migrations {existing:?} and {name:?} reuse version {version}"),
+            ));
+        }
+    }
+    if versions.is_empty() {
+        return Err(NodeFailure::fail(
+            "DB_MIGRATION_HISTORY_MISSING",
+            "the Product Workspace migration authority is empty",
+        ));
+    }
+
+    let mut migrator_authorities = Vec::new();
+    collect_migrator_authorities(
+        &context.root.join("crates"),
+        context.root,
+        &mut migrator_authorities,
+    )?;
+    if migrator_authorities != [PathBuf::from("crates/persistence-postgres/src/lib.rs")] {
+        return Err(NodeFailure::fail(
+            "DB_MIGRATION_AUTHORITY_AMBIGUOUS",
+            format!(
+                "expected one root SQLx migrator in persistence-postgres, found {migrator_authorities:?}"
+            ),
+        ));
+    }
+
+    for (path, expected) in template_source_files()
+        .into_iter()
+        .filter(|(path, _)| path.starts_with("migrations/") && path.ends_with(".sql"))
+    {
+        let actual_path = context.root.join(&path);
+        let actual = match fs::read(&actual_path) {
+            Ok(actual) => actual,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(NodeFailure::fail(
+                    "DB_MIGRATION_DISTRIBUTION_BASE_DELETED",
+                    format!("exact-Distribution migration {path:?} was deleted"),
+                ));
+            }
+            Err(error) => {
+                return Err(NodeFailure::fail(
+                    "DB_MIGRATION_HISTORY_INVALID",
+                    format!("read '{}': {error}", actual_path.display()),
+                ));
+            }
+        };
+        if actual != expected {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_DISTRIBUTION_BASE_MUTATED",
+                format!("exact-Distribution migration {path:?} was edited"),
+            ));
+        }
+    }
+
+    let Some(comparison_base) = comparison_base else {
+        return Ok(());
+    };
+    if comparison_base.is_empty()
+        || comparison_base.len() > 256
+        || comparison_base.starts_with('-')
+        || comparison_base.chars().any(char::is_control)
+    {
+        return Err(NodeFailure::fail(
+            "DB_MIGRATION_COMPARISON_BASE_INVALID",
+            "comparison base must be a non-option Git revision of at most 256 characters",
+        ));
+    }
+    let commit = format!("{comparison_base}^{{commit}}");
+    let resolved = context.capture(
+        original_root,
+        "git",
+        &["rev-parse", "--verify", "--quiet", &commit],
+        &[],
+    )?;
+    if !resolved.status.success() {
+        return Err(NodeFailure::fail(
+            "DB_MIGRATION_COMPARISON_BASE_UNAVAILABLE",
+            format!("Git revision {comparison_base:?} does not resolve to a commit"),
+        ));
+    }
+    let diff = context.capture(
+        original_root,
+        "git",
+        &[
+            "diff",
+            "--relative",
+            "--name-status",
+            "--no-renames",
+            comparison_base,
+            "--",
+            "migrations",
+        ],
+        &[],
+    )?;
+    if !diff.status.success() {
+        return Err(NodeFailure::fail(
+            "DB_MIGRATION_COMPARISON_FAILED",
+            format!("could not compare migrations with Git revision {comparison_base:?}"),
+        ));
+    }
+    let changes = String::from_utf8(diff.stdout)
+        .map_err(|error| NodeFailure::fail("DB_MIGRATION_COMPARISON_FAILED", error.to_string()))?;
+    for line in changes.lines() {
+        let Some((status, path)) = line.split_once('\t') else {
+            return Err(NodeFailure::fail(
+                "DB_MIGRATION_COMPARISON_FAILED",
+                format!("Git reported malformed migration change {line:?}"),
+            ));
+        };
+        if status == "A" {
+            continue;
+        }
+        let (code, action) = if status == "D" {
+            ("DB_MIGRATION_COMPARISON_BASE_DELETED", "deleted")
+        } else {
+            ("DB_MIGRATION_COMPARISON_BASE_MUTATED", "edited")
+        };
+        return Err(NodeFailure::fail(
+            code,
+            format!("comparison-base migration {path:?} was {action}; add a new migration instead"),
+        ));
+    }
+    Ok(())
+}
+
+fn collect_migrator_authorities(
+    directory: &Path,
+    root: &Path,
+    authorities: &mut Vec<PathBuf>,
+) -> std::result::Result<(), NodeFailure> {
+    for entry in fs::read_dir(directory).map_err(|error| {
+        NodeFailure::fail(
+            "DB_MIGRATION_AUTHORITY_AMBIGUOUS",
+            format!("read '{}': {error}", directory.display()),
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            NodeFailure::fail("DB_MIGRATION_AUTHORITY_AMBIGUOUS", error.to_string())
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            NodeFailure::fail("DB_MIGRATION_AUTHORITY_AMBIGUOUS", error.to_string())
+        })?;
+        if file_type.is_dir() {
+            collect_migrator_authorities(&entry.path(), root, authorities)?;
+        } else if file_type.is_file()
+            && entry.path().extension() == Some(OsStr::new("rs"))
+            && fs::read_to_string(entry.path())
+                .map_err(|error| {
+                    NodeFailure::fail("DB_MIGRATION_AUTHORITY_AMBIGUOUS", error.to_string())
+                })?
+                .contains("sqlx::migrate!")
+        {
+            authorities.push(
+                entry
+                    .path()
+                    .strip_prefix(root)
+                    .expect("migration source is below the Workspace")
+                    .to_path_buf(),
+            );
+        }
+    }
+    authorities.sort();
+    Ok(())
 }
 
 fn check_rust_architecture(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
@@ -2385,6 +2638,173 @@ fn has_canonical_frontend_test(root: &Path) -> std::result::Result<bool, NodeFai
     Ok(false)
 }
 
+fn check_database_runtime_invariants(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    const REQUIRED_TESTS: &[&str] = &[
+        "applied_migration_history_rejects_mutation_and_deletion",
+        "reading_queue_use_cases_commit_success_and_rollback_failures",
+        "cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_together",
+        "read_committed_row_lock_serializes_conflicting_commands_without_retry",
+    ];
+    require_named_rust_tests(
+        context,
+        "reading_queue_postgres",
+        REQUIRED_TESTS,
+        "DATABASE_RUNTIME_INVARIANT_TEST_MISSING",
+    )?;
+    context.tool_versions.insert(
+        "postgres-image".to_owned(),
+        "postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2".to_owned(),
+    );
+    let mut derived = DerivedFiles::default();
+    let compose_source = template_source_files()
+        .into_iter()
+        .find_map(|(path, bytes)| (path == "compose.yaml").then_some(bytes))
+        .expect("packaged PostgreSQL Compose authority is embedded");
+    let compose = derived.write(
+        context.root,
+        "target/yydra-check-database/compose.yaml",
+        compose_source,
+    )?;
+    let postgres_port = available_port()?;
+    let project = format!(
+        "yydra-check-database-{}-{postgres_port}",
+        std::process::id()
+    );
+    let compose_arg = compose.to_string_lossy().into_owned();
+    let postgres_port_arg = postgres_port.to_string();
+    let database_url =
+        format!("postgres://postgres:postgres@127.0.0.1:{postgres_port}/yydra_product");
+    let mut compose_guard = ComposeGuard::new(
+        context.root,
+        project.clone(),
+        compose_arg.clone(),
+        postgres_port_arg.clone(),
+        "DATABASE_POSTGRES_CLEANUP_FAILED",
+    );
+    let up = context.infrastructure_command(
+        context.root,
+        "docker",
+        &[
+            "compose",
+            "--project-name",
+            &project,
+            "-f",
+            &compose_arg,
+            "up",
+            "-d",
+            "--wait",
+            "postgres",
+        ],
+        &[("YYDRA_POSTGRES_PORT", &postgres_port_arg)],
+        "DATABASE_POSTGRES_UNAVAILABLE",
+    );
+    if let Err(failure) = up {
+        return match compose_guard.cleanup(context) {
+            Ok(()) => Err(failure),
+            Err(cleanup) => Err(cleanup),
+        };
+    }
+
+    let execution = (|| {
+        context.command(
+            context.root,
+            "cargo",
+            &["run", "--locked", "--bin", "migrate"],
+            &[("DATABASE_URL", &database_url)],
+            "DATABASE_MIGRATION_FAILED",
+        )?;
+        for test in REQUIRED_TESTS {
+            context.command(
+                context.root,
+                "cargo",
+                &[
+                    "test",
+                    "--locked",
+                    "--test",
+                    "reading_queue_postgres",
+                    test,
+                    "--",
+                    "--exact",
+                    "--ignored",
+                ],
+                &[("DATABASE_URL", &database_url)],
+                "DATABASE_RUNTIME_INVARIANTS_FAILED",
+            )?;
+        }
+        Ok(())
+    })();
+    let down = compose_guard.cleanup(context);
+    match (execution, down) {
+        (_, Err(cleanup)) => Err(cleanup),
+        (Err(failure), Ok(())) => Err(failure),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn check_post_commit_executor(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    require_named_rust_tests(
+        context,
+        "post_commit_executor",
+        &[
+            "bounded_lossy_executor_reports_admission_deadline_timeout_failure_and_crash_without_retry",
+            "shutdown_cancels_tracked_work_and_forces_uncooperative_work_by_its_deadline",
+        ],
+        "POST_COMMIT_EXECUTOR_TEST_MISSING",
+    )?;
+    context.command(
+        context.root,
+        "cargo",
+        &["test", "--locked", "--test", "post_commit_executor"],
+        &[],
+        "POST_COMMIT_EXECUTOR_FAILED",
+    )
+}
+
+fn require_named_rust_tests(
+    context: &mut NodeContext<'_>,
+    target: &str,
+    required: &[&str],
+    failure_code: &'static str,
+) -> std::result::Result<(), NodeFailure> {
+    let output = context.capture(
+        context.root,
+        "cargo",
+        &[
+            "test", "--locked", "--test", target, "--", "--list", "--format", "terse",
+        ],
+        &[],
+    )?;
+    if !output.status.success() {
+        return Err(NodeFailure::fail(
+            failure_code,
+            format!("could not discover required tests in target {target:?}"),
+        ));
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let discovered = listing
+        .lines()
+        .filter_map(|line| line.strip_suffix(": test"))
+        .collect::<BTreeSet<_>>();
+    let missing = required
+        .iter()
+        .copied()
+        .filter(|test| !discovered.contains(test))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(NodeFailure::fail(
+            failure_code,
+            format!(
+                "required tests {missing:?} are absent from target {target:?}; zero-test or renamed fixtures cannot prove this node"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn check_h5_runtime(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
     const PLAYWRIGHT_CONFIG: &str = r#"import { defineConfig } from "@playwright/test";
 
@@ -2681,6 +3101,7 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
         project.clone(),
         compose_arg.clone(),
         postgres_port_arg.clone(),
+        "H5_POSTGRES_CLEANUP_FAILED",
     );
     let up = context.infrastructure_command(
         context.root,
@@ -2801,22 +3222,36 @@ struct ComposeGuard {
     project: String,
     compose: String,
     port: String,
+    cleanup_code: &'static str,
     active: bool,
 }
 
 impl ComposeGuard {
-    fn new(root: &Path, project: String, compose: String, port: String) -> Self {
+    fn new(
+        root: &Path,
+        project: String,
+        compose: String,
+        port: String,
+        cleanup_code: &'static str,
+    ) -> Self {
         Self {
             root: root.to_path_buf(),
             project,
             compose,
             port,
+            cleanup_code,
             active: true,
         }
     }
 
     fn cleanup(&mut self, context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
-        let result = compose_down(context, &self.project, &self.compose, &self.port);
+        let result = compose_down(
+            context,
+            &self.project,
+            &self.compose,
+            &self.port,
+            self.cleanup_code,
+        );
         if result.is_ok() {
             self.active = false;
         }
@@ -2870,6 +3305,7 @@ fn compose_down(
     project: &str,
     compose: &str,
     port: &str,
+    failure_code: &'static str,
 ) -> std::result::Result<(), NodeFailure> {
     context.cleanup_command(
         context.root,
@@ -2885,7 +3321,7 @@ fn compose_down(
             "--remove-orphans",
         ],
         &[("YYDRA_POSTGRES_PORT", port)],
-        "H5_POSTGRES_CLEANUP_FAILED",
+        failure_code,
     )
 }
 

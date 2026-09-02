@@ -77,6 +77,9 @@ enum Command {
         /// Write evidence outside the Workspace at a path with no symlink ancestor.
         #[arg(long)]
         evidence_dir: Option<PathBuf>,
+        /// Git revision whose existing migrations must remain byte-for-byte append-only.
+        #[arg(long)]
+        comparison_base: Option<String>,
         /// Run only these diagnostic nodes and their prerequisites.
         #[arg(long = "node")]
         nodes: Vec<String>,
@@ -163,11 +166,13 @@ fn main() -> Result<()> {
         Command::Check {
             workspace,
             evidence_dir,
+            comparison_base,
             nodes,
         } => check_graph::check(
             check_graph::CheckRequest {
                 workspace,
                 evidence_dir,
+                comparison_base,
                 selected_nodes: nodes,
             },
             cli.message_format,

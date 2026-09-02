@@ -48,8 +48,26 @@ dependencies. The concrete create, list, and change-state use cases in
 `crates/application` own their SQLx transactions;
 `crates/persistence-postgres` contains only the Product Workspace PostgreSQL
 operations, and append-only migrations `0002` and `0003` retain final database
-constraints. Migration `0004` adds the query-specific status/keyset index.
+constraints. Migration `0004` adds the query-specific status/keyset index, and
+`0005` adds the synchronous Reading Progress projection.
 There is no generic repository or Unit of Work.
+
+The named `ChangeReadingEntryStateAndRecordProgress` orchestration use case
+owns one transaction for the entry transition and its correctness-affecting
+progress value. Persistence functions borrow that transaction executor; any
+failure rolls the complete command back, and success commits explicitly.
+PostgreSQL stays at `READ COMMITTED`; this demonstrated invariant combines the
+database constraints and conditional progress update with a row lock, and the
+concurrent fixture exposes one conflict without command retry.
+
+`crates/application/src/post_commit.rs` is a separate, bounded and non-durable
+seam for optional work submitted only after an authoritative commit. It accepts
+stable named lossy tasks, rejects excess capacity, anchors each end-to-end task
+deadline at admission so queue wait consumes it, records structured tracing and
+metrics, never retries, and distinguishes task
+failure, timeout, cancellation, panic, and deadline-bound shutdown. Process
+crash can lose admitted work. Business invariants therefore remain synchronous;
+this seam is not an outbox, queue, worker, or delivery guarantee.
 
 The H5 Product Presentation submits `title` and `sourceUrl` through the
 handwritten Framework client facade, then completes or reopens entries and
@@ -82,6 +100,7 @@ committed-generated, lock, migration, and configuration inputs:
 
 ```console
 yydra check .
+yydra check . --comparison-base main --node database.migration-history
 ```
 
 It emits one result model as human output or versioned JSON Lines and writes a
@@ -94,6 +113,13 @@ complete core-graph claim. A full #30 pass remains
 aggregation belongs to a later contract. Missing required infrastructure is
 reported separately from semantic failure, and a failed prerequisite skips
 only its dependent nodes.
+`database.migration-history` rejects edits or deletions to exact-Distribution
+migrations and, when `--comparison-base <git-revision>` is supplied, migrations
+present at that Git base; corrections require a new forward migration.
+`database.runtime-invariants` proves the selected transaction, rollback,
+derived-state, migration, and contention fixtures against real PostgreSQL.
+`runtime.post-commit-executor` proves the bounded lossy lifecycle without
+claiming durable delivery or business-invariant correctness.
 
 Public routes consumed by Generated Client code must be registered through
 `product_transport_http::public_routes`. Rust handlers and `utoipa`

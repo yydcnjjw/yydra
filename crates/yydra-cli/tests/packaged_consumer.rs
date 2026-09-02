@@ -105,6 +105,8 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         "Cargo.toml",
         "Cargo.lock",
         "crates/application/Cargo.toml",
+        "crates/application/src/post_commit.rs",
+        "crates/application/tests/post_commit_executor.rs",
         "crates/domain/Cargo.toml",
         "crates/persistence-postgres/Cargo.toml",
         "crates/server/Cargo.toml",
@@ -113,6 +115,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         "frontend/app/index.tsx",
         "frontend/package-lock.json",
         "migrations/0001_baseline.sql",
+        "migrations/0005_reading_progress.sql",
     ] {
         assert!(
             workspace.join(materialized).is_file(),
