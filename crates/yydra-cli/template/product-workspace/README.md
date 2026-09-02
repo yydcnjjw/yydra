@@ -138,6 +138,28 @@ present at that Git base; corrections require a new forward migration.
 derived-state, migration, and contention fixtures against real PostgreSQL.
 `runtime.post-commit-executor` proves the bounded lossy lifecycle without
 claiming durable delivery or business-invariant correctness.
+`native.android-generation` runs the reviewed `generate:android` package
+script twice from identical authored inputs, records the complete generated
+path/mode/byte inventories, rejects drift or authored-input mutation, and
+removes the generated hosts. `android.release` repeats clean generation and
+uses only the generated Gradle wrapper to assemble an identified release APK:
+
+```console
+yydra check . --node native.android-generation
+yydra check . --node android.release
+```
+
+Both nodes keep raw Expo/Gradle logs and structured inventories or artifact
+identity in external evidence. The check command sanitizes its environment, so
+Expo/EAS credentials are neither visible nor required. `frontend/android` and
+`frontend/ios` are ignored, disposable outputs. Agents may inspect a host with
+`npm --prefix frontend run generate:android`, but every fix belongs in the
+committed `frontend/app.json`, exact dependencies, a declared standard config
+plugin, or a committed local Expo Module; never patch generated Java, Kotlin,
+Gradle, manifest, or resource files as source. A pass proves deterministic
+generation on the current host and an Android release build only—not Android
+runtime, installability on a physical device, native accessibility, store
+signing, or bit-for-bit cross-host reproducibility.
 `h5.product-presentation-accessibility` executes the visible Product-owned
 Playwright role, accessible-name, selected-state, focus, responsive-width, and
 dynamic-heading assertions without retry:

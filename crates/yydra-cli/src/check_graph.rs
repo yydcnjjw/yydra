@@ -168,6 +168,20 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "production H5 behavior against the real service",
     },
     NodeSpec {
+        id: "native.android-generation",
+        prerequisites: &["frontend.lock"],
+        remediation: "fix committed Expo app configuration, exact dependencies, standard config plugins, or local Expo Modules; do not patch frontend/android generated source",
+        proves: "two clean Android generations from the same authored inputs reproduce the complete path, mode, and byte inventory without changing Workspace inputs",
+        does_not_prove: "an Android release build, Android runtime behavior, physical-device behavior, or native accessibility",
+    },
+    NodeSpec {
+        id: "android.release",
+        prerequisites: &["native.android-generation"],
+        remediation: "inspect the raw Expo and Gradle logs, then fix authored Expo inputs, exact dependencies, local Expo Modules, or the pinned Android runner; do not patch frontend/android generated source or require Expo/EAS credentials",
+        proves: "a clean generated Android host produces an identified release APK through the local Gradle wrapper without Expo or EAS credentials",
+        does_not_prove: "Android runtime behavior, installation, physical-device behavior, native accessibility, signing for store distribution, or bit-for-bit cross-host reproducibility",
+    },
+    NodeSpec {
         id: "api.client-contract",
         prerequisites: &["api.generated-contract", "frontend.typecheck"],
         remediation: "restore the generated runtime schemas and fix the handwritten Framework facade without importing Generated Client internals from Product code",
@@ -985,6 +999,8 @@ fn execute_node(
         "frontend.lint" => check_frontend_lint(&mut context),
         "frontend.typecheck" => check_frontend_typecheck(&mut context),
         "frontend.test" => check_frontend_tests(&mut context),
+        "native.android-generation" => check_android_generation(&mut context),
+        "android.release" => check_android_release(&mut context),
         "api.client-contract" => check_api_client_contract(&mut context),
         "infrastructure.docker" => check_docker(&mut context),
         "database.runtime-invariants" => check_database_runtime_invariants(&mut context),
@@ -1065,7 +1081,18 @@ impl NodeContext<'_> {
         program: &str,
         arguments: &[&str],
     ) -> std::result::Result<String, NodeFailure> {
-        let output = self.capture(directory, program, arguments, &[])?;
+        self.observe_tool_version_with_environment(directory, name, program, arguments, &[])
+    }
+
+    fn observe_tool_version_with_environment(
+        &mut self,
+        directory: &Path,
+        name: &str,
+        program: &str,
+        arguments: &[&str],
+        environment: &[(&str, &str)],
+    ) -> std::result::Result<String, NodeFailure> {
+        let output = self.capture(directory, program, arguments, environment)?;
         if !output.status.success() {
             return Err(NodeFailure::infrastructure(
                 "CHECK_TOOL_VERSION_UNAVAILABLE",
@@ -2624,6 +2651,574 @@ export default defineConfig({
     )
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeInventoryEntry {
+    path: String,
+    kind: &'static str,
+    mode: String,
+    sha256: String,
+}
+
+struct AccountFreeAndroidEnvironment {
+    home: String,
+    xdg_config_home: String,
+    xdg_cache_home: String,
+    npm_cache: String,
+    npm_user_config: String,
+    gradle_user_home: String,
+}
+
+impl AccountFreeAndroidEnvironment {
+    fn prepare(evidence_root: &Path) -> std::result::Result<Self, NodeFailure> {
+        let root = evidence_root.join("scratch/android-account-free");
+        let home = root.join("home");
+        let xdg_config_home = root.join("xdg-config");
+        let xdg_cache_home = root.join("xdg-cache");
+        let npm_cache = root.join("npm-cache");
+        let gradle_user_home = root.join("gradle-user-home");
+        for directory in [
+            &home,
+            &xdg_config_home,
+            &xdg_cache_home,
+            &npm_cache,
+            &gradle_user_home,
+        ] {
+            create_private_dir_all(directory).map_err(evidence_write_failure)?;
+        }
+        Ok(Self {
+            npm_user_config: root.join("empty-npmrc").display().to_string(),
+            home: home.display().to_string(),
+            xdg_config_home: xdg_config_home.display().to_string(),
+            xdg_cache_home: xdg_cache_home.display().to_string(),
+            npm_cache: npm_cache.display().to_string(),
+            gradle_user_home: gradle_user_home.display().to_string(),
+        })
+    }
+
+    fn expo(&self) -> [(&str, &str); 7] {
+        [
+            ("CI", "1"),
+            ("EXPO_NO_TELEMETRY", "1"),
+            ("HOME", &self.home),
+            ("XDG_CONFIG_HOME", &self.xdg_config_home),
+            ("XDG_CACHE_HOME", &self.xdg_cache_home),
+            ("NPM_CONFIG_CACHE", &self.npm_cache),
+            ("NPM_CONFIG_USERCONFIG", &self.npm_user_config),
+        ]
+    }
+
+    fn gradle(&self) -> [(&str, &str); 7] {
+        [
+            ("CI", "1"),
+            ("NODE_ENV", "production"),
+            (
+                "GRADLE_OPTS",
+                "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.workers.max=2",
+            ),
+            ("HOME", &self.home),
+            ("XDG_CONFIG_HOME", &self.xdg_config_home),
+            ("XDG_CACHE_HOME", &self.xdg_cache_home),
+            ("GRADLE_USER_HOME", &self.gradle_user_home),
+        ]
+    }
+}
+
+fn check_android_generation(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
+    check_android_generation_inputs(context.root)?;
+    let artifact_root = context
+        .evidence_root
+        .join("artifacts/native.android-generation");
+    create_private_dir_all(&artifact_root).map_err(evidence_write_failure)?;
+    let first = generate_android_inventory(context)?;
+    write_native_inventory(&artifact_root.join("generation-1-inventory.json"), &first)?;
+    let second = generate_android_inventory(context)?;
+    write_native_inventory(&artifact_root.join("generation-2-inventory.json"), &second)?;
+    if first != second {
+        return Err(NodeFailure::fail(
+            "NATIVE_GENERATION_NONDETERMINISTIC",
+            describe_native_inventory_drift(&first, &second),
+        ));
+    }
+    Ok(())
+}
+
+fn check_android_generation_inputs(root: &Path) -> std::result::Result<(), NodeFailure> {
+    let frontend = root.join("frontend");
+    for dynamic_config in [
+        "app.config.js",
+        "app.config.cjs",
+        "app.config.mjs",
+        "app.config.ts",
+    ] {
+        if frontend.join(dynamic_config).exists() {
+            return Err(NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!(
+                    "dynamic Expo configuration frontend/{dynamic_config} is outside the V0 authored app.json authority"
+                ),
+            ));
+        }
+    }
+    let package: serde_json::Value =
+        serde_json::from_slice(&fs::read(frontend.join("package.json")).map_err(|error| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("read frontend/package.json: {error}"),
+            )
+        })?)
+        .map_err(|error| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("parse frontend/package.json: {error}"),
+            )
+        })?;
+    let mut dependencies = BTreeMap::new();
+    for section in ["dependencies", "devDependencies"] {
+        let values = package[section].as_object().ok_or_else(|| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("frontend/package.json must define an object-valued {section}"),
+            )
+        })?;
+        for (name, value) in values {
+            let authority = value.as_str().ok_or_else(|| {
+                NodeFailure::fail(
+                    "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                    format!("frontend dependency {name} has a non-string authority"),
+                )
+            })?;
+            if semver::Version::parse(authority).is_err()
+                && !valid_local_module_authority(&frontend, authority)
+            {
+                return Err(NodeFailure::fail(
+                    "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                    format!(
+                        "frontend dependency {name} must use an exact version or a committed file:./modules path, found {authority:?}"
+                    ),
+                ));
+            }
+            dependencies.insert(name.as_str(), authority);
+        }
+    }
+    let generation_command = package["scripts"]["generate:android"]
+        .as_str()
+        .unwrap_or_default();
+    if generation_command != "expo prebuild --platform android --clean --no-install" {
+        return Err(NodeFailure::fail(
+            "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+            format!(
+                "frontend package script generate:android must be the reviewed Expo CNG command, found {generation_command:?}"
+            ),
+        ));
+    }
+
+    let app: serde_json::Value =
+        serde_json::from_slice(&fs::read(frontend.join("app.json")).map_err(|error| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("read frontend/app.json: {error}"),
+            )
+        })?)
+        .map_err(|error| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("parse frontend/app.json: {error}"),
+            )
+        })?;
+    let plugins = app["expo"]["plugins"].as_array().ok_or_else(|| {
+        NodeFailure::fail(
+            "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+            "frontend/app.json must declare expo.plugins as an array",
+        )
+    })?;
+    for plugin in plugins {
+        let plugin = plugin
+            .as_str()
+            .or_else(|| plugin.as_array()?.first()?.as_str())
+            .ok_or_else(|| {
+                NodeFailure::fail(
+                    "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                    "each Expo config plugin must be a package string or [package, options] pair",
+                )
+            })?;
+        if plugin.starts_with("./") {
+            if !valid_local_module_path(&frontend, plugin.trim_start_matches("./")) {
+                return Err(NodeFailure::fail(
+                    "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                    format!(
+                        "local Expo config plugin {plugin:?} must resolve below committed frontend/modules"
+                    ),
+                ));
+            }
+            continue;
+        }
+        let package_name = plugin_package_name(plugin).ok_or_else(|| {
+            NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!("Expo config plugin {plugin:?} is not a valid package reference"),
+            )
+        })?;
+        if !dependencies.contains_key(package_name) {
+            return Err(NodeFailure::fail(
+                "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                format!(
+                    "Expo config plugin {plugin:?} is not backed by an exact declared dependency"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_local_module_authority(frontend: &Path, authority: &str) -> bool {
+    authority
+        .strip_prefix("file:./")
+        .and_then(|path| resolved_local_module_path(frontend, path))
+        .is_some_and(|path| path.is_dir())
+}
+
+fn valid_local_module_path(frontend: &Path, path: &str) -> bool {
+    resolved_local_module_path(frontend, path).is_some()
+}
+
+fn resolved_local_module_path(frontend: &Path, path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path);
+    if !relative.starts_with("modules")
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    let modules = frontend.join("modules");
+    let candidate = frontend.join(relative);
+    if fs::symlink_metadata(&modules)
+        .ok()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return None;
+    }
+    let mut cursor = modules.clone();
+    for component in relative.components().skip(1) {
+        cursor.push(component);
+        if fs::symlink_metadata(&cursor)
+            .ok()
+            .is_some_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return None;
+        }
+    }
+    let modules = modules.canonicalize().ok()?;
+    let candidate = candidate.canonicalize().ok()?;
+    candidate.starts_with(&modules).then_some(candidate)
+}
+
+fn plugin_package_name(plugin: &str) -> Option<&str> {
+    if plugin.is_empty() || plugin.starts_with('/') || plugin.starts_with('.') {
+        return None;
+    }
+    if plugin.starts_with('@') {
+        let second_slash = plugin.match_indices('/').nth(1).map(|(index, _)| index);
+        Some(second_slash.map_or(plugin, |index| &plugin[..index]))
+    } else {
+        Some(plugin.split('/').next().expect("non-empty plugin"))
+    }
+}
+
+fn generate_android_inventory(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<Vec<NativeInventoryEntry>, NodeFailure> {
+    let result = generate_android_host(context);
+    let cleanup = remove_android_host(context.root);
+    cleanup?;
+    result
+}
+
+fn generate_android_host(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<Vec<NativeInventoryEntry>, NodeFailure> {
+    let frontend = context.root.join("frontend");
+    let android = frontend.join("android");
+    if android.exists() {
+        return Err(NodeFailure::fail(
+            "NATIVE_GENERATION_DIRTY_OUTPUT",
+            "generated frontend/android output existed before clean generation",
+        ));
+    }
+    let authored_before = workspace_inputs(context.root)?;
+    let account_free = AccountFreeAndroidEnvironment::prepare(context.evidence_root)?;
+    let environment = account_free.expo();
+    let command_result = context.command(
+        &frontend,
+        npm_program(),
+        &["run", "--ignore-scripts", "generate:android"],
+        &environment,
+        "NATIVE_GENERATION_FAILED",
+    );
+    let authored_after = workspace_inputs(context.root)?;
+    if authored_before != authored_after {
+        Err(NodeFailure::fail(
+            "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS",
+            describe_input_drift(&authored_before, &authored_after),
+        ))
+    } else if let Err(failure) = command_result {
+        Err(failure)
+    } else if !complete_android_host(&android) {
+        Err(NodeFailure::fail(
+            "NATIVE_GENERATION_OUTPUT_MISSING",
+            "Expo prebuild succeeded without a complete frontend/android host (required: gradlew, settings.gradle or settings.gradle.kts, and app/build.gradle or app/build.gradle.kts)",
+        ))
+    } else {
+        native_inventory(&android)
+    }
+}
+
+fn complete_android_host(android: &Path) -> bool {
+    android.is_dir()
+        && android.join("gradlew").is_file()
+        && ["settings.gradle", "settings.gradle.kts"]
+            .iter()
+            .any(|path| android.join(path).is_file())
+        && ["app/build.gradle", "app/build.gradle.kts"]
+            .iter()
+            .any(|path| android.join(path).is_file())
+}
+
+fn remove_android_host(root: &Path) -> std::result::Result<(), NodeFailure> {
+    let android = root.join("frontend/android");
+    if !android.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&android).map_err(|error| {
+        NodeFailure::infrastructure(
+            "NATIVE_GENERATION_CLEANUP_FAILED",
+            format!(
+                "remove generated Android host '{}': {error}",
+                android.display()
+            ),
+        )
+    })
+}
+
+fn native_inventory(root: &Path) -> std::result::Result<Vec<NativeInventoryEntry>, NodeFailure> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        entries: &mut Vec<NativeInventoryEntry>,
+    ) -> std::result::Result<(), NodeFailure> {
+        let mut children = fs::read_dir(path)
+            .map_err(|error| {
+                NodeFailure::fail(
+                    "NATIVE_GENERATION_INVENTORY_FAILED",
+                    format!("read generated path '{}': {error}", path.display()),
+                )
+            })?
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| {
+                NodeFailure::fail("NATIVE_GENERATION_INVENTORY_FAILED", error.to_string())
+            })?;
+        children.sort_by_key(std::fs::DirEntry::file_name);
+        for child in children {
+            let child_path = child.path();
+            let metadata = fs::symlink_metadata(&child_path).map_err(|error| {
+                NodeFailure::fail(
+                    "NATIVE_GENERATION_INVENTORY_FAILED",
+                    format!("inspect generated path '{}': {error}", child_path.display()),
+                )
+            })?;
+            let relative = child_path
+                .strip_prefix(root.parent().expect("Android host has frontend parent"))
+                .expect("generated path is below frontend")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let (kind, bytes) = if metadata.file_type().is_symlink() {
+                let target = fs::read_link(&child_path).map_err(|error| {
+                    NodeFailure::fail("NATIVE_GENERATION_INVENTORY_FAILED", error.to_string())
+                })?;
+                ("symlink", target.as_os_str().as_encoded_bytes().to_vec())
+            } else if metadata.is_dir() {
+                ("directory", Vec::new())
+            } else if metadata.is_file() {
+                let bytes = fs::read(&child_path).map_err(|error| {
+                    NodeFailure::fail("NATIVE_GENERATION_INVENTORY_FAILED", error.to_string())
+                })?;
+                ("file", bytes)
+            } else {
+                return Err(NodeFailure::fail(
+                    "NATIVE_GENERATION_INVENTORY_FAILED",
+                    format!(
+                        "unsupported generated path type at '{}'",
+                        child_path.display()
+                    ),
+                ));
+            };
+            entries.push(NativeInventoryEntry {
+                path: relative,
+                kind,
+                mode: native_mode(&metadata),
+                sha256: format!("sha256:{}", hex::encode(Sha256::digest(bytes))),
+            });
+            if metadata.is_dir() {
+                visit(root, &child_path, entries)?;
+            }
+        }
+        Ok(())
+    }
+
+    let root_metadata = fs::symlink_metadata(root).map_err(|error| {
+        NodeFailure::fail(
+            "NATIVE_GENERATION_INVENTORY_FAILED",
+            format!("inspect generated root '{}': {error}", root.display()),
+        )
+    })?;
+    let mut entries = vec![NativeInventoryEntry {
+        path: root
+            .file_name()
+            .expect("Android host has a name")
+            .to_string_lossy()
+            .into_owned(),
+        kind: "directory",
+        mode: native_mode(&root_metadata),
+        sha256: format!("sha256:{}", hex::encode(Sha256::digest([]))),
+    }];
+    visit(root, root, &mut entries)?;
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn native_mode(metadata: &fs::Metadata) -> String {
+    format!("{:04o}", metadata.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn native_mode(metadata: &fs::Metadata) -> String {
+    if metadata.permissions().readonly() {
+        "readonly".to_owned()
+    } else {
+        "writable".to_owned()
+    }
+}
+
+fn write_native_inventory(
+    path: &Path,
+    entries: &[NativeInventoryEntry],
+) -> std::result::Result<(), NodeFailure> {
+    let mut bytes = serde_json::to_vec_pretty(entries).map_err(evidence_write_failure)?;
+    bytes.push(b'\n');
+    let mut file = create_private_file(path).map_err(evidence_write_failure)?;
+    file.write_all(&bytes).map_err(evidence_write_failure)?;
+    file.flush().map_err(evidence_write_failure)
+}
+
+fn describe_native_inventory_drift(
+    expected: &[NativeInventoryEntry],
+    actual: &[NativeInventoryEntry],
+) -> String {
+    let expected = expected
+        .iter()
+        .map(|entry| (PathBuf::from(&entry.path), entry))
+        .collect::<BTreeMap<_, _>>();
+    let actual = actual
+        .iter()
+        .map(|entry| (PathBuf::from(&entry.path), entry))
+        .collect::<BTreeMap<_, _>>();
+    describe_input_drift(&expected, &actual)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidArtifactIdentity {
+    path: &'static str,
+    bytes: u64,
+    sha256: String,
+    native_inventory_sha256: String,
+    runner_os: &'static str,
+    runner_arch: &'static str,
+    gradle_wrapper: String,
+}
+
+fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
+    let artifact_root = context.evidence_root.join("artifacts/android.release");
+    create_private_dir_all(&artifact_root).map_err(evidence_write_failure)?;
+    let execution = (|| {
+        let native_inventory = generate_android_host(context)?;
+        let native_inventory_path = artifact_root.join("native-inventory.json");
+        write_native_inventory(&native_inventory_path, &native_inventory)?;
+        let android = context.root.join("frontend/android");
+        let account_free = AccountFreeAndroidEnvironment::prepare(context.evidence_root)?;
+        let environment = account_free.gradle();
+        let gradle_wrapper = context.observe_tool_version_with_environment(
+            &android,
+            "gradle-wrapper",
+            "./gradlew",
+            &["--version"],
+            &environment,
+        )?;
+        context.command(
+            &android,
+            "./gradlew",
+            &["--no-daemon", "assembleRelease"],
+            &environment,
+            "ANDROID_RELEASE_BUILD_FAILED",
+        )?;
+        let source = android.join("app/build/outputs/apk/release/app-release.apk");
+        if !source.is_file() {
+            return Err(NodeFailure::fail(
+                "ANDROID_RELEASE_OUTPUT_MISSING",
+                format!(
+                    "Gradle succeeded without producing the required release APK at '{}'",
+                    source.display()
+                ),
+            ));
+        }
+        let apk_bytes = fs::read(&source).map_err(|error| {
+            NodeFailure::fail(
+                "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+                format!(
+                    "read Android release artifact '{}': {error}",
+                    source.display()
+                ),
+            )
+        })?;
+        let apk_path = artifact_root.join("app-release.apk");
+        let mut apk = create_private_file(&apk_path).map_err(evidence_write_failure)?;
+        apk.write_all(&apk_bytes).map_err(evidence_write_failure)?;
+        apk.flush().map_err(evidence_write_failure)?;
+        let native_inventory_bytes =
+            fs::read(&native_inventory_path).map_err(evidence_write_failure)?;
+        let identity = AndroidArtifactIdentity {
+            path: "app-release.apk",
+            bytes: u64::try_from(apk_bytes.len()).unwrap_or(u64::MAX),
+            sha256: format!("sha256:{}", hex::encode(Sha256::digest(&apk_bytes))),
+            native_inventory_sha256: format!(
+                "sha256:{}",
+                hex::encode(Sha256::digest(native_inventory_bytes))
+            ),
+            runner_os: std::env::consts::OS,
+            runner_arch: std::env::consts::ARCH,
+            gradle_wrapper,
+        };
+        let mut identity_bytes =
+            serde_json::to_vec_pretty(&identity).map_err(evidence_write_failure)?;
+        identity_bytes.push(b'\n');
+        let mut identity_file = create_private_file(&artifact_root.join("artifact.json"))
+            .map_err(evidence_write_failure)?;
+        identity_file
+            .write_all(&identity_bytes)
+            .map_err(evidence_write_failure)?;
+        identity_file.flush().map_err(evidence_write_failure)
+    })();
+    let cleanup = remove_android_host(context.root);
+    cleanup?;
+    execution
+}
+
 fn has_canonical_frontend_test(root: &Path) -> std::result::Result<bool, NodeFailure> {
     if !root.is_dir() {
         return Ok(false);
@@ -4029,6 +4624,8 @@ fn display_command(
 
 fn sanitized_command(program: &str) -> Command {
     const ALLOWED_ENVIRONMENT: &[&str] = &[
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
         "CARGO_HOME",
         "COMSPEC",
         "DOCKER_CONFIG",
@@ -4040,6 +4637,7 @@ fn sanitized_command(program: &str) -> Command {
         "HOMEPATH",
         "HTTPS_PROXY",
         "HTTP_PROXY",
+        "JAVA_HOME",
         "LANG",
         "LC_ALL",
         "NO_PROXY",

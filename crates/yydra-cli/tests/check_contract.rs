@@ -9,6 +9,7 @@ use std::sync::Mutex;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use sha2::Digest;
 use tempfile::tempdir;
 
 static HEAVY_CHECK_LOCK: Mutex<()> = Mutex::new(());
@@ -51,6 +52,38 @@ fn refresh_fixture_lock(workspace: &Path) {
 fn write_executable(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write executable fixture");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("make fixture executable");
+}
+
+#[cfg(unix)]
+fn write_fake_native_toolchain(directory: &Path, npm_body: &str) {
+    fs::create_dir(directory).expect("create fake native tool directory");
+    write_executable(&directory.join("npm"), npm_body);
+    write_executable(
+        &directory.join("node"),
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'v26.8.1'
+  exit 0
+fi
+case "$2" in
+  *node_modules/expo/package.json*) printf '%s\n' '57.0.19' ;;
+  *node_modules/@react-native-community/netinfo/package.json*) printf '%s\n' '12.0.1' ;;
+  *node_modules/@playwright/test/package.json*) printf '%s\n' '1.62.1' ;;
+  *node_modules/@testing-library/dom/package.json*) printf '%s\n' '10.4.1' ;;
+  *node_modules/@testing-library/react/package.json*) printf '%s\n' '16.3.3' ;;
+  *node_modules/@types/react-dom/package.json*) printf '%s\n' '19.2.5' ;;
+  *node_modules/@eslint/js/package.json*) printf '%s\n' '10.0.1' ;;
+  *node_modules/eslint/package.json*) printf '%s\n' '10.9.1' ;;
+  *node_modules/jsdom/package.json*) printf '%s\n' '30.0.1' ;;
+  *node_modules/orval/package.json*) printf '%s\n' '8.27.0' ;;
+  *node_modules/prettier/package.json*) printf '%s\n' '3.9.6' ;;
+  *node_modules/typescript/package.json*) printf '%s\n' '6.0.3' ;;
+  *node_modules/typescript-eslint/package.json*) printf '%s\n' '8.69.0' ;;
+  *node_modules/vitest/package.json*) printf '%s\n' '4.1.11' ;;
+  *) exit 2 ;;
+esac
+"#,
+    );
 }
 
 fn check(workspace: &Path, evidence: &Path, nodes: &[&str]) -> Output {
@@ -1443,6 +1476,710 @@ fn h5_semantic_failure_is_discriminating_read_only_and_cleans_up() {
         cleanup.stdout.is_empty(),
         "Compose project {project} survived"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_repeats_the_complete_inventory_and_is_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("native-reader");
+    create_workspace(&workspace, "native-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' '12.0.2'
+  exit 0
+fi
+if [ "$1" = "ci" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  case " $* " in
+    *" --ignore-scripts "*) ;;
+    *) exit 90 ;;
+  esac
+  mkdir -p android/app/src/main
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' 'generated application' > android/app/src/main/AndroidManifest.xml
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' '#!/bin/sh' 'exit 0' > android/gradlew
+  chmod 755 android/gradlew
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let evidence = sandbox.path().join("evidence");
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run Android generation check");
+    assert!(
+        output.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let parsed = events(&output);
+    let generation = node(&parsed, "native.android-generation");
+    assert_eq!(generation["outcome"], "pass");
+    assert!(
+        generation["commands"]
+            .as_array()
+            .expect("generation commands")
+            .iter()
+            .any(|command| command.as_str().is_some_and(|command| {
+                command.contains("npm run --ignore-scripts generate:android")
+            }))
+    );
+    let first =
+        fs::read(evidence.join("artifacts/native.android-generation/generation-1-inventory.json"))
+            .expect("read first native inventory");
+    let second =
+        fs::read(evidence.join("artifacts/native.android-generation/generation-2-inventory.json"))
+            .expect("read second native inventory");
+    assert_eq!(first, second);
+    assert!(
+        String::from_utf8(first)
+            .expect("UTF-8 native inventory")
+            .contains("android/gradlew")
+    );
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_rejects_inventory_nondeterminism_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("nondeterministic-native-reader");
+    create_workspace(&workspace, "nondeterministic-native-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    let counter = sandbox.path().join("generation-counter");
+    write_fake_native_toolchain(
+        &fake_bin,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' '#!/bin/sh' 'exit 0' > android/gradlew
+  chmod 755 android/gradlew
+  if [ -f '{counter}' ]; then
+    printf '%s\n' 'second generation' > android/app/build.gradle
+  else
+    printf '%s\n' 'first generation' > android/app/build.gradle
+    : > '{counter}'
+  fi
+  exit 0
+fi
+exit 2
+"#,
+            counter = counter.display()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let evidence = sandbox.path().join("evidence");
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run nondeterministic Android generation check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    let failure = node(&parsed, "native.android-generation");
+    assert_eq!(failure["outcome"], "fail");
+    assert_eq!(
+        failure["cause"]["code"],
+        "NATIVE_GENERATION_NONDETERMINISTIC"
+    );
+    assert_ne!(
+        fs::read(evidence.join("artifacts/native.android-generation/generation-1-inventory.json"))
+            .expect("read first inventory"),
+        fs::read(evidence.join("artifacts/native.android-generation/generation-2-inventory.json"))
+            .expect("read second inventory")
+    );
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_inventory_includes_root_mode_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("root-mode-native-reader");
+    create_workspace(&workspace, "root-mode-native-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    let counter = sandbox.path().join("generation-counter");
+    write_fake_native_toolchain(
+        &fake_bin,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' '#!/bin/sh' 'exit 0' > android/gradlew
+  chmod 755 android/gradlew
+  if [ -f '{counter}' ]; then
+    chmod 700 android
+  else
+    chmod 755 android
+    : > '{counter}'
+  fi
+  exit 0
+fi
+exit 2
+"#,
+            counter = counter.display()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let evidence = sandbox.path().join("evidence");
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run root-mode Android generation check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["cause"]["code"],
+        "NATIVE_GENERATION_NONDETERMINISTIC"
+    );
+    let first: serde_json::Value = serde_json::from_slice(
+        &fs::read(evidence.join("artifacts/native.android-generation/generation-1-inventory.json"))
+            .expect("read first inventory"),
+    )
+    .expect("parse first inventory");
+    let second: serde_json::Value = serde_json::from_slice(
+        &fs::read(evidence.join("artifacts/native.android-generation/generation-2-inventory.json"))
+            .expect("read second inventory"),
+    )
+    .expect("parse second inventory");
+    assert_eq!(first[0]["path"], "android");
+    assert_eq!(first[0]["mode"], "0755");
+    assert_eq!(second[0]["path"], "android");
+    assert_eq!(second[0]["mode"], "0700");
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_rejects_authored_input_mutation_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("mutating-native-reader");
+    create_workspace(&workspace, "mutating-native-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' 'mutated by native generator' >> app.json
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run mutating Android generation check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["cause"]["code"],
+        "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS"
+    );
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_rejects_missing_output_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("missing-native-reader");
+    create_workspace(&workspace, "missing-native-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then mkdir -p android; exit 0; fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run missing Android generation check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["cause"]["code"],
+        "NATIVE_GENERATION_OUTPUT_MISSING"
+    );
+    assert_eq!(workspace_files(&workspace), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_rejects_an_undeclared_config_plugin_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("undeclared-plugin-reader");
+    create_workspace(&workspace, "undeclared-plugin-reader");
+    let app_config = workspace.join("frontend/app.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&app_config).expect("read Expo app configuration"))
+            .expect("parse Expo app configuration");
+    config["expo"]["plugins"] = serde_json::json!(["expo-router", "unreviewed-plugin"]);
+    fs::write(
+        &app_config,
+        serde_json::to_vec_pretty(&config).expect("encode Expo app configuration"),
+    )
+    .expect("write undeclared config plugin fixture");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run undeclared config plugin check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    let failure = node(&parsed, "native.android-generation");
+    assert_eq!(
+        failure["cause"]["code"],
+        "NATIVE_GENERATION_INPUT_POLICY_FAILED"
+    );
+    assert!(
+        failure["cause"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unreviewed-plugin"))
+    );
+    assert_eq!(workspace_files(&workspace), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn android_generation_rejects_local_module_symlink_escape_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("symlink-plugin-reader");
+    create_workspace(&workspace, "symlink-plugin-reader");
+    let modules = workspace.join("frontend/modules");
+    fs::create_dir(&modules).expect("create local modules directory");
+    std::os::unix::fs::symlink("../src", modules.join("escape"))
+        .expect("create escaping local module symlink");
+    let app_config = workspace.join("frontend/app.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&app_config).expect("read Expo app configuration"))
+            .expect("parse Expo app configuration");
+    config["expo"]["plugins"] = serde_json::json!(["expo-router", "./modules/escape"]);
+    fs::write(
+        &app_config,
+        serde_json::to_vec_pretty(&config).expect("encode Expo app configuration"),
+    )
+    .expect("write escaping local plugin fixture");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "native.android-generation",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run escaping local module check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["cause"]["code"],
+        "NATIVE_GENERATION_INPUT_POLICY_FAILED"
+    );
+    assert_eq!(workspace_files(&workspace), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn android_release_builds_account_free_and_records_artifact_identity_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("android-release-reader");
+    create_workspace(&workspace, "android-release-reader");
+    let before = workspace_files(&workspace);
+    let poisoned_home = sandbox.path().join("poisoned-home");
+    let poisoned_config = sandbox.path().join("poisoned-config");
+    fs::create_dir_all(poisoned_home.join(".expo")).expect("create poisoned Expo home");
+    fs::create_dir_all(poisoned_config.join("expo")).expect("create poisoned Expo config");
+    fs::write(poisoned_home.join(".expo/account.json"), "must-not-be-read")
+        .expect("write poisoned Expo home");
+    fs::write(
+        poisoned_config.join("expo/account.json"),
+        "must-not-be-read",
+    )
+    .expect("write poisoned Expo config");
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "${EXPO_TOKEN+x}" = x ] || [ "${EAS_TOKEN+x}" = x ]; then exit 9; fi
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  if [ -f "$HOME/.expo/account.json" ] || [ -f "$XDG_CONFIG_HOME/expo/account.json" ]; then exit 9; fi
+  mkdir -p android/app
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "${EXPO_TOKEN+x}" = x ] || [ "${EAS_TOKEN+x}" = x ]; then exit 9; fi' \
+    'if [ -f "$HOME/.expo/account.json" ] || [ -f "$XDG_CONFIG_HOME/expo/account.json" ]; then exit 9; fi' \
+    'if [ "$1" = "--version" ]; then printf "%s\\n" "Gradle 9.0.0"; exit 0; fi' \
+    'mkdir -p app/build/outputs/apk/release' \
+    "printf '%s\\n' 'account-free release' > app/build/outputs/apk/release/app-release.apk" \
+    > android/gradlew
+  chmod 755 android/gradlew
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let evidence = sandbox.path().join("evidence");
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--node",
+            "android.release",
+        ])
+        .env("PATH", path)
+        .env("EXPO_TOKEN", "must-not-reach-build")
+        .env("EAS_TOKEN", "must-not-reach-build")
+        .env("HOME", &poisoned_home)
+        .env("XDG_CONFIG_HOME", &poisoned_config)
+        .output()
+        .expect("run account-free Android release check");
+    assert!(
+        output.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["outcome"],
+        "pass"
+    );
+    let release = node(&parsed, "android.release");
+    assert_eq!(release["outcome"], "pass");
+    assert!(
+        release["commands"]
+            .as_array()
+            .expect("release commands")
+            .iter()
+            .any(|command| command.as_str().is_some_and(|command| {
+                command.contains("./gradlew --no-daemon assembleRelease")
+            }))
+    );
+    let apk = evidence.join("artifacts/android.release/app-release.apk");
+    assert_eq!(
+        fs::read(&apk).expect("read release artifact"),
+        b"account-free release\n"
+    );
+    let identity: serde_json::Value = serde_json::from_slice(
+        &fs::read(evidence.join("artifacts/android.release/artifact.json"))
+            .expect("read release artifact identity"),
+    )
+    .expect("parse release artifact identity");
+    assert_eq!(identity["path"], "app-release.apk");
+    assert_eq!(identity["bytes"], 21);
+    assert_eq!(
+        identity["sha256"],
+        format!(
+            "sha256:{}",
+            hex::encode(sha2::Sha256::digest(b"account-free release\n"))
+        )
+    );
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn android_release_rejects_gradle_failure_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("failing-android-release-reader");
+    create_workspace(&workspace, "failing-android-release-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "$1" = "--version" ]; then printf "%s\\n" "Gradle 9.0.0"; exit 0; fi' \
+    'exit 42' \
+    > android/gradlew
+  chmod 755 android/gradlew
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "android.release",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run failing Android release check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "native.android-generation")["outcome"],
+        "pass"
+    );
+    let failure = node(&parsed, "android.release");
+    assert_eq!(failure["cause"]["code"], "ANDROID_RELEASE_BUILD_FAILED");
+    assert!(failure["remediation"].is_string());
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn android_release_rejects_missing_apk_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("missing-android-release-reader");
+    create_workspace(&workspace, "missing-android-release-reader");
+    let before = workspace_files(&workspace);
+    let fake_bin = sandbox.path().join("fake-bin");
+    write_fake_native_toolchain(
+        &fake_bin,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' '12.0.2'; exit 0; fi
+if [ "$1" = "ci" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+  mkdir -p android/app
+  printf '%s\n' 'generated settings' > android/settings.gradle
+  printf '%s\n' 'generated build' > android/app/build.gradle
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "$1" = "--version" ]; then printf "%s\\n" "Gradle 9.0.0"; exit 0; fi' \
+    'exit 0' \
+    > android/gradlew
+  chmod 755 android/gradlew
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--node",
+            "android.release",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run missing APK check");
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "android.release")["cause"]["code"],
+        "ANDROID_RELEASE_OUTPUT_MISSING"
+    );
+    assert_eq!(workspace_files(&workspace), before);
+    assert!(!workspace.join("frontend/android").exists());
 }
 
 fn workspace_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
