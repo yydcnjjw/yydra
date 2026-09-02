@@ -56,6 +56,30 @@ aggregation belongs to a later contract. Missing required infrastructure is
 reported separately from semantic failure, and a failed prerequisite skips
 only its dependent nodes.
 
+Public routes consumed by Generated Client code must be registered through
+`product_transport_http::public_routes`. Rust handlers and `utoipa`
+declarations are the authored authority; `contracts/openapi.json`,
+`frontend/src/generated/public-api/`, and the `.yydra/api-generation*.json`
+records are committed outputs and must not be hand-edited. Regenerate the
+complete output set through the exact CLI:
+
+```console
+yydra generate api .
+```
+
+The command exports and lints normalized OpenAPI, runs the pinned Orval
+Fetch/TypeScript/Zod stages, and type-checks them in isolated temporary roots.
+Only then does it replace the contract, client directory, compatibility
+history, and generation record under one Workspace lock and a persisted,
+rollback-safe transaction. A read-only check refuses an interrupted
+transaction; the next write invocation restores the last complete set before
+starting. Use
+`yydra generate api . --check` for a read-only comparison. An intentional
+lockstep breaking change requires a reviewed, narrow
+`--acknowledge-breaking-change <reference>`; the acknowledgment does not make
+the change non-breaking. Product code calls the handwritten facade in
+`frontend/src/framework/api/`, never the generated directory directly.
+
 The focused production H5 acceptance command exports static web assets, serves
 them locally, and runs Playwright against the real service URL. Start the
 diagnostic-only server leaf in one terminal:

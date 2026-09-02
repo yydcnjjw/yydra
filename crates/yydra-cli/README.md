@@ -34,14 +34,20 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
   yydra db migrate ./reader
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
   yydra dev ./reader
+yydra generate api ./reader
 yydra check ./reader
 ```
 
 `setup` consumes both committed locks. Migration creation (`yydra db migration
 add`) and application are explicit; the server only verifies that PostgreSQL
 matches its compiled history. `check` is read-only for Workspace inputs and
-runs the Distribution-owned core graph, including the real PostgreSQL/Axum/H5
-path. Its default evidence directory is a private, unique system-temporary
+runs the Distribution-owned core graph, including Public API/Generated Client
+drift and the real PostgreSQL/Axum/H5 path. `generate api` is the only supported
+write path for normalized OpenAPI and the Orval Fetch/TypeScript/Zod outputs;
+it validates every isolated stage before a Workspace-locked, journaled,
+rollback-safe replacement, and records a replayable compatibility history.
+Its read-only form is `yydra generate api ./reader --check`. The default check
+evidence directory is a private, unique system-temporary
 directory outside the Product Workspace; an explicit `--evidence-dir` must
 also be outside the Workspace and have no symlink ancestor. Diagnostic
 `--node` selection is explicitly incomplete. A full result is scoped as

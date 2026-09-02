@@ -91,49 +91,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "__PRODUCT_ID__-application"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "__PRODUCT_ID__-persistence-postgres",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-domain"
-version = "0.1.0"
-
-[[package]]
-name = "__PRODUCT_ID__-persistence-postgres"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "sqlx",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "__PRODUCT_ID__-persistence-postgres",
- "__PRODUCT_ID__-transport-http",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-transport-http"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "serde",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -210,6 +167,54 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
+name = "__PRODUCT_ID__-application"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-domain",
+ "__PRODUCT_ID__-persistence-postgres",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-domain"
+version = "0.1.0"
+
+[[package]]
+name = "__PRODUCT_ID__-persistence-postgres"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-domain",
+ "sqlx",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "__PRODUCT_ID__-persistence-postgres",
+ "__PRODUCT_ID__-transport-http",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-transport-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "utoipa",
+ "utoipa-axum",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -763,6 +768,8 @@ checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -914,6 +921,12 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "percent-encoding"
@@ -1101,9 +1114,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
  "itoa",
  "memchr",
@@ -1715,6 +1728,42 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "utoipa"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-axum"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c25bae5bccc842449ec0c5ddc5cbb6a3a1eaeac4503895dc105a1138f8234a0"
+dependencies = [
+ "axum",
+ "paste",
+ "tower-layer",
+ "tower-service",
+ "utoipa",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "valuable"

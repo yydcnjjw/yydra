@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use tempfile::tempdir;
+
+static HEAVY_CHECK_LOCK: Mutex<()> = Mutex::new(());
 
 fn create_workspace(destination: &Path, product_id: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
@@ -51,6 +54,22 @@ fn write_executable(path: &Path, contents: &str) {
 }
 
 fn check(workspace: &Path, evidence: &Path, nodes: &[&str]) -> Output {
+    let _heavy_guard = nodes
+        .iter()
+        .any(|node| {
+            node.starts_with("api.")
+                || node.starts_with("frontend.")
+                || node.starts_with("h5.")
+                || matches!(
+                    *node,
+                    "rust.compile" | "rust.clippy" | "rust.test" | "rust.doctest"
+                )
+        })
+        .then(|| {
+            HEAVY_CHECK_LOCK
+                .lock()
+                .expect("lock heavyweight check fixture")
+        });
     let mut command = Command::new(env!("CARGO_BIN_EXE_yydra"));
     command.args([
         "--message-format=json",
@@ -438,6 +457,123 @@ fn generated_snapshot_drift_is_reported_by_its_own_node() {
 }
 
 #[test]
+fn api_generated_contract_node_detects_client_drift_and_remains_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("api-drift-reader");
+    create_workspace(&workspace, "api-drift-reader");
+    let client = workspace.join("frontend/src/generated/public-api/fetch/client.ts");
+    let mut source = fs::read(&client).expect("read Generated Client fixture");
+    source.extend_from_slice(b"\n// forbidden hand edit\n");
+    fs::write(&client, source).expect("drift Generated Client fixture");
+    let before = workspace_files(&workspace);
+
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["api.generated-contract"],
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    for prerequisite in ["rust.architecture", "rust.compile", "frontend.lock"] {
+        let prerequisite_result = node(&parsed, prerequisite);
+        assert_eq!(
+            prerequisite_result["outcome"],
+            "pass",
+            "prerequisite={prerequisite}, result={prerequisite_result:#?}, stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let failure = node(&parsed, "api.generated-contract");
+    assert_eq!(failure["outcome"], "fail");
+    assert_eq!(failure["cause"]["code"], "API_CLIENT_DRIFT");
+    assert!(failure["remediation"].is_string());
+    assert_eq!(workspace_files(&workspace), before);
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[test]
+fn api_runtime_conformance_reports_a_stable_failure_for_a_malformed_live_response() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("api-runtime-reader");
+    create_workspace(&workspace, "api-runtime-reader");
+    let transport = workspace.join("crates/transport-http/src/lib.rs");
+    let source = fs::read_to_string(&transport).expect("read transport fixture");
+    let malformed = source.replace("2000-01-01T00:00:00Z", "2000-01-01T01:00:00+01:00");
+    assert_ne!(source, malformed, "runtime fixture timestamp was not found");
+    fs::write(&transport, malformed).expect("write malformed runtime fixture");
+    let before = workspace_files(&workspace);
+
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["api.runtime-conformance"],
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(node(&parsed, "api.generated-contract")["outcome"], "pass");
+    let failure = node(&parsed, "api.runtime-conformance");
+    assert_eq!(failure["outcome"], "fail");
+    assert_eq!(failure["cause"]["code"], "API_RUNTIME_CONFORMANCE_FAILED");
+    assert!(failure["remediation"].is_string());
+    assert_eq!(workspace_files(&workspace), before);
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[test]
+fn api_client_contract_rejects_a_multiline_direct_generated_import_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("api-import-reader");
+    create_workspace(&workspace, "api-import-reader");
+    let runtime = workspace.join("frontend/src/framework/runtime.tsx");
+    let mut source = fs::read_to_string(&runtime).expect("read Runtime fixture");
+    source.push_str(
+        "\nimport type {\n  FrameworkContractProfile as ForbiddenGeneratedProfile,\n} from \"../generated/public-api/fetch/schemas\";\nexport type BoundaryFixture = ForbiddenGeneratedProfile;\n",
+    );
+    fs::write(&runtime, source).expect("write direct Generated Client import fixture");
+    let before = workspace_files(&workspace);
+
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["api.client-contract"],
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    for prerequisite in [
+        "rust.architecture",
+        "rust.compile",
+        "frontend.lock",
+        "api.generated-contract",
+        "frontend.typecheck",
+    ] {
+        assert_eq!(
+            node(&parsed, prerequisite)["outcome"],
+            "pass",
+            "prerequisite={prerequisite}, stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let failure = node(&parsed, "api.client-contract");
+    assert_eq!(failure["outcome"], "fail");
+    assert_eq!(
+        failure["cause"]["code"],
+        "API_CLIENT_IMPORT_BOUNDARY_VIOLATION"
+    );
+    assert!(failure["remediation"].is_string());
+    assert_eq!(workspace_files(&workspace), before);
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[test]
 fn architecture_rejects_forbidden_domain_dependencies_in_every_edge_class() {
     let cases = [
         ("normal", "\n[dependencies]\naxum.workspace = true\n"),
@@ -716,6 +852,8 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
         .expect("template has Rust tests")
         .0;
     fs::write(&rust_tests, without_tests).expect("remove Rust tests");
+    fs::remove_file(rust_workspace.join("crates/transport-http/tests/public_api_contract.rs"))
+        .expect("remove Public API Rust tests");
     let rust = check(
         &rust_workspace,
         &sandbox.path().join("rust-zero-evidence"),
@@ -734,6 +872,8 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
         .expect("remove TypeScript tests");
     fs::remove_file(frontend_workspace.join("frontend/src/framework/path-containment.test.mjs"))
         .expect("remove JavaScript tests");
+    fs::remove_file(frontend_workspace.join("frontend/src/framework/api/client.test.ts"))
+        .expect("remove Public API TypeScript tests");
     let frontend = check(
         &frontend_workspace,
         &sandbox.path().join("frontend-zero-evidence"),

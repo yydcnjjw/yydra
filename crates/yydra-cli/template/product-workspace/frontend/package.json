@@ -6,8 +6,8 @@
   "scripts": {
     "web": "expo start --web",
     "export:h5": "expo export --clear --platform web --output-dir dist",
-    "format:check": "prettier --check app e2e src scripts app.json eslint.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
-    "lint": "eslint --max-warnings=0 app e2e src scripts eslint.config.mjs playwright.config.mts vitest.config.mts",
+    "format:check": "prettier --check app e2e src scripts app.json eslint.config.mjs orval.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
+    "lint": "eslint --max-warnings=0 app e2e src scripts eslint.config.mjs orval.config.mjs playwright.config.mts vitest.config.mts",
     "test": "vitest run",
     "test:e2e": "node scripts/run-h5-e2e.mjs",
     "typecheck": "tsc --noEmit"

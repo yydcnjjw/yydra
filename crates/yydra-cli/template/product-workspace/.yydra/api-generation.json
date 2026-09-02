@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "sourceAuthority": "rust-utoipa-openapi-router",
+  "normalizationSchemaVersion": 1,
+  "generator": "orval@8.27.0",
+  "openapiSha256": "2e17b24384f2c0229eadbd7cdfaba75f9bc2875c80e25442e1454c72016c2cca",
+  "generatedClientSha256": "1b706999f0202f39573ecb1c26c8e89f4b432fbd321accbdbc2d4075b095bae9",
+  "previousOpenapiSha256": null,
+  "previousRecordSha256": null,
+  "breakingChanges": [],
+  "acknowledgements": []
+}

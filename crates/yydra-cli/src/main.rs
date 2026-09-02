@@ -22,6 +22,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
+mod api_generation;
 mod check_graph;
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -80,10 +81,30 @@ enum Command {
         #[arg(long = "node")]
         nodes: Vec<String>,
     },
+    /// Regenerate committed derived outputs from Product Workspace authorities.
+    Generate {
+        #[command(subcommand)]
+        command: GenerateCommand,
+    },
     /// Manage the Product Workspace database explicitly.
     Db {
         #[command(subcommand)]
         command: DbCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum GenerateCommand {
+    /// Generate normalized OpenAPI and the Orval Fetch/TypeScript/Zod client atomically.
+    Api {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        /// Generate only into isolated roots and compare without modifying the Workspace.
+        #[arg(long)]
+        check: bool,
+        /// Record a reviewed lockstep breaking-change reference; repeat for multiple references.
+        #[arg(long = "acknowledge-breaking-change")]
+        acknowledgements: Vec<String>,
     },
 }
 
@@ -151,6 +172,20 @@ fn main() -> Result<()> {
             },
             cli.message_format,
         ),
+        Command::Generate { command } => match command {
+            GenerateCommand::Api {
+                workspace,
+                check,
+                acknowledgements,
+            } => api_generation::generate_api(
+                api_generation::ApiGenerationRequest {
+                    workspace: &workspace,
+                    check,
+                    acknowledgements: &acknowledgements,
+                },
+                &reporter,
+            ),
+        },
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
             DbCommand::Migration { command } => match command {
@@ -703,13 +738,23 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 .to_str()
                 .expect("materialized template paths are UTF-8")
                 .to_owned();
-            let (lifecycle, hand_editable_after_creation) = match path.as_str() {
-                "LICENSE-APACHE" | "LICENSE-MIT" => ("exact-distribution-snapshot", false),
-                ".yydra/origin.toml" | ".yydra/product-source-license.toml" => {
+            let (lifecycle, hand_editable_after_creation) =
+                if matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT") {
+                    ("exact-distribution-snapshot", false)
+                } else if matches!(
+                    path.as_str(),
+                    ".yydra/origin.toml"
+                        | ".yydra/product-source-license.toml"
+                        | ".yydra/api-generation.json"
+                        | ".yydra/api-generation-history.json"
+                        | ".yydra/api-generation.lock"
+                        | "contracts/openapi.json"
+                ) || path.starts_with("frontend/src/generated/public-api/")
+                {
                     ("committed-generated-output", false)
-                }
-                _ => ("product-owned-source", true),
-            };
+                } else {
+                    ("product-owned-source", true)
+                };
             InventoryArtifact {
                 path,
                 lifecycle,
