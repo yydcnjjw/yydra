@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 [package]
 name = "yydra-cli"
 version.workspace = true
@@ -8,11 +9,15 @@ description = "Exact-version CLI for the Yydra application framework"
 repository = "https://github.com/yydcnjjw/yydra"
 readme = "README.md"
 include = [
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
   "src/**",
-  "tests/**",
+  "tests/consumer_creation.rs",
+  "tests/packaged_consumer.rs",
   "template/product-workspace/README.md",
   "template/product-workspace/.gitignore",
   "template/product-workspace/.yydra/origin.toml",
+  "template/product-workspace/.yydra/product-source-license.toml",
   "README.md",
 ]
 
@@ -29,6 +34,7 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+spdx.workspace = true
 toml.workspace = true
 
 [dev-dependencies]

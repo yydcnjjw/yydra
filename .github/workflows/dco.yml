@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: DCO
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: read
+
+jobs:
+  signoff:
+    name: Every submitted commit is signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Fetch submitted commit objects without checking them out
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --force origin "pull/$PR_NUMBER/head"
+          git cat-file -e "$HEAD_SHA^{commit}"
+      - name: Check DCO 1.1 sign-offs with base-owned code
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: /bin/sh scripts/check-dco "$BASE_SHA" "$HEAD_SHA"

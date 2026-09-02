@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -35,6 +37,12 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
 
     let extracted = package_target.join("package/yydra-cli-0.1.0");
     assert!(extracted.join("Cargo.lock").is_file());
+    for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        assert_eq!(
+            fs::read(extracted.join(license)).expect("read packaged license"),
+            fs::read(package_root.join(license)).expect("read crate license")
+        );
+    }
     assert!(
         extracted
             .join("template/product-workspace/.yydra/origin.toml")
@@ -82,6 +90,8 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             "Packaged Reader",
             "--product-id",
             "packaged-reader",
+            "--product-source-license",
+            "Apache-2.0",
         ])
         .output()
         .expect("run installed packaged CLI");
@@ -91,4 +101,10 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&create.stderr)
     );
     assert!(workspace.join(".yydra/origin.toml").is_file());
+    for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        assert_eq!(
+            fs::read(workspace.join(license)).expect("read Workspace license snapshot"),
+            fs::read(package_root.join(license)).expect("read crate license")
+        );
+    }
 }
