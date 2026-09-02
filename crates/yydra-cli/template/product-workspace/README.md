@@ -83,6 +83,24 @@ promise. Invalid JSON, unknown request/query fields, missing entries, and
 prohibited transitions produce stable RFC 9457 Problem types. Mutations never
 retry automatically.
 
+`frontend/src/framework/runtime.tsx` is the shared assembly seam. Production
+creates one Framework client and one `QueryClient`, connects browser or native
+online/focus signals, forwards TanStack Query `AbortSignal` values, and emits
+sanitized structured failure diagnostics. Queries retry only transport
+failures, at most twice with bounded backoff; Problems, cancellation, and
+contract violations do not retry. The Test Runtime injects a fake Framework
+client and an isolated no-retry `QueryClient` through the same Provider seam;
+tests do not mock Generated Client files, global Fetch, query hooks, or Query
+internals.
+
+State ownership stays explicit: TanStack Query owns server state, Expo Router
+URLs own status/sort state, component state owns the short-lived create form,
+and Product Domain rules stay in Rust. No default persistent or global Product
+store is installed. The Reading Queue screen separately renders initial and
+background loading, true empty success, blocking and stale-data failures,
+cancellation, typed Problem recovery, transport failure, and contract-safe
+fallbacks while retaining responsive wrapping, scrolling, focus, and recovery.
+
 The Framework authentication seam declares anonymous and protected routes and
 injects credentials through the same client assembly path. The protected
 `/api/v1/framework-auth-contract` probe distinguishes a missing credential as
@@ -120,6 +138,19 @@ present at that Git base; corrections require a new forward migration.
 derived-state, migration, and contention fixtures against real PostgreSQL.
 `runtime.post-commit-executor` proves the bounded lossy lifecycle without
 claiming durable delivery or business-invariant correctness.
+`h5.product-presentation-accessibility` executes the visible Product-owned
+Playwright role, accessible-name, selected-state, focus, responsive-width, and
+dynamic-heading assertions without retry:
+
+```console
+yydra check . --node h5.product-presentation-accessibility
+```
+
+The node fails closed for a missing or zero-test specification, focused or
+skipped tests, malformed JSON evidence, assertion failure, and loss of the
+dynamic entry-heading role. It proves only the registered H5 semantics—not
+complete WCAG conformance, native assistive-technology behavior, physical
+device validation, or unregistered Product behavior.
 
 Public routes consumed by Generated Client code must be registered through
 `product_transport_http::public_routes`. Rust handlers and `utoipa`

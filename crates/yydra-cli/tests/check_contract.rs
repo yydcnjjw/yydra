@@ -1214,12 +1214,16 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
 
     let frontend_workspace = sandbox.path().join("frontend-zero-reader");
     create_workspace(&frontend_workspace, "frontend-zero-reader");
-    fs::remove_file(frontend_workspace.join("frontend/src/framework/runtime.test.ts"))
-        .expect("remove TypeScript tests");
-    fs::remove_file(frontend_workspace.join("frontend/src/framework/path-containment.test.mjs"))
-        .expect("remove JavaScript tests");
-    fs::remove_file(frontend_workspace.join("frontend/src/framework/api/client.test.ts"))
-        .expect("remove Public API TypeScript tests");
+    for relative in [
+        "frontend/src/framework/runtime.test.ts",
+        "frontend/src/framework/runtime-render.test.tsx",
+        "frontend/src/framework/path-containment.test.mjs",
+        "frontend/src/framework/api/client.test.ts",
+        "frontend/src/product-presentation/reading-queue/queries.test.ts",
+        "frontend/src/product-presentation/reading-queue/screen.test.tsx",
+    ] {
+        fs::remove_file(frontend_workspace.join(relative)).expect("remove canonical frontend test");
+    }
     let frontend = check(
         &frontend_workspace,
         &sandbox.path().join("frontend-zero-evidence"),
@@ -1276,17 +1280,112 @@ fn clean_workspace_passes_the_complete_core_real_runtime_contract() {
 }
 
 #[test]
+fn accessibility_node_rejects_a_missing_product_semantics_spec_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("missing-accessibility-spec-reader");
+    create_workspace(&workspace, "missing-accessibility-spec-reader");
+    let spec = workspace.join("frontend/e2e/product-presentation.accessibility.spec.ts");
+    fs::remove_file(&spec).expect("remove Product-owned semantic spec");
+    let before = workspace_files(&workspace);
+
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["h5.product-presentation-accessibility"],
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    let failure = node(&parsed, "h5.product-presentation-accessibility");
+    assert_eq!(failure["outcome"], "fail");
+    assert_eq!(failure["cause"]["code"], "ACCESSIBILITY_SPEC_MISSING");
+    assert!(failure["remediation"].is_string());
+    assert_eq!(workspace_files(&workspace), before);
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[test]
+#[ignore = "requires Docker, PostgreSQL image, Node/npm, and a Playwright Chromium installation"]
+fn accessibility_node_passes_and_rejects_a_heading_only_regression_read_only() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("accessibility-heading-reader");
+    create_workspace(&workspace, "accessibility-heading-reader");
+    let setup = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args(["setup", workspace.to_str().expect("UTF-8 workspace")])
+        .output()
+        .expect("install exact locked dependencies");
+    assert!(
+        setup.status.success(),
+        "setup stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let pristine = workspace_files(&workspace);
+
+    let passing = check(
+        &workspace,
+        &sandbox.path().join("accessibility-pass-evidence"),
+        &["h5.product-presentation-accessibility"],
+    );
+    assert!(
+        passing.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&passing.stderr),
+        String::from_utf8_lossy(&passing.stdout)
+    );
+    assert_eq!(
+        node(&events(&passing), "h5.product-presentation-accessibility")["outcome"],
+        "pass"
+    );
+    assert_eq!(workspace_files(&workspace), pristine);
+
+    let screen = workspace.join("frontend/src/product-presentation/reading-queue/screen.tsx");
+    let source = fs::read_to_string(&screen).expect("read Product Presentation fixture");
+    let broken = source.replacen(
+        "<Text accessibilityRole=\"header\" style={styles.entryTitle}>",
+        "<Text style={styles.entryTitle}>",
+        1,
+    );
+    assert_ne!(
+        broken, source,
+        "dynamic Reading Queue heading fixture must change"
+    );
+    fs::write(&screen, &broken).expect("remove only the dynamic heading semantic");
+    let broken_inputs = workspace_files(&workspace);
+
+    let failing = check(
+        &workspace,
+        &sandbox.path().join("accessibility-fail-evidence"),
+        &["h5.product-presentation-accessibility"],
+    );
+    assert!(!failing.status.success());
+    let parsed = events(&failing);
+    assert_eq!(
+        node(&parsed, "h5.product-presentation-accessibility")["cause"]["code"],
+        "ACCESSIBILITY_ASSERTION_FAILED"
+    );
+    assert_eq!(workspace_files(&workspace), broken_inputs);
+    assert_eq!(
+        node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
+        "pass"
+    );
+}
+
+#[test]
 #[ignore = "requires Docker, PostgreSQL image, Node/npm, and a Playwright Chromium installation"]
 fn h5_semantic_failure_is_discriminating_read_only_and_cleans_up() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("broken-h5-reader");
     create_workspace(&workspace, "broken-h5-reader");
-    let route = workspace.join("frontend/app/index.tsx");
-    let source = fs::read_to_string(&route).expect("read H5 route").replace(
+    let screen = workspace.join("frontend/src/product-presentation/reading-queue/screen.tsx");
+    let original = fs::read_to_string(&screen).expect("read H5 Product Presentation");
+    let source = original.replace(
         "<Text>Backend {health.data.status}.</Text>",
         "<Text>Service {health.data.status}.</Text>",
     );
-    fs::write(&route, source).expect("break only the H5 semantic assertion");
+    assert_ne!(source, original, "H5 backend-status fixture must change");
+    fs::write(&screen, source).expect("break only the H5 semantic assertion");
     let before = workspace_files(&workspace);
 
     let output = check(

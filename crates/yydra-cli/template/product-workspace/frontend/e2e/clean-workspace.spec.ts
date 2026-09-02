@@ -336,7 +336,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
   await page.getByRole("button", { name: "Add entry" }).click();
   await expect(page.getByRole("alert")).toContainText(
-    "Could not add this entry.",
+    "Enter a title and a valid source URL.",
   );
 
   await page.reload();

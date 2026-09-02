@@ -8,6 +8,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@react-native-community/netinfo": fileURLToPath(
+        new URL("./src/framework/testing/netinfo.ts", import.meta.url),
+      ),
+      "react-native": "react-native-web",
     },
   },
   test: {

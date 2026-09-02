@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+import NetInfo from "@react-native-community/netinfo";
 import {
-  infiniteQueryOptions,
+  focusManager,
+  MutationCache,
+  onlineManager,
+  QueryCache,
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { createContext, PropsWithChildren, useContext, useState } from "react";
+import {
+  createContext,
+  PropsWithChildren,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { AppState, Platform } from "react-native";
 
 import {
   ChangeReadingEntryStateRequest,
@@ -14,6 +25,7 @@ import {
   FrameworkContractProfile,
   FrameworkFailure,
   FrameworkProtectedContract,
+  isFrameworkFailure,
   isTransportFailure,
   ListReadingQueueEntriesParams,
   ReadingQueueEntryResponse,
@@ -50,64 +62,141 @@ export interface FrameworkClient {
   ): Promise<ReadingQueueEntryResponse>;
 }
 
-export type ReadingQueueStatusFilter = "all" | "queued" | "completed";
-export type ReadingQueueSort = "oldest" | "newest";
-
-export function readingQueueQueryKey(
-  status: ReadingQueueStatusFilter,
-  sort: ReadingQueueSort,
-  limit: number,
-) {
-  return ["reading-queue", { status, sort, limit }] as const;
-}
-
-export function readingQueueInfiniteQueryOptions(
-  client: FrameworkClient,
-  status: ReadingQueueStatusFilter,
-  sort: ReadingQueueSort,
-  limit: number,
-) {
-  return infiniteQueryOptions({
-    queryKey: readingQueueQueryKey(status, sort, limit),
-    queryFn: ({ pageParam, signal }) =>
-      client.listReadingQueueEntries(
-        { status, sort, limit, cursor: pageParam },
-        signal,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
-}
-
 const FrameworkClientContext = createContext<FrameworkClient | null>(null);
+
+export type FrameworkFailureKind = FrameworkFailure["kind"] | "unknown";
+
+export interface FrameworkRuntimeDiagnostic {
+  event: "query-failed" | "mutation-failed";
+  failureKind: FrameworkFailureKind;
+  operation: string;
+  retryable: boolean;
+}
+
+export type FrameworkDiagnosticSink = (
+  diagnostic: FrameworkRuntimeDiagnostic,
+) => void;
+
+export interface FrameworkRuntimeSignals {
+  subscribeFocused(listener: (focused: boolean) => void): () => void;
+  subscribeOnline(listener: (online: boolean) => void): () => void;
+}
+
+export interface FrameworkRuntimeAssembly {
+  readonly client: FrameworkClient;
+  readonly queryClient: QueryClient;
+  start(): () => void;
+}
 
 export function FrameworkRuntime({
   children,
-  client,
-}: PropsWithChildren<{ client?: FrameworkClient }>) {
-  const [queryClient] = useState(() => createFrameworkQueryClient());
-  const [runtimeClient] = useState(
-    () => client ?? createFrameworkClient(globalThis.fetch),
+  runtime,
+}: PropsWithChildren<{ runtime?: FrameworkRuntimeAssembly }>) {
+  const [assembly] = useState(
+    () => runtime ?? createProductionFrameworkRuntime(),
   );
+  useEffect(() => assembly.start(), [assembly]);
 
   return (
-    <FrameworkClientContext.Provider value={runtimeClient}>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <FrameworkClientContext.Provider value={assembly.client}>
+      <QueryClientProvider client={assembly.queryClient}>
+        {children}
+      </QueryClientProvider>
     </FrameworkClientContext.Provider>
   );
 }
 
-export function createFrameworkQueryClient(): QueryClient {
+export function createFrameworkQueryClient(
+  options: {
+    diagnostics?: FrameworkDiagnosticSink;
+    queryRetries?: boolean;
+  } = {},
+): QueryClient {
+  const diagnostics = options.diagnostics ?? (() => undefined);
+  const report = (
+    event: FrameworkRuntimeDiagnostic["event"],
+    error: unknown,
+    operation: string,
+  ) => {
+    diagnostics({
+      event,
+      failureKind: frameworkFailureKind(error),
+      operation,
+      retryable: isTransportFailure(error),
+    });
+  };
   return new QueryClient({
+    mutationCache: new MutationCache({
+      onError(error, _variables, _context, mutation) {
+        report(
+          "mutation-failed",
+          error,
+          operationFromKey(mutation.options.mutationKey, "mutation"),
+        );
+      },
+    }),
     defaultOptions: {
       queries: {
-        retry(failureCount, error) {
-          return isTransportFailure(error) && failureCount < 2;
-        },
+        retry:
+          options.queryRetries === false
+            ? false
+            : (failureCount, error) =>
+                isTransportFailure(error) && failureCount < 2,
+        retryDelay: (attemptIndex) => Math.min(250 * 2 ** attemptIndex, 1_000),
       },
       mutations: { retry: false },
     },
+    queryCache: new QueryCache({
+      onError(error, query) {
+        report(
+          "query-failed",
+          error,
+          operationFromKey(query.queryKey, "query"),
+        );
+      },
+    }),
   });
+}
+
+export function createProductionFrameworkRuntime(
+  options: {
+    client?: FrameworkClient;
+    diagnostics?: FrameworkDiagnosticSink;
+    signals?: FrameworkRuntimeSignals;
+  } = {},
+): FrameworkRuntimeAssembly {
+  const diagnostics = options.diagnostics ?? defaultDiagnosticSink;
+  const signals = options.signals ?? createPlatformRuntimeSignals();
+  return {
+    client: options.client ?? createFrameworkClient(globalThis.fetch),
+    queryClient: createFrameworkQueryClient({ diagnostics }),
+    start() {
+      const stopOnline = signals.subscribeOnline((online) =>
+        onlineManager.setOnline(online),
+      );
+      const stopFocused = signals.subscribeFocused((focused) =>
+        focusManager.setFocused(focused),
+      );
+      return () => {
+        stopFocused();
+        stopOnline();
+      };
+    },
+  };
+}
+
+export function createTestFrameworkRuntime(
+  client: FrameworkClient,
+  diagnostics?: FrameworkDiagnosticSink,
+): FrameworkRuntimeAssembly {
+  return {
+    client,
+    queryClient: createFrameworkQueryClient({
+      diagnostics,
+      queryRetries: false,
+    }),
+    start: () => () => undefined,
+  };
 }
 
 export function useFrameworkClient(): FrameworkClient {
@@ -167,7 +256,15 @@ export function createFrameworkClient(
           message: `health request returned HTTP ${response.status}`,
         } satisfies FrameworkFailure;
       }
-      const body: unknown = await response.json();
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        throw {
+          kind: "contractViolation",
+          message: "health response is not valid JSON",
+        } satisfies FrameworkFailure;
+      }
       if (!isHealthStatus(body)) {
         throw {
           kind: "contractViolation",
@@ -188,4 +285,71 @@ function isHealthStatus(value: unknown): value is HealthStatus {
     "database" in value &&
     typeof value.database === "string"
   );
+}
+
+function frameworkFailureKind(error: unknown): FrameworkFailureKind {
+  return isFrameworkFailure(error) ? error.kind : "unknown";
+}
+
+function operationFromKey(
+  key: readonly unknown[] | undefined,
+  fallback: string,
+): string {
+  const operation = key?.[0];
+  return typeof operation === "string" &&
+    [
+      "reading-queue",
+      "reading-queue-change-state",
+      "reading-queue-create",
+      "workspace-health",
+    ].includes(operation)
+    ? operation
+    : fallback;
+}
+
+function defaultDiagnosticSink(diagnostic: FrameworkRuntimeDiagnostic): void {
+  console.warn(
+    JSON.stringify({ source: "yydra-framework-runtime", ...diagnostic }),
+  );
+}
+
+function createPlatformRuntimeSignals(): FrameworkRuntimeSignals {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return {
+      subscribeFocused(listener) {
+        const report = () => listener(document.visibilityState !== "hidden");
+        document.addEventListener("visibilitychange", report, false);
+        report();
+        return () =>
+          document.removeEventListener("visibilitychange", report, false);
+      },
+      subscribeOnline(listener) {
+        const report = () => listener(window.navigator.onLine);
+        window.addEventListener("online", report, false);
+        window.addEventListener("offline", report, false);
+        report();
+        return () => {
+          window.removeEventListener("online", report, false);
+          window.removeEventListener("offline", report, false);
+        };
+      },
+    };
+  }
+
+  return {
+    subscribeFocused(listener) {
+      listener(AppState.currentState === "active");
+      const subscription = AppState.addEventListener("change", (state) =>
+        listener(state === "active"),
+      );
+      return () => subscription.remove();
+    },
+    subscribeOnline(listener) {
+      return NetInfo.addEventListener((state) =>
+        listener(
+          state.isConnected === true && state.isInternetReachable !== false,
+        ),
+      );
+    },
+  };
 }
