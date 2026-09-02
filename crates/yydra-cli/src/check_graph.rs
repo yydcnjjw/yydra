@@ -207,6 +207,18 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "that the production H5 export or its browser assertions will pass",
     },
     NodeSpec {
+        id: "h5.product-presentation-accessibility",
+        prerequisites: &[
+            "rust.compile",
+            "frontend.typecheck",
+            "infrastructure.docker",
+            "infrastructure.playwright-chromium",
+        ],
+        remediation: "restore frontend/e2e/product-presentation.accessibility.spec.ts, remove skipped or focused cases, and fix the first visible role, name, state, or heading assertion without weakening the registered Product semantics",
+        proves: "the visible Product-owned Playwright semantic specification executed without retry and passed its registered H5 role, accessible-name, state, focus, and dynamic-heading assertions",
+        does_not_prove: "complete WCAG conformance, Android or iOS assistive-technology behavior, unregistered Product semantics, hidden acceptance, physical-device accessibility, Agent Safe Completion, or Baseline Skill effect",
+    },
+    NodeSpec {
         id: "h5.real-runtime",
         prerequisites: &[
             "rust.compile",
@@ -987,6 +999,9 @@ fn execute_node(
             &[],
             "PLAYWRIGHT_CHROMIUM_UNAVAILABLE",
         ),
+        "h5.product-presentation-accessibility" => {
+            check_product_presentation_accessibility(&mut context)
+        }
         "h5.real-runtime" => check_h5_runtime(&mut context),
         INPUTS_UNCHANGED_NODE => check_and_remove_scratch(root, baselines),
         _ => unreachable!("all node specs have an implementation"),
@@ -1981,9 +1996,14 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
     context.observe_tool_version(&frontend, "npm", npm_program(), &["--version"])?;
     for (name, expected) in [
         ("expo", "57.0.19"),
+        ("@react-native-community/netinfo", "12.0.1"),
         ("@playwright/test", "1.62.1"),
+        ("@testing-library/dom", "10.4.1"),
+        ("@testing-library/react", "16.3.3"),
+        ("@types/react-dom", "19.2.5"),
         ("@eslint/js", "10.0.1"),
         ("eslint", "10.9.1"),
+        ("jsdom", "30.0.1"),
         ("orval", "8.27.0"),
         ("prettier", "3.9.6"),
         ("typescript", "6.0.3"),
@@ -2342,9 +2362,14 @@ fn validate_frontend_tool_authority(
     })?;
     let required = [
         ("dependencies", "expo", "57.0.19"),
+        ("dependencies", "@react-native-community/netinfo", "12.0.1"),
         ("devDependencies", "@playwright/test", "1.62.1"),
+        ("devDependencies", "@testing-library/dom", "10.4.1"),
+        ("devDependencies", "@testing-library/react", "16.3.3"),
+        ("devDependencies", "@types/react-dom", "19.2.5"),
         ("devDependencies", "@eslint/js", "10.0.1"),
         ("devDependencies", "eslint", "10.9.1"),
+        ("devDependencies", "jsdom", "30.0.1"),
         ("devDependencies", "orval", "8.27.0"),
         ("devDependencies", "prettier", "3.9.6"),
         ("devDependencies", "typescript", "6.0.3"),
@@ -2805,6 +2830,103 @@ fn require_named_rust_tests(
     Ok(())
 }
 
+fn check_product_presentation_accessibility(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    const PLAYWRIGHT_CONFIG: &str = r#"import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: ".",
+  outputDir: process.env.YYDRA_PLAYWRIGHT_OUTPUT,
+  fullyParallel: false,
+  forbidOnly: true,
+  retries: 0,
+  reporter: [["json", { outputFile: process.env.YYDRA_PLAYWRIGHT_REPORT }]],
+  use: {
+    baseURL: `http://127.0.0.1:${process.env.YYDRA_H5_PORT}`,
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
+  },
+});
+"#;
+    let spec = context
+        .root
+        .join("frontend/e2e/product-presentation.accessibility.spec.ts");
+    if !spec.is_file() {
+        return Err(NodeFailure::fail(
+            "ACCESSIBILITY_SPEC_MISSING",
+            format!(
+                "expected authored Product Presentation semantics at '{}'",
+                spec.display()
+            ),
+        ));
+    }
+    run_h5_playwright(
+        context,
+        H5PlaywrightPlan {
+            artifact_id: "h5.product-presentation-accessibility",
+            config: PLAYWRIGHT_CONFIG,
+            config_path: "frontend/e2e/.yydra-check-accessibility-playwright.config.mts",
+            derived_spec: None,
+            failure_code: "ACCESSIBILITY_ASSERTION_FAILED",
+            migration_failure_code: "ACCESSIBILITY_MIGRATION_FAILED",
+            postgres_cleanup_code: "ACCESSIBILITY_POSTGRES_CLEANUP_FAILED",
+            postgres_failure_code: "ACCESSIBILITY_POSTGRES_UNAVAILABLE",
+            report_path: Some("artifacts/h5.product-presentation-accessibility/report.json"),
+            run_database_fixtures: false,
+            spec_path: "e2e/product-presentation.accessibility.spec.ts",
+        },
+    )
+}
+
+fn validate_accessibility_report(report: &[u8]) -> std::result::Result<(), NodeFailure> {
+    let parsed: serde_json::Value = serde_json::from_slice(report).map_err(|error| {
+        NodeFailure::fail(
+            "ACCESSIBILITY_REPORT_INVALID",
+            format!("Playwright did not emit valid JSON evidence: {error}"),
+        )
+    })?;
+    let stats = parsed.get("stats").ok_or_else(|| {
+        NodeFailure::fail(
+            "ACCESSIBILITY_REPORT_INVALID",
+            "Playwright JSON evidence has no stats object",
+        )
+    })?;
+    let count = |name: &str| {
+        stats
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                NodeFailure::fail(
+                    "ACCESSIBILITY_REPORT_INVALID",
+                    format!("Playwright JSON evidence has no unsigned stats.{name} count"),
+                )
+            })
+    };
+    let expected = count("expected")?;
+    let skipped = count("skipped")?;
+    let unexpected = count("unexpected")?;
+    if skipped > 0 {
+        return Err(NodeFailure::fail(
+            "ACCESSIBILITY_FOCUSED_OR_SKIPPED",
+            format!("the canonical semantic specification skipped {skipped} tests"),
+        ));
+    }
+    if unexpected > 0 {
+        return Err(NodeFailure::fail(
+            "ACCESSIBILITY_ASSERTION_FAILED",
+            format!("{unexpected} Product Presentation semantic tests failed"),
+        ));
+    }
+    if expected == 0 {
+        return Err(NodeFailure::fail(
+            "ACCESSIBILITY_NO_EXECUTED_TESTS",
+            "the canonical semantic specification passed no tests",
+        ));
+    }
+    Ok(())
+}
+
 fn check_h5_runtime(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
     const PLAYWRIGHT_CONFIG: &str = r#"import { defineConfig } from "@playwright/test";
 
@@ -3032,7 +3154,9 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
   await page.getByLabel("Entry title").fill("   ");
   await page.getByLabel("Source URL").fill("https://example.test/rejected");
   await page.getByRole("button", { name: "Add entry" }).click();
-  await expect(page.getByRole("alert")).toContainText("Could not add this entry.");
+  await expect(page.getByRole("alert")).toContainText(
+    "Enter a title and a valid source URL.",
+  );
   await page.reload();
   await expect(page).toHaveURL(/status=completed/);
   await expect(page.getByText("Backend ready.")).toBeVisible();
@@ -3042,6 +3166,46 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
   await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
 });
 "#;
+    run_h5_playwright(
+        context,
+        H5PlaywrightPlan {
+            artifact_id: "h5.real-runtime",
+            config: PLAYWRIGHT_CONFIG,
+            config_path: "frontend/e2e/.yydra-check-playwright.config.mts",
+            derived_spec: Some((
+                "frontend/e2e/.yydra-check-clean-workspace.spec.ts",
+                PLAYWRIGHT_SPEC,
+            )),
+            failure_code: "H5_E2E_FAILED",
+            migration_failure_code: "H5_MIGRATION_FAILED",
+            postgres_cleanup_code: "H5_POSTGRES_CLEANUP_FAILED",
+            postgres_failure_code: "H5_POSTGRES_UNAVAILABLE",
+            report_path: None,
+            run_database_fixtures: true,
+            spec_path: "e2e/.yydra-check-clean-workspace.spec.ts",
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+struct H5PlaywrightPlan {
+    artifact_id: &'static str,
+    config: &'static str,
+    config_path: &'static str,
+    derived_spec: Option<(&'static str, &'static str)>,
+    failure_code: &'static str,
+    migration_failure_code: &'static str,
+    postgres_cleanup_code: &'static str,
+    postgres_failure_code: &'static str,
+    report_path: Option<&'static str>,
+    run_database_fixtures: bool,
+    spec_path: &'static str,
+}
+
+fn run_h5_playwright(
+    context: &mut NodeContext<'_>,
+    plan: H5PlaywrightPlan,
+) -> std::result::Result<(), NodeFailure> {
     context.tool_versions.insert(
         "postgres-image".to_owned(),
         "postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2".to_owned(),
@@ -3076,32 +3240,44 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
         "frontend/scripts/.yydra-check-run-h5-e2e.mjs",
         runner,
     )?;
-    derived.write(
-        context.root,
-        "frontend/e2e/.yydra-check-playwright.config.mts",
-        PLAYWRIGHT_CONFIG.as_bytes(),
-    )?;
-    derived.write(
-        context.root,
-        "frontend/e2e/.yydra-check-clean-workspace.spec.ts",
-        PLAYWRIGHT_SPEC.as_bytes(),
-    )?;
-    let h5_dist = context.evidence_root.join("artifacts/h5.real-runtime/dist");
+    derived.write(context.root, plan.config_path, plan.config.as_bytes())?;
+    if let Some((path, contents)) = plan.derived_spec {
+        derived.write(context.root, path, contents.as_bytes())?;
+    }
+
+    let h5_dist = context
+        .evidence_root
+        .join(format!("artifacts/{}/dist", plan.artifact_id));
     let playwright = context
         .evidence_root
-        .join("artifacts/h5.real-runtime/playwright");
+        .join(format!("artifacts/{}/playwright", plan.artifact_id));
     fs::create_dir_all(&playwright).map_err(|error| {
         NodeFailure::infrastructure("CHECK_EVIDENCE_WRITE_FAILED", error.to_string())
     })?;
+    let report = plan
+        .report_path
+        .map(|path| context.evidence_root.join(path));
+    if let Some(parent) = report.as_ref().and_then(|path| path.parent()) {
+        fs::create_dir_all(parent).map_err(|error| {
+            NodeFailure::infrastructure("CHECK_EVIDENCE_WRITE_FAILED", error.to_string())
+        })?;
+    }
     let h5_dist_arg = h5_dist.to_string_lossy().into_owned();
     let playwright_arg = playwright.to_string_lossy().into_owned();
+    let report_arg = report
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let config_arg = plan
+        .config_path
+        .strip_prefix("frontend/")
+        .expect("H5 Playwright config lives under frontend");
 
     let mut compose_guard = ComposeGuard::new(
         context.root,
         project.clone(),
         compose_arg.clone(),
         postgres_port_arg.clone(),
-        "H5_POSTGRES_CLEANUP_FAILED",
+        plan.postgres_cleanup_code,
     );
     let up = context.infrastructure_command(
         context.root,
@@ -3118,7 +3294,7 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
             "postgres",
         ],
         &[("YYDRA_POSTGRES_PORT", &postgres_port_arg)],
-        "H5_POSTGRES_UNAVAILABLE",
+        plan.postgres_failure_code,
     );
     if let Err(failure) = up {
         return match compose_guard.cleanup(context) {
@@ -3133,40 +3309,42 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
             "cargo",
             &["run", "--locked", "--bin", "migrate"],
             &[("DATABASE_URL", &database_url)],
-            "H5_MIGRATION_FAILED",
+            plan.migration_failure_code,
         )?;
-        context.command(
-            context.root,
-            "cargo",
-            &[
-                "test",
-                "--locked",
-                "--test",
-                "reading_queue_postgres",
-                "reading_queue_use_cases_commit_success_and_rollback_failures",
-                "--",
-                "--exact",
-                "--ignored",
-            ],
-            &[("DATABASE_URL", &database_url)],
-            "READING_QUEUE_POSTGRES_FAILED",
-        )?;
-        context.command(
-            context.root,
-            "cargo",
-            &[
-                "test",
-                "--locked",
-                "--test",
-                "reading_queue_postgres",
-                "reading_queue_keyset_pages_preserve_order_filter_context_and_termination",
-                "--",
-                "--exact",
-                "--ignored",
-            ],
-            &[("DATABASE_URL", &database_url)],
-            "READING_QUEUE_PAGINATION_POSTGRES_FAILED",
-        )?;
+        if plan.run_database_fixtures {
+            context.command(
+                context.root,
+                "cargo",
+                &[
+                    "test",
+                    "--locked",
+                    "--test",
+                    "reading_queue_postgres",
+                    "reading_queue_use_cases_commit_success_and_rollback_failures",
+                    "--",
+                    "--exact",
+                    "--ignored",
+                ],
+                &[("DATABASE_URL", &database_url)],
+                "READING_QUEUE_POSTGRES_FAILED",
+            )?;
+            context.command(
+                context.root,
+                "cargo",
+                &[
+                    "test",
+                    "--locked",
+                    "--test",
+                    "reading_queue_postgres",
+                    "reading_queue_keyset_pages_preserve_order_filter_context_and_termination",
+                    "--",
+                    "--exact",
+                    "--ignored",
+                ],
+                &[("DATABASE_URL", &database_url)],
+                "READING_QUEUE_PAGINATION_POSTGRES_FAILED",
+            )?;
+        }
         let mut server = spawn_server(context, &database_url, &server_address)?;
         let readiness = wait_for_server(
             &mut server,
@@ -3181,32 +3359,47 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
                 Err(log_failure) => Err(log_failure),
             };
         }
+        let mut environment = vec![
+            ("CI", "1"),
+            ("EXPO_PUBLIC_API_URL", api_url.as_str()),
+            ("YYDRA_H5_PORT", h5_port_arg.as_str()),
+            ("YYDRA_H5_DIST", h5_dist_arg.as_str()),
+            ("YYDRA_PLAYWRIGHT_OUTPUT", playwright_arg.as_str()),
+            ("YYDRA_PLAYWRIGHT_CONFIG", config_arg),
+            ("YYDRA_PLAYWRIGHT_SPEC", plan.spec_path),
+        ];
+        if let Some(report) = report_arg.as_deref() {
+            environment.push(("YYDRA_PLAYWRIGHT_REPORT", report));
+        }
         let result = context.command(
             &context.root.join("frontend"),
             "node",
             &["scripts/.yydra-check-run-h5-e2e.mjs"],
-            &[
-                ("CI", "1"),
-                ("EXPO_PUBLIC_API_URL", &api_url),
-                ("YYDRA_H5_PORT", &h5_port_arg),
-                ("YYDRA_H5_DIST", &h5_dist_arg),
-                ("YYDRA_PLAYWRIGHT_OUTPUT", &playwright_arg),
-                (
-                    "YYDRA_PLAYWRIGHT_CONFIG",
-                    "e2e/.yydra-check-playwright.config.mts",
-                ),
-                (
-                    "YYDRA_PLAYWRIGHT_SPEC",
-                    "e2e/.yydra-check-clean-workspace.spec.ts",
-                ),
-            ],
-            "H5_E2E_FAILED",
+            &environment,
+            plan.failure_code,
         );
+        let report_result = report.as_ref().map(|path| {
+            fs::read(path)
+                .map_err(|error| {
+                    NodeFailure::fail(
+                        "ACCESSIBILITY_REPORT_INVALID",
+                        format!(
+                            "read Playwright JSON evidence '{}': {error}",
+                            path.display()
+                        ),
+                    )
+                })
+                .and_then(|contents| validate_accessibility_report(&contents))
+        });
         let server_log = server.finish(&mut context.log);
-        match (result, server_log) {
-            (_, Err(failure)) => Err(failure),
-            (Err(failure), Ok(())) => Err(failure),
-            (Ok(()), Ok(())) => Ok(()),
+        match (result, report_result, server_log) {
+            (_, _, Err(failure)) => Err(failure),
+            (Err(failure), _, Ok(())) if failure.outcome == Outcome::InfrastructureError => {
+                Err(failure)
+            }
+            (_, Some(Err(failure)), Ok(())) => Err(failure),
+            (Err(failure), _, Ok(())) => Err(failure),
+            (Ok(()), Some(Ok(())) | None, Ok(())) => Ok(()),
         }
     })();
     let down = compose_guard.cleanup(context);
@@ -3959,9 +4152,14 @@ fn required_tool_versions() -> BTreeMap<String, String> {
         ("rustfmt", "1.9.0-stable"),
         ("clippy", "0.1.97"),
         ("expo", "57.0.19"),
+        ("@react-native-community/netinfo", "12.0.1"),
         ("@playwright/test", "1.62.1"),
+        ("@testing-library/dom", "10.4.1"),
+        ("@testing-library/react", "16.3.3"),
+        ("@types/react-dom", "19.2.5"),
         ("@eslint/js", "10.0.1"),
         ("eslint", "10.9.1"),
+        ("jsdom", "30.0.1"),
         ("orval", "8.27.0"),
         ("prettier", "3.9.6"),
         ("typescript", "6.0.3"),
@@ -4172,6 +4370,38 @@ mod tests {
             b"benches::throughput: benchmark\n"
         ));
         assert!(has_discovered_rust_tests(b"tests::transition: test\n"));
+    }
+
+    #[test]
+    fn accessibility_report_fails_closed() {
+        assert!(
+            validate_accessibility_report(
+                br#"{"stats":{"expected":1,"skipped":0,"unexpected":0}}"#
+            )
+            .is_ok()
+        );
+        for (report, expected_code) in [
+            (b"not-json".as_slice(), "ACCESSIBILITY_REPORT_INVALID"),
+            (
+                br#"{"stats":{"expected":0,"skipped":0,"unexpected":0}}"#.as_slice(),
+                "ACCESSIBILITY_NO_EXECUTED_TESTS",
+            ),
+            (
+                br#"{"stats":{"expected":0,"skipped":1,"unexpected":0}}"#.as_slice(),
+                "ACCESSIBILITY_FOCUSED_OR_SKIPPED",
+            ),
+            (
+                br#"{"stats":{"expected":0,"skipped":0,"unexpected":1}}"#.as_slice(),
+                "ACCESSIBILITY_ASSERTION_FAILED",
+            ),
+        ] {
+            assert_eq!(
+                validate_accessibility_report(report)
+                    .expect_err("negative report must fail")
+                    .code,
+                expected_code
+            );
+        }
     }
 
     #[test]
