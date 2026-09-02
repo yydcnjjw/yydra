@@ -1,0 +1,6 @@
+schema_version = 1
+distribution_version = "__YYDRA_DISTRIBUTION_VERSION__"
+template_identity = "__YYDRA_TEMPLATE_IDENTITY__"
+template_sha256 = "__YYDRA_TEMPLATE_SHA256__"
+product_name = __PRODUCT_NAME_TOML__
+product_id = __PRODUCT_ID_TOML__
