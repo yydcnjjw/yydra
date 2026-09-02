@@ -1,0 +1,12 @@
+diff --git a/frontend/src/product/reading-queue/ReadingQueueScreen.tsx b/frontend/src/product/reading-queue/ReadingQueueScreen.tsx
+--- a/frontend/src/product/reading-queue/ReadingQueueScreen.tsx
++++ b/frontend/src/product/reading-queue/ReadingQueueScreen.tsx
+@@ -166,7 +166,7 @@ function EntryCard({
+   return (
+     <View accessibilityLabel={`Reading entry ${entry.title}`} style={styles.entryCard}>
+       <View style={styles.entryCopy}>
+-        <Text accessibilityRole="header" style={styles.entryTitle}>
++        <Text style={styles.entryTitle}>
+           {entry.title}
+         </Text>
+         <Pressable

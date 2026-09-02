@@ -1,6 +1,6 @@
 schema_version = 1
 distribution_version = "__YYDRA_DISTRIBUTION_VERSION__"
-template_identity = "yydra-v0-product-workspace-prototype"
+template_identity = "yydra-v0-product-workspace"
 template_sha256 = "__YYDRA_TEMPLATE_SHA256__"
 product_name = "__PRODUCT_NAME__"
 product_id = "__PRODUCT_ID__"

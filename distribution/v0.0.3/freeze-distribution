@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 8 ]]; then
+  echo "usage: $0 <linux-cli> <clean-workspace> <reference-workspace> <clean-aggregate-manifest> <reference-aggregate-manifest> <ios-runtime-evidence> <negative-fixture-evidence> <output-directory>" >&2
+  exit 64
+fi
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+hash_tree="$script_dir/hash-tree"
+cli=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+clean=$(cd "$2" && pwd)
+reference=$(cd "$3" && pwd)
+clean_aggregate=$(cd "$(dirname "$4")" && pwd)/$(basename "$4")
+reference_aggregate=$(cd "$(dirname "$5")" && pwd)/$(basename "$5")
+ios_runtime=$(cd "$6" && pwd)
+negative_evidence=$(cd "$7" && pwd)
+output=$8
+
+[[ -x "$cli" ]] || { echo "missing executable CLI: $cli" >&2; exit 1; }
+[[ ! -e "$output" ]] || { echo "freeze output already exists: $output" >&2; exit 1; }
+mkdir -p "$output"
+output=$(cd "$output" && pwd)
+
+file_sha() {
+  sha256sum "$1" | cut -d' ' -f1
+}
+
+origin_field() {
+  local workspace=$1
+  local field=$2
+  sed -n "s/^${field} = \"\([^\"]*\)\"/\\1/p" "$workspace/.yydra/origin.toml"
+}
+
+version=$($cli --version | awk '{print $2}')
+[[ "$version" == 0.0.3 ]] || { echo "expected exact Distribution 0.0.3, got $version" >&2; exit 1; }
+template=$(origin_field "$clean" template_sha256)
+[[ "$(origin_field "$clean" distribution_version)" == "$version" ]]
+[[ "$(origin_field "$reference" distribution_version)" == "$version" ]]
+[[ "$(origin_field "$reference" template_sha256)" == "$template" ]]
+
+catalog=dd53cbea7b50518805e6e74b005b04c5dcdc92ac6a369bcb9769ad375288a277
+for manifest in "$clean_aggregate" "$reference_aggregate"; do
+  jq -e \
+    --arg version "$version" \
+    --arg template "$template" \
+    --arg catalog "$catalog" '
+      .schemaVersion == 2 and
+      .checkCatalogSha256 == $catalog and
+      .profile == "aggregate" and
+      .status == "pass" and
+      .aggregateComplete == true and
+      .distributionVersion == $version and
+      .workspace.distributionVersion == $version and
+      .workspace.templateSha256 == $template and
+      (.nodes | length > 0 and all(.[]; .status == "pass"))
+    ' "$manifest" >/dev/null
+done
+
+source_commit=$(git -C "$repo_root" rev-parse HEAD)
+jq -e \
+  --arg version "$version" \
+  --arg sourceCommit "$source_commit" '
+    .schemaVersion == 1 and
+    .status == "pass" and
+    .distribution == $version and
+    .provenance.buildGitSha == $sourceCommit and
+    .provenance.harnessGitSha == $sourceCommit and
+    .physicalDevice == "not-run"
+  ' "$ios_runtime/result.json" >/dev/null
+jq -e '
+  .schemaVersion == 1 and
+  .status == "pass-discrimination" and
+  .h5ProductPresentationAccessibility.status == "fail" and
+  (.h5ProductPresentationAccessibility.failureReason | contains("ACCESSIBILITY_ASSERTION_FAILED")) and
+  .h5E2e == "pass" and
+  .androidRelease == "pass"
+' "$negative_evidence/result.json" >/dev/null
+
+cp "$cli" "$output/yydra-linux-x86_64"
+cp "$clean_aggregate" "$output/clean-aggregate-manifest.json"
+cp "$reference_aggregate" "$output/reference-aggregate-manifest.json"
+mkdir -p "$output/ios-runtime-evidence" "$output/negative-fixture-evidence"
+cp -R "$ios_runtime"/. "$output/ios-runtime-evidence/"
+cp -R "$negative_evidence"/. "$output/negative-fixture-evidence/"
+
+clean_baseline=$($hash_tree "$clean/.agents/skills")
+reference_baseline=$($hash_tree "$reference/.agents/skills")
+[[ "$clean_baseline" == "$reference_baseline" ]] || {
+  echo "clean/reference Baseline Skill inventories differ" >&2
+  exit 1
+}
+
+jq -n \
+  --arg version "$version" \
+  --arg sourceCommit "$source_commit" \
+  --arg sourceTreeSha256 "$(git -C "$repo_root" archive HEAD | sha256sum | cut -d' ' -f1)" \
+  --arg cliSha256 "$(file_sha "$output/yydra-linux-x86_64")" \
+  --arg templateSha256 "$template" \
+  --arg baselineSkillInventorySha256 "$clean_baseline" \
+  --arg cleanWorkspaceOriginSha256 "$(file_sha "$clean/.yydra/origin.toml")" \
+  --arg referenceWorkspaceOriginSha256 "$(file_sha "$reference/.yydra/origin.toml")" \
+  --arg rootCargoLockSha256 "$(file_sha "$repo_root/Cargo.lock")" \
+  --arg templateCargoLockSha256 "$(file_sha "$clean/Cargo.lock")" \
+  --arg templateNpmLockSha256 "$(file_sha "$clean/frontend/package-lock.json")" \
+  --arg referenceCargoLockSha256 "$(file_sha "$reference/Cargo.lock")" \
+  --arg referenceNpmLockSha256 "$(file_sha "$reference/frontend/package-lock.json")" \
+  --arg checkCatalogSha256 "$catalog" \
+  --arg mechanicalQualityWorkflowSha256 "$(file_sha "$repo_root/.github/workflows/v0-mechanical-quality.yml")" \
+  --arg cleanAggregateManifestSha256 "$(file_sha "$output/clean-aggregate-manifest.json")" \
+  --arg cleanAggregateResultSha256 "$(jq -er .resultSha256 "$clean_aggregate")" \
+  --arg referenceAggregateManifestSha256 "$(file_sha "$output/reference-aggregate-manifest.json")" \
+  --arg referenceAggregateResultSha256 "$(jq -er .resultSha256 "$reference_aggregate")" \
+  --arg cleanInputSha256 "$(jq -er .workspace.inputSha256 "$clean_aggregate")" \
+  --arg referenceInputSha256 "$(jq -er .workspace.inputSha256 "$reference_aggregate")" \
+  --arg negativeFixtureInventorySha256 "$($hash_tree "$script_dir/negative-fixtures")" \
+  --arg negativeFixtureEvidenceSha256 "$($hash_tree "$output/negative-fixture-evidence")" \
+  --arg iosSimulatorRuntimeEvidenceSha256 "$($hash_tree "$output/ios-runtime-evidence")" \
+  --arg freezeScriptSha256 "$(file_sha "$script_dir/freeze-distribution")" \
+  --arg verifyScriptSha256 "$(file_sha "$script_dir/verify-freeze")" \
+  --arg hashTreeScriptSha256 "$(file_sha "$hash_tree")" \
+  '{
+    schemaVersion: 1,
+    distribution: {
+      version: $version,
+      sourceCommit: $sourceCommit,
+      sourceTreeSha256: $sourceTreeSha256,
+      linuxCliSha256: $cliSha256,
+      templateSha256: $templateSha256,
+      baselineSkillInventorySha256: $baselineSkillInventorySha256,
+      cleanWorkspaceOriginSha256: $cleanWorkspaceOriginSha256,
+      referenceWorkspaceOriginSha256: $referenceWorkspaceOriginSha256
+    },
+    locks: {
+      rootCargoSha256: $rootCargoLockSha256,
+      templateCargoSha256: $templateCargoLockSha256,
+      templateNpmSha256: $templateNpmLockSha256,
+      referenceCargoSha256: $referenceCargoLockSha256,
+      referenceNpmSha256: $referenceNpmLockSha256
+    },
+    mechanicalQuality: {
+      evidenceSchemaVersion: 2,
+      checkCatalogSha256: $checkCatalogSha256,
+      workflowSha256: $mechanicalQualityWorkflowSha256,
+      cleanAggregateManifestSha256: $cleanAggregateManifestSha256,
+      cleanAggregateResultSha256: $cleanAggregateResultSha256,
+      referenceAggregateManifestSha256: $referenceAggregateManifestSha256,
+      referenceAggregateResultSha256: $referenceAggregateResultSha256
+    },
+    fixtures: {
+      cleanInputSha256: $cleanInputSha256,
+      referenceInputSha256: $referenceInputSha256,
+      negativeFixtureInventorySha256: $negativeFixtureInventorySha256,
+      negativeFixtureEvidenceSha256: $negativeFixtureEvidenceSha256
+    },
+    nativeRuntime: {
+      iosSimulator: "pass",
+      evidenceSha256: $iosSimulatorRuntimeEvidenceSha256
+    },
+    freezeTooling: {
+      freezeScriptSha256: $freezeScriptSha256,
+      verifyScriptSha256: $verifyScriptSha256,
+      hashTreeScriptSha256: $hashTreeScriptSha256
+    },
+    claims: {
+      h5RegisteredSemantics: "aggregate-pass",
+      androidBuild: "aggregate-pass",
+      iosSimulatorBuild: "aggregate-pass",
+      iosSimulatorRuntime: "pass",
+      nativeAccessibility: "not-run",
+      physicalDevice: "not-run",
+      agentEval: "not-run",
+      goldenStackPromotion: "not-run"
+    }
+  }' >"$output/distribution-manifest.json"
+
+(
+  cd "$output"
+  sha256sum \
+    clean-aggregate-manifest.json \
+    distribution-manifest.json \
+    ios-runtime-evidence/result.json \
+    negative-fixture-evidence/result.json \
+    reference-aggregate-manifest.json \
+    yydra-linux-x86_64 >SHA256SUMS
+)
+
+echo "freeze_manifest=$output/distribution-manifest.json"
+echo "freeze_sha256=$(file_sha "$output/distribution-manifest.json")"

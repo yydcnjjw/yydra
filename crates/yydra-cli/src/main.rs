@@ -25,7 +25,7 @@ pub(crate) const BASELINE_SKILL_FILES: &[&str] = &[
 ];
 
 #[derive(Debug, Parser)]
-#[command(name = "yydra", version, about = "PROTOTYPE Yydra V0 Distribution CLI")]
+#[command(name = "yydra", version, about = "Yydra V0 Distribution CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -51,7 +51,7 @@ enum Command {
         #[command(subcommand)]
         command: GenerateCommand,
     },
-    /// Run the read-only prototype Mechanical Quality Contract.
+    /// Run the read-only Mechanical Quality Contract.
     Check {
         #[arg(default_value = ".")]
         workspace: PathBuf,
@@ -262,7 +262,7 @@ fn create_workspace(destination: &Path, product_name: &str, product_id: &str) ->
     }
     if destination.exists() {
         bail!(
-            "destination '{}' already exists; prototype creation never merges or overwrites",
+            "destination '{}' already exists; Distribution creation never merges or overwrites",
             destination.display()
         );
     }
@@ -359,7 +359,7 @@ fn materialize(directory: &Dir<'_>, destination: &Path, render: &RenderContext<'
                 }
                 let source = std::str::from_utf8(file.contents()).with_context(|| {
                     format!(
-                        "prototype template '{}' must be UTF-8",
+                        "Distribution template '{}' must be UTF-8",
                         file.path().display()
                     )
                 })?;
@@ -612,4 +612,14 @@ fn collect_tree_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distribution_identity_is_the_corrected_exact_release() {
+        assert_eq!(DISTRIBUTION_VERSION, "0.0.3");
+    }
 }

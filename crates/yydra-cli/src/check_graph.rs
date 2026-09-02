@@ -16,7 +16,7 @@ use crate::{
     compare_trees, find_workspace_root, template_digest, tree_files,
 };
 
-const EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const EVIDENCE_SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, ValueEnum, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CheckProfile {
@@ -196,6 +196,7 @@ struct HostEvidence {
 #[serde(rename_all = "camelCase")]
 struct CheckManifest {
     schema_version: u32,
+    check_catalog_sha256: String,
     profile: CheckProfile,
     status: String,
     aggregate_complete: bool,
@@ -409,6 +410,16 @@ fn spec(id: &str) -> NodeSpec {
         .unwrap_or_else(|| panic!("missing check node spec for {id}"))
 }
 
+fn check_catalog_sha256() -> String {
+    let catalog = NODE_SPECS
+        .iter()
+        .map(|node| (node.id, owner_name(node.owner)))
+        .collect::<Vec<_>>();
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(&catalog).expect("serialize static check catalog"),
+    ))
+}
+
 struct GraphRunner<'a> {
     root: &'a Path,
     evidence_root: PathBuf,
@@ -537,6 +548,7 @@ impl<'a> GraphRunner<'a> {
         let status = if failed { "fail" } else { "pass-applicable" };
         let mut manifest = CheckManifest {
             schema_version: EVIDENCE_SCHEMA_VERSION,
+            check_catalog_sha256: check_catalog_sha256(),
             profile: self.profile,
             status: status.to_owned(),
             aggregate_complete: false,
@@ -983,12 +995,7 @@ fn run_h5_product_presentation_accessibility(
 ) -> Result<()> {
     let frontend = context.root.join("frontend");
     let spec = frontend.join("e2e/product-presentation.accessibility.spec.ts");
-    if !spec.is_file() {
-        bail!(
-            "ACCESSIBILITY_SPEC_MISSING: expected authored Product Presentation semantics at {}",
-            spec.display()
-        );
-    }
+    validate_product_presentation_accessibility_spec(&spec)?;
 
     let output = context
         .evidence_root
@@ -1029,6 +1036,16 @@ fn run_h5_product_presentation_accessibility(
     Ok(())
 }
 
+fn validate_product_presentation_accessibility_spec(spec: &Path) -> Result<()> {
+    if !spec.is_file() {
+        bail!(
+            "ACCESSIBILITY_SPEC_MISSING: expected authored Product Presentation semantics at {}",
+            spec.display()
+        );
+    }
+    Ok(())
+}
+
 fn validate_product_presentation_accessibility_report(report: &[u8]) -> Result<()> {
     let parsed: serde_json::Value = serde_json::from_slice(report)
         .context("ACCESSIBILITY_REPORT_INVALID: Playwright did not emit JSON evidence")?;
@@ -1047,8 +1064,21 @@ fn validate_product_presentation_accessibility_report(report: &[u8]) -> Result<(
         .get("unexpected")
         .and_then(serde_json::Value::as_u64)
         .context("ACCESSIBILITY_REPORT_INVALID: unexpected count is absent")?;
+    let focused = parsed
+        .get("errors")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|errors| {
+            errors.iter().any(|error| {
+                error
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|message| {
+                        message.contains("focused") && message.contains("--forbid-only")
+                    })
+            })
+        });
 
-    if skipped > 0 {
+    if focused || skipped > 0 {
         bail!(
             "ACCESSIBILITY_FOCUSED_OR_SKIPPED: the canonical semantics spec skipped {skipped} tests"
         );
@@ -1270,6 +1300,7 @@ fn aggregate(
     let status = if complete { "pass" } else { "fail" };
     let mut manifest = CheckManifest {
         schema_version: EVIDENCE_SCHEMA_VERSION,
+        check_catalog_sha256: check_catalog_sha256(),
         profile: CheckProfile::Aggregate,
         status: status.to_owned(),
         aggregate_complete: complete,
@@ -1297,6 +1328,9 @@ fn validate_shard(
 ) -> Result<()> {
     if shard.schema_version != EVIDENCE_SCHEMA_VERSION {
         bail!("unsupported shard evidence schema {}", shard.schema_version);
+    }
+    if shard.check_catalog_sha256 != check_catalog_sha256() {
+        bail!("shard manifest check catalog digest is invalid");
     }
     if shard.profile == CheckProfile::Aggregate {
         bail!("an aggregate manifest cannot be used as a host shard");
@@ -1615,6 +1649,8 @@ fn directory_digest(root: &Path) -> Result<String> {
 
 fn semantic_digest(manifest: &CheckManifest) -> Result<String> {
     let semantic = (
+        manifest.schema_version,
+        &manifest.check_catalog_sha256,
         manifest.profile,
         manifest.aggregate_complete,
         &manifest.distribution_version,
@@ -1722,7 +1758,8 @@ mod tests {
             failure_reason: None,
         };
         let mut first = CheckManifest {
-            schema_version: 1,
+            schema_version: EVIDENCE_SCHEMA_VERSION,
+            check_catalog_sha256: check_catalog_sha256(),
             profile: CheckProfile::LinuxCi,
             status: "pass-applicable".to_owned(),
             aggregate_complete: false,
@@ -1754,11 +1791,23 @@ mod tests {
     }
 
     #[test]
+    fn catalog_and_evidence_schema_have_frozen_identities() {
+        assert_eq!(EVIDENCE_SCHEMA_VERSION, 2);
+        assert_eq!(
+            check_catalog_sha256(),
+            "dd53cbea7b50518805e6e74b005b04c5dcdc92ac6a369bcb9769ad375288a277"
+        );
+    }
+
+    #[test]
     fn accessibility_report_requires_executed_passing_tests() {
-        let passing = br#"{"stats":{"expected":1,"skipped":0,"unexpected":0}}"#;
+        let passing =
+            include_bytes!("../../../distribution/v0.0.3/negative-fixtures/report-passing.json");
         assert!(validate_product_presentation_accessibility_report(passing).is_ok());
 
-        let empty = br#"{"stats":{"expected":0,"skipped":0,"unexpected":0}}"#;
+        let empty = include_bytes!(
+            "../../../distribution/v0.0.3/negative-fixtures/report-zero-executed.json"
+        );
         assert!(
             validate_product_presentation_accessibility_report(empty)
                 .unwrap_err()
@@ -1766,7 +1815,8 @@ mod tests {
                 .contains("ACCESSIBILITY_NO_EXECUTED_TESTS")
         );
 
-        let skipped = br#"{"stats":{"expected":0,"skipped":1,"unexpected":0}}"#;
+        let skipped =
+            include_bytes!("../../../distribution/v0.0.3/negative-fixtures/report-skipped.json");
         assert!(
             validate_product_presentation_accessibility_report(skipped)
                 .unwrap_err()
@@ -1774,12 +1824,33 @@ mod tests {
                 .contains("ACCESSIBILITY_FOCUSED_OR_SKIPPED")
         );
 
-        let failed = br#"{"stats":{"expected":0,"skipped":0,"unexpected":1}}"#;
+        let focused =
+            include_bytes!("../../../distribution/v0.0.3/negative-fixtures/report-focused.json");
+        assert!(
+            validate_product_presentation_accessibility_report(focused)
+                .unwrap_err()
+                .to_string()
+                .contains("ACCESSIBILITY_FOCUSED_OR_SKIPPED")
+        );
+
+        let failed =
+            include_bytes!("../../../distribution/v0.0.3/negative-fixtures/report-failed.json");
         assert!(
             validate_product_presentation_accessibility_report(failed)
                 .unwrap_err()
                 .to_string()
                 .contains("ACCESSIBILITY_ASSERTION_FAILED")
+        );
+    }
+
+    #[test]
+    fn accessibility_spec_is_required_at_the_distribution_seam() {
+        let missing = Path::new("definitely-absent-product-presentation-accessibility.spec.ts");
+        assert!(
+            validate_product_presentation_accessibility_spec(missing)
+                .unwrap_err()
+                .to_string()
+                .contains("ACCESSIBILITY_SPEC_MISSING")
         );
     }
 }

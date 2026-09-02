@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "yydra-cli"
-version = "0.0.3-prototype"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "clap",

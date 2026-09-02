@@ -263,3 +263,148 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 14
+
+  accessibility-negative-fixture:
+    name: Accessibility heading-removal discrimination
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Set up exact Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21.0.8
+      - name: Verify retained classifier and patch fixtures
+        run: |
+          cargo test --locked --workspace --all-features
+          git apply --check \
+            --directory=prototype/reading-queue-reference \
+            distribution/v0.0.3/negative-fixtures/missing-spec.patch
+          git apply --check \
+            --directory=prototype/reading-queue-reference \
+            distribution/v0.0.3/negative-fixtures/heading-role-removal.patch
+      - name: Build the exact Distribution and mutate a disposable reference
+        run: |
+          cargo build --release --locked --bin yydra
+          cp target/release/yydra "$RUNNER_TEMP/yydra"
+          mkdir -p target/quality-ci
+          cp -R prototype/reading-queue-reference target/quality-ci/heading-role-removal
+          git apply \
+            --directory=target/quality-ci/heading-role-removal \
+            distribution/v0.0.3/negative-fixtures/heading-role-removal.patch
+          echo "YYDRA_WORKSPACE=target/quality-ci/heading-role-removal" >>"$GITHUB_ENV"
+          echo "YYDRA_EVIDENCE=$RUNNER_TEMP/heading-role-removal" >>"$GITHUB_ENV"
+      - name: Install exact frontend graph and Chromium
+        run: |
+          npm ci --ignore-scripts --prefix "$YYDRA_WORKSPACE/frontend"
+          npm exec --prefix "$YYDRA_WORKSPACE/frontend" -- playwright install --with-deps chromium
+      - name: Require semantic failure with behavior and Android still passing
+        run: |
+          set +e
+          "$RUNNER_TEMP/yydra" check "$YYDRA_WORKSPACE" \
+            --profile linux-ci \
+            --evidence-dir "$YYDRA_EVIDENCE"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          manifest="$YYDRA_EVIDENCE/manifest.json"
+          jq -e '
+            ([.nodes[] | select(
+              .id == "h5.product-presentation-accessibility" and
+              .status == "fail" and
+              (.failureReason | contains("ACCESSIBILITY_ASSERTION_FAILED"))
+            )] | length) == 1 and
+            ([.nodes[] | select(.id == "h5.e2e" and .status == "pass")] | length) == 1 and
+            ([.nodes[] | select(.id == "android.release" and .status == "pass")] | length) == 1 and
+            ([.nodes[] | select(.id == "ownership.authored-inputs-unchanged" and .status == "pass")] | length) == 1
+          ' "$manifest" >/dev/null
+          jq -n \
+            --arg manifestSha256 "$(sha256sum "$manifest" | cut -d' ' -f1)" \
+            --arg resultSha256 "$(jq -er .resultSha256 "$manifest")" \
+            '{
+              schemaVersion: 1,
+              status: "pass-discrimination",
+              h5ProductPresentationAccessibility: {
+                status: "fail",
+                failureReason: "ACCESSIBILITY_ASSERTION_FAILED"
+              },
+              h5E2e: "pass",
+              androidRelease: "pass",
+              authoredInputsUnchanged: "pass",
+              manifestSha256: $manifestSha256,
+              resultSha256: $resultSha256
+            }' >"$YYDRA_EVIDENCE/result.json"
+      - name: Upload negative-fixture evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accessibility-heading-role-removal
+          path: ${{ env.YYDRA_EVIDENCE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  distribution-freeze:
+    name: Freeze exact Distribution 0.0.3
+    needs: [aggregate, ios-runtime, accessibility-negative-fixture]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build exact Linux CLI and generate clean fixture
+        run: |
+          cargo build --release --locked --bin yydra
+          target/release/yydra new target/distribution-freeze/clean \
+            --product-name "Clean Quality Fixture" \
+            --product-id clean-quality-fixture
+      - name: Download clean aggregate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-clean-aggregate
+          path: ${{ runner.temp }}/clean-aggregate
+      - name: Download reference aggregate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: quality-reference-aggregate
+          path: ${{ runner.temp }}/reference-aggregate
+      - name: Download iOS runtime evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ios-runtime-reference
+          path: ${{ runner.temp }}/ios-runtime-reference
+      - name: Download negative-fixture evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: accessibility-heading-role-removal
+          path: ${{ runner.temp }}/accessibility-heading-role-removal
+      - name: Materialize and verify the freeze artifact
+        run: |
+          distribution/v0.0.3/freeze-distribution \
+            target/release/yydra \
+            target/distribution-freeze/clean \
+            prototype/reading-queue-reference \
+            "$RUNNER_TEMP/clean-aggregate/manifest.json" \
+            "$RUNNER_TEMP/reference-aggregate/manifest.json" \
+            "$RUNNER_TEMP/ios-runtime-reference" \
+            "$RUNNER_TEMP/accessibility-heading-role-removal" \
+            "$RUNNER_TEMP/distribution-v0.0.3-freeze"
+          distribution/v0.0.3/verify-freeze \
+            "$RUNNER_TEMP/distribution-v0.0.3-freeze" \
+            target/distribution-freeze/clean \
+            prototype/reading-queue-reference
+      - name: Upload exact Distribution freeze
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distribution-v0.0.3-freeze
+          path: ${{ runner.temp }}/distribution-v0.0.3-freeze
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

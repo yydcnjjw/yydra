@@ -1,0 +1,1 @@
+{"errors":[{"message":"Error: item focused with '.only' is not allowed due to the '--forbid-only' CLI flag"}],"stats":{"expected":0,"skipped":0,"unexpected":0}}

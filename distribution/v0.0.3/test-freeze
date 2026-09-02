@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+
+cargo build --release --locked --bin yydra --manifest-path "$repo_root/Cargo.toml"
+cli="$repo_root/target/release/yydra"
+"$cli" new "$scratch/clean" \
+  --product-name "Freeze Contract Probe" \
+  --product-id freeze-contract-probe
+cp -R "$scratch/clean" "$scratch/reference"
+
+version=$(sed -n 's/^distribution_version = "\([^"]*\)"/\1/p' \
+  "$scratch/clean/.yydra/origin.toml")
+template=$(sed -n 's/^template_sha256 = "\([^"]*\)"/\1/p' \
+  "$scratch/clean/.yydra/origin.toml")
+catalog=dd53cbea7b50518805e6e74b005b04c5dcdc92ac6a369bcb9769ad375288a277
+
+for fixture in clean reference; do
+  jq -n \
+    --arg version "$version" \
+    --arg template "$template" \
+    --arg catalog "$catalog" \
+    --arg productId "freeze-contract-probe" \
+    --arg inputSha256 "$fixture-input" \
+    --arg resultSha256 "$fixture-result" \
+    '{
+      schemaVersion: 2,
+      checkCatalogSha256: $catalog,
+      profile: "aggregate",
+      status: "pass",
+      aggregateComplete: true,
+      distributionVersion: $version,
+      workspace: {
+        productId: $productId,
+        distributionVersion: $version,
+        templateSha256: $template,
+        inputSha256: $inputSha256
+      },
+      nodes: [{id: "fixture.probe", status: "pass"}],
+      resultSha256: $resultSha256
+    }' >"$scratch/$fixture-aggregate.json"
+done
+
+mkdir -p "$scratch/ios-runtime" "$scratch/negative-evidence"
+source_commit=$(git -C "$repo_root" rev-parse HEAD)
+jq -n \
+  --arg version "$version" \
+  --arg sourceCommit "$source_commit" '
+    {
+      schemaVersion: 1,
+      status: "pass",
+      distribution: $version,
+      provenance: {buildGitSha: $sourceCommit, harnessGitSha: $sourceCommit},
+      physicalDevice: "not-run"
+    }
+  ' >"$scratch/ios-runtime/result.json"
+jq -n '
+  {
+    schemaVersion: 1,
+    status: "pass-discrimination",
+    h5ProductPresentationAccessibility: {
+      status: "fail",
+      failureReason: "ACCESSIBILITY_ASSERTION_FAILED: fixture"
+    },
+    h5E2e: "pass",
+    androidRelease: "pass"
+  }
+' >"$scratch/negative-evidence/result.json"
+
+"$script_dir/freeze-distribution" \
+  "$cli" \
+  "$scratch/clean" \
+  "$scratch/reference" \
+  "$scratch/clean-aggregate.json" \
+  "$scratch/reference-aggregate.json" \
+  "$scratch/ios-runtime" \
+  "$scratch/negative-evidence" \
+  "$scratch/release"
+"$script_dir/verify-freeze" \
+  "$scratch/release" \
+  "$scratch/clean" \
+  "$scratch/reference"
+
+jq -e '
+  .schemaVersion == 1 and
+  .distribution.version == "0.0.3" and
+  .mechanicalQuality.evidenceSchemaVersion == 2 and
+  .mechanicalQuality.checkCatalogSha256 == "dd53cbea7b50518805e6e74b005b04c5dcdc92ac6a369bcb9769ad375288a277" and
+  .claims.physicalDevice == "not-run" and
+  .claims.agentEval == "not-run"
+' "$scratch/release/distribution-manifest.json" >/dev/null

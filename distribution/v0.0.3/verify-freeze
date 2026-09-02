@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 3 ]]; then
+  echo "usage: $0 <freeze-directory> <clean-workspace> <reference-workspace>" >&2
+  exit 64
+fi
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+hash_tree="$script_dir/hash-tree"
+freeze=$(cd "$1" && pwd)
+clean=$(cd "$2" && pwd)
+reference=$(cd "$3" && pwd)
+manifest="$freeze/distribution-manifest.json"
+
+file_sha() {
+  sha256sum "$1" | cut -d' ' -f1
+}
+
+expected() {
+  jq -er "$1" "$manifest"
+}
+
+check_file() {
+  local selector=$1
+  local path=$2
+  local wanted actual
+  wanted=$(expected "$selector")
+  actual=$(file_sha "$path")
+  [[ "$actual" == "$wanted" ]] || {
+    echo "frozen file mismatch: $path (expected $wanted, got $actual)" >&2
+    exit 1
+  }
+}
+
+check_tree() {
+  local selector=$1
+  local path=$2
+  local wanted actual
+  wanted=$(expected "$selector")
+  actual=$($hash_tree "$path")
+  [[ "$actual" == "$wanted" ]] || {
+    echo "frozen tree mismatch: $path (expected $wanted, got $actual)" >&2
+    exit 1
+  }
+}
+
+(cd "$freeze" && sha256sum --check SHA256SUMS >/dev/null)
+[[ "$(git -C "$repo_root" rev-parse HEAD)" == "$(expected .distribution.sourceCommit)" ]]
+check_file '.distribution.linuxCliSha256' "$freeze/yydra-linux-x86_64"
+check_file '.distribution.cleanWorkspaceOriginSha256' "$clean/.yydra/origin.toml"
+check_file '.distribution.referenceWorkspaceOriginSha256' "$reference/.yydra/origin.toml"
+check_tree '.distribution.baselineSkillInventorySha256' "$clean/.agents/skills"
+check_tree '.distribution.baselineSkillInventorySha256' "$reference/.agents/skills"
+check_file '.locks.rootCargoSha256' "$repo_root/Cargo.lock"
+check_file '.locks.templateCargoSha256' "$clean/Cargo.lock"
+check_file '.locks.templateNpmSha256' "$clean/frontend/package-lock.json"
+check_file '.locks.referenceCargoSha256' "$reference/Cargo.lock"
+check_file '.locks.referenceNpmSha256' "$reference/frontend/package-lock.json"
+check_file '.mechanicalQuality.workflowSha256' "$repo_root/.github/workflows/v0-mechanical-quality.yml"
+check_file '.mechanicalQuality.cleanAggregateManifestSha256' "$freeze/clean-aggregate-manifest.json"
+check_file '.mechanicalQuality.referenceAggregateManifestSha256' "$freeze/reference-aggregate-manifest.json"
+check_tree '.fixtures.negativeFixtureInventorySha256' "$script_dir/negative-fixtures"
+check_tree '.fixtures.negativeFixtureEvidenceSha256' "$freeze/negative-fixture-evidence"
+check_tree '.nativeRuntime.evidenceSha256' "$freeze/ios-runtime-evidence"
+check_file '.freezeTooling.freezeScriptSha256' "$script_dir/freeze-distribution"
+check_file '.freezeTooling.verifyScriptSha256' "$script_dir/verify-freeze"
+check_file '.freezeTooling.hashTreeScriptSha256' "$hash_tree"
+
+jq -n \
+  --arg distribution "$(expected .distribution.version)" \
+  --arg manifestSha256 "$(file_sha "$manifest")" \
+  '{schemaVersion: 1, status: "pass-freeze", distribution: $distribution, manifestSha256: $manifestSha256}'
