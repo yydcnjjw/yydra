@@ -46,7 +46,18 @@ runs the Distribution-owned core graph, including Public API/Generated Client
 drift and the real PostgreSQL/Axum/H5 Reading Queue
 create/list/complete/reopen/filter/keyset-pagination path with restorable URL
 state, stable cursor Problems, and bounded authentication semantics. The
-Product Domain rules remain pure Rust, while the concrete application use
+graph also repeats clean Expo Continuous Native Generation and assembles an
+identified Android release APK with the generated Gradle wrapper. These nodes
+run from the committed `app.json`, exact `package.json`/`package-lock.json`,
+declared config plugins, and local Expo Modules only; the sanitized build
+environment does not expose Expo or EAS credentials. `frontend/android` is
+ignored disposable output and is removed by `yydra check`; raw Expo/Gradle
+logs, both generation inventories, the generated-host inventory used for the
+build, and the APK identity are retained in external evidence. Passing proves
+deterministic generation on the current host and an account-free release
+build, not Android runtime, installation, physical-device behavior, native
+accessibility, or store signing. The Product Domain rules remain pure Rust,
+while the concrete application use
 cases explicitly own SQLx transactions and database constraints remain the
 final defense. The Reading Queue transition uses one named cross-domain
 transaction to update correctness-affecting progress synchronously under the
@@ -70,6 +81,20 @@ also be outside the Workspace and have no symlink ancestor. Diagnostic
 `clean-core-local` and explicitly does not claim aggregate conformance. Add
 `--message-format=json` before the subcommand for versioned JSON Lines
 diagnostics.
+
+Run the focused Android evidence path through the supported quality entrypoint:
+
+```console
+yydra check ./reader --node native.android-generation
+yydra check ./reader --node android.release
+```
+
+For generated-host diagnosis only, `npm --prefix frontend run
+generate:android` leaves the ignored `frontend/android` tree available for
+inspection. Express every fix in `app.json`, exact dependencies, a declared
+config plugin, or a local Expo Module, then delete and regenerate the host;
+never patch generated Java, Kotlin, Gradle, manifest, or resource files as an
+authority.
 
 Creation does not establish a template rerun, synchronization, upgrade,
 compatibility-range, or Distribution-version override contract.

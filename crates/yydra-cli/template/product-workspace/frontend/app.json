@@ -8,6 +8,9 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "plugins": ["expo-router"],
+    "android": {
+      "package": "__ANDROID_PACKAGE__"
+    },
     "web": {
       "bundler": "metro",
       "output": "static"

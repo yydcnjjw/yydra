@@ -188,6 +188,14 @@ fn records_one_normalized_license_choice_for_future_product_owned_source_only() 
     assert!(policy.contains("applies_to = [\"product-owned-source\"]"));
     assert!(policy.contains("copied_yydra_bytes = \"MIT OR Apache-2.0\""));
     assert!(policy.contains("third_party_bytes = \"retain-original-terms-and-notices\""));
+    let app: serde_json::Value = serde_json::from_slice(
+        &fs::read(destination.join("frontend/app.json")).expect("read Expo app config"),
+    )
+    .expect("parse Expo app config");
+    assert_eq!(
+        app["expo"]["android"]["package"],
+        "dev.yydra.licensed_reader"
+    );
 }
 
 #[test]
@@ -322,6 +330,15 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
             .unwrap_or_else(|| panic!("missing generated artifact {generated}"));
         assert_eq!(artifact["lifecycle"], "committed-generated-output");
         assert_eq!(artifact["hand_editable_after_creation"], false);
+    }
+
+    let ignore = fs::read_to_string(destination.join(".gitignore"))
+        .expect("read generated-output ignore authority");
+    for generated_host in ["/frontend/android/", "/frontend/ios/"] {
+        assert!(
+            ignore.lines().any(|line| line == generated_host),
+            "generated native host {generated_host} must be disposable ignored output"
+        );
     }
 }
 

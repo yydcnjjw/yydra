@@ -631,6 +631,10 @@ fn render_template(source: &str, render: &RenderContext<'_>) -> Result<String> {
         ),
         ("__PRODUCT_NAME__", render.input.product_name.clone()),
         ("__PRODUCT_ID__", render.input.product_id.clone()),
+        (
+            "__ANDROID_PACKAGE__",
+            format!("dev.yydra.{}", render.input.product_id.replace('-', "_")),
+        ),
     ];
 
     let mut output = String::with_capacity(source.len());
