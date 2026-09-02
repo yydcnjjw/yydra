@@ -542,6 +542,7 @@ fn validate_openapi_profile(bytes: &[u8]) -> Result<()> {
             "API_OPENAPI_SHAPE_REUSE_INVALID: create, response, and patch schemas must remain separate"
         );
     }
+
     Ok(())
 }
 
@@ -572,21 +573,26 @@ fn validate_generated_client(root: &Path) -> Result<()> {
             bail!("API_CLIENT_STAGE_INVALID: Orval did not emit {expected}");
         }
     }
-    let profile = String::from_utf8_lossy(
-        inventory
-            .get(Path::new("fetch/schemas/frameworkContractProfile.zod.ts"))
-            .expect("profile presence checked"),
-    );
-    if profile.contains("strictObject") || profile.contains(".strict()") {
-        bail!("API_CLIENT_STAGE_INVALID: response schema must tolerate additive unknown fields");
+    for (response, bytes) in inventory.iter().filter(|(path, _)| {
+        path.starts_with("fetch/schemas") && path.extension().is_some_and(|value| value == "ts")
+    }) {
+        let source = String::from_utf8_lossy(bytes);
+        if source.contains("strictObject") || source.contains(".strict()") {
+            bail!(
+                "API_CLIENT_STAGE_INVALID: Fetch schema {} must tolerate additive unknown fields",
+                response.display()
+            );
+        }
     }
-    for request in [
-        "request/schemas/frameworkContractCreate.zod.ts",
-        "request/schemas/frameworkContractPatch.zod.ts",
-    ] {
-        let source = String::from_utf8_lossy(&inventory[Path::new(request)]);
-        if !(source.contains("strictObject") || source.contains(".strict()")) {
-            bail!("API_CLIENT_STAGE_INVALID: request schema {request} must reject unknown fields");
+    for (request, bytes) in inventory.iter().filter(|(path, _)| {
+        path.starts_with("request/schemas") && path.extension().is_some_and(|value| value == "ts")
+    }) {
+        let source = String::from_utf8_lossy(bytes);
+        if source.contains("zod.object(") && !source.contains(".strict()") {
+            bail!(
+                "API_CLIENT_STAGE_INVALID: request schema {} must reject unknown fields",
+                request.display()
+            );
         }
     }
     Ok(())
@@ -1543,12 +1549,18 @@ fn require_additional_properties(
     name: &str,
     expected: bool,
 ) -> Result<()> {
-    if schemas[name]["additionalProperties"] != expected {
+    if schema_at(schemas, name)?["additionalProperties"] != expected {
         bail!(
             "API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID: {name}.additionalProperties must be {expected}"
         );
     }
     Ok(())
+}
+
+fn schema_at<'a>(schemas: &'a serde_json::Map<String, Value>, name: &str) -> Result<&'a Value> {
+    schemas.get(name).ok_or_else(|| {
+        anyhow::anyhow!("API_OPENAPI_PROFILE_INVALID: required schema {name} is missing")
+    })
 }
 
 fn require_schema_type(schema: &Value, expected: &str, field: &str) -> Result<()> {

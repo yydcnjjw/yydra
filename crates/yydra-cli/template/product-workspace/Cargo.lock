@@ -169,54 +169,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
-name = "__PRODUCT_ID__-application"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "__PRODUCT_ID__-persistence-postgres",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-domain"
-version = "0.1.0"
-
-[[package]]
-name = "__PRODUCT_ID__-persistence-postgres"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "sqlx",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "__PRODUCT_ID__-persistence-postgres",
- "__PRODUCT_ID__-transport-http",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-transport-http"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "utoipa",
- "utoipa-axum",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -995,6 +947,56 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "__PRODUCT_ID__-application"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-domain",
+ "__PRODUCT_ID__-persistence-postgres",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-domain"
+version = "0.1.0"
+
+[[package]]
+name = "__PRODUCT_ID__-persistence-postgres"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-domain",
+ "sqlx",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "__PRODUCT_ID__-persistence-postgres",
+ "__PRODUCT_ID__-transport-http",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-transport-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "utoipa",
+ "utoipa-axum",
+]
 
 [[package]]
 name = "redox_syscall"

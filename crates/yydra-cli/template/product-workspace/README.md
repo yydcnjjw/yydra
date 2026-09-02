@@ -38,6 +38,21 @@ database has exactly the compiled versions and checksums. After migration,
 `yydra dev .` visibly starts the migration, backend, and H5 frontend phases and
 terminates their process groups together on failure or shutdown.
 
+## Reading Queue slice
+
+The initial Product Domain slice creates and lists Reading Queue entries. Its
+title, source URL, entity-specific identifier, and queued-state rules live in
+`crates/domain` without transport, persistence, React, router, or query-library
+dependencies. The concrete create and list use cases in `crates/application`
+own their SQLx transactions; `crates/persistence-postgres` contains only the
+Product Workspace PostgreSQL operations, and migration `0002` retains final
+database constraints. There is no generic repository or Unit of Work.
+
+The H5 Product Presentation submits `title` and `sourceUrl` through the
+handwritten Framework client facade, then reloads the queue through the same
+Public API seam. Public identifiers are opaque strings. Reading Queue
+transitions and cursor pagination are not part of this slice.
+
 The supported quality entrypoint is read-only for authored, snapshot,
 committed-generated, lock, migration, and configuration inputs:
 
@@ -81,7 +96,9 @@ the change non-breaking. Product code calls the handwritten facade in
 `frontend/src/framework/api/`, never the generated directory directly.
 
 The focused production H5 acceptance command exports static web assets, serves
-them locally, and runs Playwright against the real service URL. Start the
+them locally, creates and reloads a Reading Queue entry against the real Axum
+and PostgreSQL service, and runs the focused transaction/constraint rollback
+fixture. Start the
 diagnostic-only server leaf in one terminal:
 
 ```console

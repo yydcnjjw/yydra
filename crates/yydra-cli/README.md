@@ -42,7 +42,10 @@ yydra check ./reader
 add`) and application are explicit; the server only verifies that PostgreSQL
 matches its compiled history. `check` is read-only for Workspace inputs and
 runs the Distribution-owned core graph, including Public API/Generated Client
-drift and the real PostgreSQL/Axum/H5 path. `generate api` is the only supported
+drift and the real PostgreSQL/Axum/H5 Reading Queue create/list path. The
+Product Domain rules remain pure Rust, while the concrete application use
+cases explicitly own SQLx transactions and database constraints remain the
+final defense. `generate api` is the only supported
 write path for normalized OpenAPI and the Orval Fetch/TypeScript/Zod outputs;
 it validates every isolated stage before a Workspace-locked, journaled,
 rollback-safe replacement, and records a replayable compatibility history.

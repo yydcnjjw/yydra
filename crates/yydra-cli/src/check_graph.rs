@@ -189,8 +189,8 @@ const NODE_SPECS: &[NodeSpec] = &[
             "infrastructure.playwright-chromium",
         ],
         remediation: "inspect the node log, run yydra db migrate and the focused production H5 test, then fix the first semantic failure",
-        proves: "the production H5 export reaches a real Axum service and PostgreSQL after a browser refresh",
-        does_not_prove: "Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
+        proves: "the production H5 export creates and reloads a Reading Queue entry through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; the focused rollback fixture also passes",
+        does_not_prove: "Reading Queue transitions or pagination, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
     },
     NodeSpec {
         id: INPUTS_UNCHANGED_NODE,
@@ -2421,9 +2421,33 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
     body: { status: "ready", database: "baseline" },
     status: 200,
   });
+  await expect(page.getByText("The queue is empty.")).toBeVisible();
+  const entryTitle = "Transactions without hidden magic";
+  const sourceUrl = "https://example.test/transactions";
+  await page.getByLabel("Entry title").fill(entryTitle);
+  await page.getByLabel("Source URL").fill(sourceUrl);
+  await page.getByRole("button", { name: "Add entry" }).click();
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
+  await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
+  const queue = await page.evaluate(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`);
+    return { body: await response.json(), status: response.status };
+  }, apiUrl);
+  expect(queue.status).toBe(200);
+  expect(queue.body).toMatchObject({
+    entries: [{ title: entryTitle, sourceUrl, state: "queued" }],
+  });
+  expect(queue.body.entries[0].id).toEqual(expect.any(String));
+  await page.getByLabel("Entry title").fill("   ");
+  await page.getByLabel("Source URL").fill("https://example.test/rejected");
+  await page.getByRole("button", { name: "Add entry" }).click();
+  await expect(page.getByRole("alert")).toContainText("Could not add this entry.");
   await page.reload();
   await expect(page.getByText("Backend ready.")).toBeVisible();
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
 });
 "#;
     context.tool_versions.insert(
@@ -2517,6 +2541,22 @@ test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page })
             &["run", "--locked", "--bin", "migrate"],
             &[("DATABASE_URL", &database_url)],
             "H5_MIGRATION_FAILED",
+        )?;
+        context.command(
+            context.root,
+            "cargo",
+            &[
+                "test",
+                "--locked",
+                "--test",
+                "reading_queue_postgres",
+                "reading_queue_use_cases_commit_success_and_rollback_failures",
+                "--",
+                "--exact",
+                "--ignored",
+            ],
+            &[("DATABASE_URL", &database_url)],
+            "READING_QUEUE_POSTGRES_FAILED",
         )?;
         let mut server = spawn_server(context, &database_url, &server_address)?;
         let readiness = wait_for_server(

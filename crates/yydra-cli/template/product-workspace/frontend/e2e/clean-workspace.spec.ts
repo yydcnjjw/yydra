@@ -40,8 +40,43 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   );
   await expect(page.getByText("Backend ready.")).toBeVisible();
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
+  await expect(page.getByText("The queue is empty.")).toBeVisible();
+
+  const entryTitle = "Transactions without hidden magic";
+  const sourceUrl = "https://example.test/transactions";
+  await page.getByLabel("Entry title").fill(entryTitle);
+  await page.getByLabel("Source URL").fill(sourceUrl);
+  await page.getByRole("button", { name: "Add entry" }).click();
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
+  await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
+
+  const persistedQueue = await page.evaluate(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`);
+    return { body: await response.json(), status: response.status };
+  }, apiUrl);
+  expect(persistedQueue.status).toBe(200);
+  expect(persistedQueue.body).toMatchObject({
+    entries: [
+      {
+        title: entryTitle,
+        sourceUrl,
+        state: "queued",
+      },
+    ],
+  });
+  expect(persistedQueue.body.entries[0].id).toEqual(expect.any(String));
+
+  await page.getByLabel("Entry title").fill("   ");
+  await page.getByLabel("Source URL").fill("https://example.test/rejected");
+  await page.getByRole("button", { name: "Add entry" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Could not add this entry.",
+  );
 
   await page.reload();
   await expect(page.getByText("Backend ready.")).toBeVisible();
   await expect(page.getByText("PostgreSQL schema: baseline")).toBeVisible();
+  await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
+  await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
 });

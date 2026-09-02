@@ -28,4 +28,37 @@ describe("Framework Runtime health client", () => {
     expect(isTransportFailure({ kind: "transport" })).toBe(true);
     expect(isTransportFailure({ kind: "contractViolation" })).toBe(false);
   });
+
+  it("forwards Reading Queue behavior through the Framework facade", async () => {
+    const fetchImplementation = vi.fn<typeof globalThis.fetch>(
+      async (_input, init) => {
+        if (init?.method === "POST") {
+          return Response.json(
+            {
+              id: "opaque-entry",
+              title: "Example",
+              sourceUrl: "https://example.test",
+              state: "queued",
+            },
+            { status: 201 },
+          );
+        }
+        return Response.json({ entries: [] });
+      },
+    );
+    const client = createFrameworkClient(
+      fetchImplementation,
+      "http://service.test",
+    );
+
+    await expect(client.listReadingQueueEntries()).resolves.toEqual({
+      entries: [],
+    });
+    await expect(
+      client.createReadingQueueEntry({
+        title: "Example",
+        sourceUrl: "https://example.test",
+      }),
+    ).resolves.toMatchObject({ id: "opaque-entry", state: "queued" });
+  });
 });

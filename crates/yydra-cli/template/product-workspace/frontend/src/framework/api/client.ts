@@ -1,12 +1,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { getFrameworkContractProfile } from "../../generated/public-api/fetch/client";
 import {
+  createReadingQueueEntry,
+  getFrameworkContractProfile,
+  listReadingQueueEntries,
+} from "../../generated/public-api/fetch/client";
+import {
+  CreateReadingEntryRequest,
   FrameworkContractProfile,
   ProblemDetails,
+  ReadingQueueEntryResponse,
+  ReadingQueueResponse,
 } from "../../generated/public-api/fetch/schemas";
+import { CreateReadingEntryRequest as StrictCreateReadingEntryRequest } from "../../generated/public-api/request/schemas/createReadingEntryRequest.zod";
 
-export type { FrameworkContractProfile };
+export type {
+  CreateReadingEntryRequest,
+  FrameworkContractProfile,
+  ReadingQueueEntryResponse,
+  ReadingQueueResponse,
+};
 
 export type FrameworkFailure =
   | { kind: "problem"; problem: ProblemDetails }
@@ -14,10 +27,21 @@ export type FrameworkFailure =
   | { kind: "cancelled"; message: string }
   | { kind: "contractViolation"; message: string };
 
+interface RequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface PublicApiClient {
-  frameworkContractProfile(options?: {
-    signal?: AbortSignal;
-  }): Promise<FrameworkContractProfile>;
+  frameworkContractProfile(
+    options?: RequestOptions,
+  ): Promise<FrameworkContractProfile>;
+  listReadingQueueEntries(
+    options?: RequestOptions,
+  ): Promise<ReadingQueueResponse>;
+  createReadingQueueEntry(
+    input: CreateReadingEntryRequest,
+    options?: RequestOptions,
+  ): Promise<ReadingQueueEntryResponse>;
 }
 
 export interface PublicApiClientOptions {
@@ -25,6 +49,21 @@ export interface PublicApiClientOptions {
   fetchImplementation: typeof globalThis.fetch;
   credentialHeaders?: () => HeadersInit | Promise<HeadersInit>;
   timeoutMs?: number;
+}
+
+interface GeneratedResponse {
+  data: unknown;
+  status: number;
+}
+
+interface Operation {
+  name: string;
+  successStatus: number;
+  problemStatuses: readonly number[];
+  invoke(
+    fetchImplementation: typeof globalThis.fetch,
+  ): Promise<GeneratedResponse>;
+  options?: RequestOptions;
 }
 
 class DeclaredProblem extends Error {
@@ -46,139 +85,185 @@ export function createPublicApiClient({
     throw new Error("timeoutMs must be a positive safe integer");
   }
 
-  return {
-    async frameworkContractProfile(options) {
-      const callerSignal = options?.signal;
-      const controller = new AbortController();
-      let timedOut = false;
-      let responseReceived = false;
-      const cancel = () => controller.abort(callerSignal?.reason);
-      callerSignal?.addEventListener("abort", cancel, { once: true });
-      if (callerSignal?.aborted) {
-        cancel();
-      }
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        controller.abort(new Error("request timed out"));
-      }, timeoutMs);
-      let internalAbortListener: (() => void) | undefined;
-      const aborted = new Promise<never>((_resolve, reject) => {
-        internalAbortListener = () => {
-          reject(
-            controller.signal.reason ??
-              new DOMException("request aborted", "AbortError"),
-          );
-        };
-        controller.signal.addEventListener("abort", internalAbortListener, {
-          once: true,
-        });
-        if (controller.signal.aborted) {
-          internalAbortListener();
-        }
-      });
-
-      const runtimeFetch: typeof globalThis.fetch = async (input, init) => {
-        const headers = new Headers(init?.headers);
-        if (credentialHeaders) {
-          const injected = new Headers(await credentialHeaders());
-          injected.forEach((value, name) => headers.set(name, value));
-        }
-        const response = await fetchImplementation(resolveUrl(input, origin), {
-          ...init,
-          headers,
-          signal: controller.signal,
-        });
-        responseReceived = true;
-        const contentType = mediaType(response.headers.get("content-type"));
-        if (response.status === 500) {
-          if (contentType !== "application/problem+json") {
-            throw new ContractViolation(
-              `status 500 used undocumented content type ${contentType ?? "missing"}`,
-            );
-          }
-          let body: unknown;
-          try {
-            body = await response.clone().json();
-          } catch {
-            throw new ContractViolation(
-              "Problem response body is not valid JSON",
-            );
-          }
-          const parsed = ProblemDetails.safeParse(body);
-          if (!parsed.success || parsed.data.status !== response.status) {
-            throw new ContractViolation(
-              "Problem response does not match its declared schema and HTTP status",
-            );
-          }
-          throw new DeclaredProblem(parsed.data);
-        }
-        if (response.status !== 200) {
-          throw new ContractViolation(
-            `status ${response.status} is not declared for getFrameworkContractProfile`,
-          );
-        }
-        if (contentType !== "application/json") {
-          throw new ContractViolation(
-            `status 200 used undocumented content type ${contentType ?? "missing"}`,
-          );
-        }
-        return response;
+  async function execute<T>({
+    name,
+    successStatus,
+    problemStatuses,
+    invoke,
+    options,
+  }: Operation): Promise<T> {
+    const callerSignal = options?.signal;
+    const controller = new AbortController();
+    let timedOut = false;
+    let responseReceived = false;
+    const cancel = () => controller.abort(callerSignal?.reason);
+    callerSignal?.addEventListener("abort", cancel, { once: true });
+    if (callerSignal?.aborted) {
+      cancel();
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("request timed out"));
+    }, timeoutMs);
+    let internalAbortListener: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      internalAbortListener = () => {
+        reject(
+          controller.signal.reason ??
+            new DOMException("request aborted", "AbortError"),
+        );
       };
+      controller.signal.addEventListener("abort", internalAbortListener, {
+        once: true,
+      });
+      if (controller.signal.aborted) {
+        internalAbortListener();
+      }
+    });
+    const declaredProblems = new Set(problemStatuses);
 
-      try {
-        const response = await Promise.race([
-          getFrameworkContractProfile(
-            { signal: controller.signal },
-            runtimeFetch,
-          ),
-          aborted,
-        ]);
-        if (response.status !== 200) {
+    const runtimeFetch: typeof globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      if (credentialHeaders) {
+        const injected = new Headers(await credentialHeaders());
+        injected.forEach((value, headerName) => headers.set(headerName, value));
+      }
+      const response = await fetchImplementation(resolveUrl(input, origin), {
+        ...init,
+        headers,
+        signal: controller.signal,
+      });
+      responseReceived = true;
+      const contentType = mediaType(response.headers.get("content-type"));
+      if (declaredProblems.has(response.status)) {
+        if (contentType !== "application/problem+json") {
           throw new ContractViolation(
-            `generated client returned undocumented status ${response.status}`,
+            `status ${response.status} used undocumented content type ${contentType ?? "missing"}`,
           );
         }
-        return response.data;
-      } catch (cause) {
-        if (cause instanceof DeclaredProblem) {
-          throw {
-            kind: "problem",
-            problem: cause.problem,
-          } satisfies FrameworkFailure;
+        let body: unknown;
+        try {
+          body = await response.clone().json();
+        } catch {
+          throw new ContractViolation(
+            "Problem response body is not valid JSON",
+          );
         }
-        if (callerSignal?.aborted) {
-          throw {
-            kind: "cancelled",
-            message: "request was cancelled by its caller",
-          } satisfies FrameworkFailure;
+        const parsed = ProblemDetails.safeParse(body);
+        if (!parsed.success || parsed.data.status !== response.status) {
+          throw new ContractViolation(
+            "Problem response does not match its declared schema and HTTP status",
+          );
         }
-        if (timedOut) {
-          throw {
-            kind: "transport",
-            message: `request timed out after ${timeoutMs} ms`,
-          } satisfies FrameworkFailure;
-        }
-        if (cause instanceof ContractViolation || responseReceived) {
-          throw {
-            kind: "contractViolation",
-            message:
-              cause instanceof Error
-                ? cause.message
-                : "response violated the generated Public API Contract",
-          } satisfies FrameworkFailure;
-        }
+        throw new DeclaredProblem(parsed.data);
+      }
+      if (response.status !== successStatus) {
+        throw new ContractViolation(
+          `status ${response.status} is not declared for ${name}`,
+        );
+      }
+      if (contentType !== "application/json") {
+        throw new ContractViolation(
+          `status ${successStatus} used undocumented content type ${contentType ?? "missing"}`,
+        );
+      }
+      return response;
+    };
+
+    try {
+      const response = await Promise.race([invoke(runtimeFetch), aborted]);
+      if (response.status !== successStatus) {
+        throw new ContractViolation(
+          `generated client returned undocumented status ${response.status}`,
+        );
+      }
+      return response.data as T;
+    } catch (cause) {
+      if (cause instanceof DeclaredProblem) {
+        throw {
+          kind: "problem",
+          problem: cause.problem,
+        } satisfies FrameworkFailure;
+      }
+      if (callerSignal?.aborted) {
+        throw {
+          kind: "cancelled",
+          message: "request was cancelled by its caller",
+        } satisfies FrameworkFailure;
+      }
+      if (timedOut) {
         throw {
           kind: "transport",
-          message:
-            cause instanceof Error ? cause.message : "network request failed",
+          message: `request timed out after ${timeoutMs} ms`,
         } satisfies FrameworkFailure;
-      } finally {
-        clearTimeout(timeout);
-        if (internalAbortListener) {
-          controller.signal.removeEventListener("abort", internalAbortListener);
-        }
-        callerSignal?.removeEventListener("abort", cancel);
       }
+      if (cause instanceof ContractViolation || responseReceived) {
+        throw {
+          kind: "contractViolation",
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "response violated the generated Public API Contract",
+        } satisfies FrameworkFailure;
+      }
+      throw {
+        kind: "transport",
+        message:
+          cause instanceof Error ? cause.message : "network request failed",
+      } satisfies FrameworkFailure;
+    } finally {
+      clearTimeout(timeout);
+      if (internalAbortListener) {
+        controller.signal.removeEventListener("abort", internalAbortListener);
+      }
+      callerSignal?.removeEventListener("abort", cancel);
+    }
+  }
+
+  return {
+    frameworkContractProfile(options) {
+      return execute<FrameworkContractProfile>({
+        name: "getFrameworkContractProfile",
+        successStatus: 200,
+        problemStatuses: [500],
+        options,
+        invoke: (runtimeFetch) =>
+          getFrameworkContractProfile(
+            { signal: options?.signal },
+            runtimeFetch,
+          ),
+      });
+    },
+    listReadingQueueEntries(options) {
+      return execute<ReadingQueueResponse>({
+        name: "listReadingQueueEntries",
+        successStatus: 200,
+        problemStatuses: [500],
+        options,
+        invoke: (runtimeFetch) =>
+          listReadingQueueEntries({ signal: options?.signal }, runtimeFetch),
+      });
+    },
+    createReadingQueueEntry(input, options) {
+      const parsed = StrictCreateReadingEntryRequest.safeParse(input);
+      if (!parsed.success) {
+        return Promise.reject({
+          kind: "contractViolation",
+          message: "createReadingQueueEntry input violated its request schema",
+        } satisfies FrameworkFailure);
+      }
+      return execute<ReadingQueueEntryResponse>({
+        name: "createReadingQueueEntry",
+        successStatus: 201,
+        problemStatuses: [422, 500],
+        options,
+        invoke: (runtimeFetch) =>
+          createReadingQueueEntry(
+            parsed.data,
+            { signal: options?.signal },
+            runtimeFetch,
+          ),
+      });
     },
   };
 }
