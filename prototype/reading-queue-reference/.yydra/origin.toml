@@ -1,6 +1,6 @@
 schema_version = 1
 distribution_version = "0.0.3"
 template_identity = "yydra-v0-product-workspace"
-template_sha256 = "9a290177c65eccbf1c109d1ce432744deef68433219c1d3b9148e642f9384a37"
+template_sha256 = "8a60901616ca26ab2e0f792365846b570143529f8ae554159800fb2ad2e384a1"
 product_name = "Reading Queue Testbed"
 product_id = "reading-queue-testbed"

@@ -24,7 +24,7 @@
   with `npm run test:product-semantics`; do not replace semantic locators with
   visual text or test-id assertions.
 
-The local prototype may report database, H5 E2E, Android release, or iOS build
+The local check may report database, H5 E2E, Android release, or iOS build
 nodes as `not-run`. Execute those only in their declared environment and retain
 separate build/runtime evidence; never reinterpret CNG generation as a build or
 a build as runtime validation.

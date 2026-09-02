@@ -36,7 +36,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21.0.8
-      - name: Build the exact prototype Distribution
+      - name: Build the exact Distribution
         run: |
           cargo build --release --locked --bin yydra
           cp target/release/yydra "$RUNNER_TEMP/yydra"
@@ -92,7 +92,7 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
           xcodebuild -version | grep -Fx 'Xcode 26.6'
           test "$(pod --version)" = 1.17.0
-      - name: Build the exact prototype Distribution
+      - name: Build the exact Distribution
         run: |
           cargo build --release --locked --bin yydra
           cp target/release/yydra "$RUNNER_TEMP/yydra"
@@ -224,7 +224,7 @@ jobs:
     steps:
       - name: Check out exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build the exact prototype Distribution
+      - name: Build the exact Distribution
         run: cargo build --release --locked --bin yydra
       - name: Prepare aggregate Product Workspace
         run: |
