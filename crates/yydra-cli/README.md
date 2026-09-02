@@ -48,7 +48,17 @@ create/list/complete/reopen/filter/keyset-pagination path with restorable URL
 state, stable cursor Problems, and bounded authentication semantics. The
 Product Domain rules remain pure Rust, while the concrete application use
 cases explicitly own SQLx transactions and database constraints remain the
-final defense. `generate api` is the only supported
+final defense. The Reading Queue transition uses one named cross-domain
+transaction to update correctness-affecting progress synchronously under the
+selected `READ COMMITTED` row-lock strategy. Optional post-commit work uses a
+named, bounded, traced, non-durable executor: it rejects excess admission,
+anchors end-to-end task deadlines at admission, never retries, and cannot carry
+a business invariant. Existing
+migrations are append-only; passing `--comparison-base <git-revision>` to the
+focused `database.migration-history` check also rejects edits and deletions
+relative to the requested Git base. Focused `database.runtime-invariants` and
+`runtime.post-commit-executor` nodes retain discriminating failure fixtures.
+`generate api` is the only supported
 write path for normalized OpenAPI and the Orval Fetch/TypeScript/Zod outputs;
 it validates every isolated stage before a Workspace-locked, journaled,
 rollback-safe replacement, and records a replayable compatibility history.

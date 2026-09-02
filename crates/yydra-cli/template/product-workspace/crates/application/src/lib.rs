@@ -4,6 +4,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod post_commit;
+
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -18,8 +20,9 @@ use product_domain::{
     ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
 };
 use product_persistence_postgres::{
-    Database, PersistenceError, ReadingEntryPagePosition, insert_reading_entry,
-    list_reading_entries_page, lock_reading_entry_for_update, update_reading_entry_state,
+    Database, PersistenceError, ReadingEntryPagePosition, adjust_reading_progress,
+    insert_reading_entry, list_reading_entries_page, load_reading_progress,
+    lock_reading_entry_for_update, update_reading_entry_state,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -411,11 +414,11 @@ pub struct ChangeReadingEntryStateCommand {
 }
 
 #[derive(Clone)]
-pub struct ChangeReadingEntryState {
+pub struct ChangeReadingEntryStateAndRecordProgress {
     database: Database,
 }
 
-impl ChangeReadingEntryState {
+impl ChangeReadingEntryStateAndRecordProgress {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
@@ -471,11 +474,75 @@ impl ChangeReadingEntryState {
                 .map_err(ChangeReadingEntryStateError::storage)?;
             return Err(ChangeReadingEntryStateError::storage(error));
         }
+        let completed_delta = match command.target {
+            ReadingQueueEntryState::Completed => 1,
+            ReadingQueueEntryState::Queued => -1,
+        };
+        if let Err(error) = adjust_reading_progress(&mut transaction, completed_delta).await {
+            transaction
+                .rollback()
+                .await
+                .map_err(ChangeReadingEntryStateError::storage)?;
+            return Err(ChangeReadingEntryStateError::storage(error));
+        }
         transaction
             .commit()
             .await
             .map_err(ChangeReadingEntryStateError::storage)?;
         Ok(entry.into())
+    }
+}
+
+pub type ChangeReadingEntryState = ChangeReadingEntryStateAndRecordProgress;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadingProgressView {
+    pub completed_entries: u64,
+}
+
+#[derive(Clone)]
+pub struct GetReadingProgress {
+    database: Database,
+}
+
+impl GetReadingProgress {
+    pub fn new(database: Database) -> Self {
+        Self { database }
+    }
+
+    pub async fn execute(&self) -> Result<ReadingProgressView, GetReadingProgressError> {
+        let mut transaction = self
+            .database
+            .begin()
+            .await
+            .map_err(GetReadingProgressError::storage)?;
+        if let Err(error) = sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *transaction)
+            .await
+        {
+            transaction
+                .rollback()
+                .await
+                .map_err(GetReadingProgressError::storage)?;
+            return Err(GetReadingProgressError::storage(error));
+        }
+        let progress = match load_reading_progress(&mut transaction).await {
+            Ok(progress) => progress,
+            Err(error) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(GetReadingProgressError::storage)?;
+                return Err(GetReadingProgressError::storage(error));
+            }
+        };
+        transaction
+            .commit()
+            .await
+            .map_err(GetReadingProgressError::storage)?;
+        Ok(ReadingProgressView {
+            completed_entries: progress.completed_entries(),
+        })
     }
 }
 
@@ -559,6 +626,31 @@ impl Error for ListReadingEntriesError {
         match self {
             Self::Storage(error) => Some(error.as_ref()),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum GetReadingProgressError {
+    Storage(Box<dyn Error + Send + Sync>),
+}
+
+impl GetReadingProgressError {
+    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
+        Self::Storage(Box::new(error))
+    }
+}
+
+impl fmt::Display for GetReadingProgressError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("reading progress storage failed")
+    }
+}
+
+impl Error for GetReadingProgressError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Storage(error) => Some(error.as_ref()),
         }
     }
 }

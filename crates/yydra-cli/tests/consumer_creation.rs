@@ -59,12 +59,15 @@ fn materializes_the_public_api_authority_chain() {
         ".yydra/api-generation.json",
         ".yydra/api-generation-history.json",
         ".yydra/api-generation.lock",
+        "crates/application/src/post_commit.rs",
+        "crates/application/tests/post_commit_executor.rs",
         "crates/application/tests/reading_queue_postgres.rs",
         "crates/transport-http/src/bin/export-openapi.rs",
         "crates/transport-http/tests/public_api_contract.rs",
         "migrations/0002_reading_queue.sql",
         "migrations/0003_reading_entry_transitions.sql",
         "migrations/0004_reading_queue_pagination.sql",
+        "migrations/0005_reading_progress.sql",
         "frontend/orval.config.mjs",
         "frontend/src/generated/public-api/fetch/client.ts",
         "frontend/src/generated/public-api/fetch/schemas/index.ts",
@@ -100,8 +103,17 @@ fn materializes_the_public_api_authority_chain() {
         .expect("read application source");
     assert!(application.contains("pub struct CreateReadingEntry"));
     assert!(application.contains("pub struct ListReadingEntries"));
-    assert!(application.contains("pub struct ChangeReadingEntryState"));
+    assert!(application.contains("pub struct ChangeReadingEntryStateAndRecordProgress"));
+    assert!(application.contains("pub type ChangeReadingEntryState"));
+    assert!(application.contains("pub struct GetReadingProgress"));
     assert!(application.contains("SET TRANSACTION READ ONLY"));
+
+    let post_commit = fs::read_to_string(workspace.join("crates/application/src/post_commit.rs"))
+        .expect("read post-commit executor source");
+    assert!(post_commit.contains("pub struct LossyPostCommitTask"));
+    assert!(post_commit.contains("pub struct PostCommitExecutor"));
+    assert!(post_commit.contains("retry = false"));
+    assert!(post_commit.contains("This is not a durable queue"));
 
     let persistence = fs::read_to_string(workspace.join("crates/persistence-postgres/src/lib.rs"))
         .expect("read PostgreSQL persistence source");
@@ -109,6 +121,7 @@ fn materializes_the_public_api_authority_chain() {
     assert!(persistence.contains("pub async fn list_reading_entries"));
     assert!(persistence.contains("FOR UPDATE"));
     assert!(persistence.contains("pub async fn update_reading_entry_state"));
+    assert!(persistence.contains("pub async fn adjust_reading_progress"));
 
     let generated =
         fs::read_to_string(workspace.join("frontend/src/generated/public-api/fetch/client.ts"))
@@ -715,7 +728,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(workspace.join("migrations/0001_baseline.sql").is_file());
-    let added = workspace.join("migrations/0005_add_reading_notes.sql");
+    let added = workspace.join("migrations/0006_add_reading_notes.sql");
     let contents = fs::read_to_string(&added).expect("read migration stub");
     assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
     assert!(contents.contains("-- Add migration SQL here."));

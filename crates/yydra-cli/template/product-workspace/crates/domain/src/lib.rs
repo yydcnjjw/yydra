@@ -200,6 +200,28 @@ impl ReadingEntryOrder {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadingProgress {
+    completed_entries: u64,
+}
+
+impl ReadingProgress {
+    pub fn restore(completed_entries: i64) -> Result<Self, DomainValidationError> {
+        Ok(Self {
+            completed_entries: u64::try_from(completed_entries).map_err(|_| {
+                DomainValidationError::new(
+                    "completedEntries",
+                    "must be a non-negative persisted count",
+                )
+            })?,
+        })
+    }
+
+    pub fn completed_entries(self) -> u64 {
+        self.completed_entries
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadingEntry {
     id: ReadingEntryId,
@@ -324,7 +346,7 @@ impl Error for DomainValidationError {}
 mod tests {
     use super::{
         ReadingEntry, ReadingEntryId, ReadingEntryOrder, ReadingEntryState,
-        ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
+        ReadingEntryStatusFilter, ReadingEntryTitle, ReadingProgress, SourceUrl,
     };
 
     #[test]
@@ -348,6 +370,17 @@ mod tests {
             ReadingEntryOrder::NewestFirst
         );
         assert!(ReadingEntryOrder::parse(Some("title")).is_err());
+    }
+
+    #[test]
+    fn reading_progress_rejects_corrupt_negative_derived_state() {
+        assert_eq!(
+            ReadingProgress::restore(2)
+                .expect("valid progress")
+                .completed_entries(),
+            2
+        );
+        assert!(ReadingProgress::restore(-1).is_err());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::io;
 
 use product_domain::{
     DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryOrder,
-    ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
+    ReadingEntryStatusFilter, ReadingEntryTitle, ReadingProgress, SourceUrl,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
@@ -203,6 +203,41 @@ pub async fn update_reading_entry_state(
     Ok(())
 }
 
+pub async fn load_reading_progress(
+    connection: &mut PgConnection,
+) -> Result<ReadingProgress, PersistenceError> {
+    let completed_entries = sqlx::query_scalar::<_, i64>(
+        "SELECT completed_entries FROM reading_progress WHERE singleton",
+    )
+    .fetch_optional(connection)
+    .await?
+    .ok_or(PersistenceError::InvariantUnavailable(
+        "reading progress singleton is missing",
+    ))?;
+    ReadingProgress::restore(completed_entries).map_err(Into::into)
+}
+
+pub async fn adjust_reading_progress(
+    connection: &mut PgConnection,
+    completed_delta: i64,
+) -> Result<ReadingProgress, PersistenceError> {
+    let completed_entries = sqlx::query_scalar::<_, i64>(
+        r#"
+        UPDATE reading_progress
+        SET completed_entries = completed_entries + $1
+        WHERE singleton AND completed_entries + $1 >= 0
+        RETURNING completed_entries
+        "#,
+    )
+    .bind(completed_delta)
+    .fetch_optional(connection)
+    .await?
+    .ok_or(PersistenceError::InvariantUnavailable(
+        "reading progress could not apply the transition",
+    ))?;
+    ReadingProgress::restore(completed_entries).map_err(Into::into)
+}
+
 pub async fn apply_migrations(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::connect(database_url, 1).await?;
     MIGRATOR.run(&database.pool).await?;
@@ -319,6 +354,7 @@ pub enum PersistenceError {
     Database(sqlx::Error),
     CorruptDomain(DomainValidationError),
     ConcurrentChange,
+    InvariantUnavailable(&'static str),
 }
 
 impl fmt::Display for PersistenceError {
@@ -334,6 +370,7 @@ impl fmt::Display for PersistenceError {
             Self::ConcurrentChange => {
                 formatter.write_str("reading entry changed after it was locked")
             }
+            Self::InvariantUnavailable(message) => formatter.write_str(message),
         }
     }
 }
@@ -343,7 +380,7 @@ impl Error for PersistenceError {
         match self {
             Self::Database(error) => Some(error),
             Self::CorruptDomain(error) => Some(error),
-            Self::ConcurrentChange => None,
+            Self::ConcurrentChange | Self::InvariantUnavailable(_) => None,
         }
     }
 }
