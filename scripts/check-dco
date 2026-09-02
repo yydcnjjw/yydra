@@ -1,0 +1,36 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: scripts/check-dco <base-commit> <head-commit>" >&2
+    exit 2
+fi
+
+base_commit=$(git rev-parse --verify "$1^{commit}") || {
+    echo "invalid base commit: $1" >&2
+    exit 2
+}
+head_commit=$(git rev-parse --verify "$2^{commit}") || {
+    echo "invalid head commit: $2" >&2
+    exit 2
+}
+
+failed=0
+for commit in $(git rev-list --reverse "$base_commit..$head_commit"); do
+    author=$(git show -s --format='%an <%ae>' "$commit")
+    required="Signed-off-by: $author"
+    if ! git show -s --format=%B "$commit" | grep -Fqx "$required"; then
+        echo "$commit is missing the DCO 1.1 sign-off:" >&2
+        echo "$required" >&2
+        failed=1
+    fi
+done
+
+if [ "$failed" -ne 0 ]; then
+    echo "Add the matching sign-off to every submitted commit; see CONTRIBUTING.md." >&2
+    exit 1
+fi
+
+echo "DCO 1.1 sign-off check passed for every submitted commit."

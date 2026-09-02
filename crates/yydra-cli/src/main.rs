@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
@@ -14,6 +16,9 @@ use sha2::{Digest, Sha256};
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
 const TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/template/product-workspace");
+const SPDX_EXPRESSION: &str = "MIT OR Apache-2.0";
+const LICENSE_MIT: &[u8] = include_bytes!("../LICENSE-MIT");
+const LICENSE_APACHE: &[u8] = include_bytes!("../LICENSE-APACHE");
 
 #[derive(Debug, Parser)]
 #[command(name = "yydra", version, about = "Yydra V0 Distribution CLI")]
@@ -31,6 +36,9 @@ enum Command {
         product_name: Option<String>,
         #[arg(long)]
         product_id: Option<String>,
+        /// SPDX expression chosen for source authored by the Product team after creation.
+        #[arg(long)]
+        product_source_license: Option<String>,
     },
     /// Diagnose an exact Product Workspace without mutating it.
     Doctor {
@@ -45,8 +53,9 @@ fn main() -> Result<()> {
             destination,
             product_name,
             product_id,
+            product_source_license,
         } => {
-            let input = resolve_input(product_name, product_id)?;
+            let input = resolve_input(product_name, product_id, product_source_license)?;
             create_workspace(&destination, &input)
         }
         Command::Doctor { workspace } => doctor(&workspace),
@@ -56,6 +65,7 @@ fn main() -> Result<()> {
 fn resolve_input(
     product_name: Option<String>,
     product_id: Option<String>,
+    product_source_license: Option<String>,
 ) -> Result<NormalizedInput> {
     let product_name = match product_name {
         Some(value) => value,
@@ -65,7 +75,11 @@ fn resolve_input(
         Some(value) => value,
         None => prompt("Product id")?,
     };
-    NormalizedInput::new(&product_name, &product_id)
+    let product_source_license = match product_source_license {
+        Some(value) => value,
+        None => prompt("Product source license (SPDX expression)")?,
+    };
+    NormalizedInput::new(&product_name, &product_id, &product_source_license)
 }
 
 fn prompt(label: &str) -> Result<String> {
@@ -86,10 +100,11 @@ fn prompt(label: &str) -> Result<String> {
 struct NormalizedInput {
     product_name: String,
     product_id: String,
+    product_source_license: String,
 }
 
 impl NormalizedInput {
-    fn new(product_name: &str, product_id: &str) -> Result<Self> {
+    fn new(product_name: &str, product_id: &str, product_source_license: &str) -> Result<Self> {
         let product_name = product_name.trim();
         if product_name.is_empty() {
             bail!("product name must not be empty");
@@ -100,9 +115,30 @@ impl NormalizedInput {
 
         let product_id = product_id.trim();
         validate_product_id(product_id)?;
+        let product_source_license = product_source_license.trim();
+        if product_source_license.chars().any(char::is_control) {
+            bail!("product source license must not contain control characters");
+        }
+        let product_source_license = product_source_license
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if product_source_license.is_empty() {
+            bail!("product source license must not be empty");
+        }
+        if !product_source_license.is_ascii() {
+            bail!("product source license must be an ASCII SPDX expression");
+        }
+        if product_source_license.len() > 256 {
+            bail!("product source license must be at most 256 characters");
+        }
+        if let Err(error) = spdx::Expression::parse(&product_source_license) {
+            bail!("product source license must be a valid SPDX expression: {error}");
+        }
         Ok(Self {
             product_name: product_name.to_owned(),
             product_id: product_id.to_owned(),
+            product_source_license,
         })
     }
 }
@@ -143,15 +179,17 @@ fn create_workspace(destination: &Path, input: &NormalizedInput) -> Result<()> {
         template_digest: &template_digest,
     };
 
-    let result = materialize(&TEMPLATE, &stage, &render).and_then(|()| {
-        fs::rename(&stage, destination).with_context(|| {
-            format!(
-                "atomically move staged workspace '{}' to '{}'",
-                stage.display(),
-                destination.display()
-            )
-        })
-    });
+    let result = materialize(&TEMPLATE, &stage, &render)
+        .and_then(|()| write_distribution_authorities(&stage))
+        .and_then(|()| {
+            fs::rename(&stage, destination).with_context(|| {
+                format!(
+                    "atomically move staged workspace '{}' to '{}'",
+                    stage.display(),
+                    destination.display()
+                )
+            })
+        });
     if result.is_err() && stage.exists() {
         fs::remove_dir_all(&stage)
             .with_context(|| format!("remove failed stage '{}'", stage.display()))?;
@@ -251,6 +289,28 @@ fn materialize(directory: &Dir<'_>, destination: &Path, render: &RenderContext<'
     Ok(())
 }
 
+fn write_distribution_authorities(destination: &Path) -> Result<()> {
+    for (relative, contents) in [
+        ("LICENSE-APACHE", LICENSE_APACHE),
+        ("LICENSE-MIT", LICENSE_MIT),
+    ] {
+        let output = destination.join(relative);
+        fs::write(&output, contents)
+            .with_context(|| format!("write exact Distribution snapshot '{}'", output.display()))?;
+        set_mode(&output, 0o644)?;
+    }
+
+    let inventory_path = destination.join(".yydra/distribution-inventory.json");
+    let inventory = distribution_inventory_json()?;
+    fs::write(&inventory_path, inventory).with_context(|| {
+        format!(
+            "write Distribution inventory '{}'",
+            inventory_path.display()
+        )
+    })?;
+    set_mode(&inventory_path, 0o644)
+}
+
 #[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
@@ -274,6 +334,10 @@ fn render_template(source: &str, render: &RenderContext<'_>) -> Result<String> {
             render.template_digest.to_owned(),
         ),
         (
+            "__YYDRA_CREATION_INPUTS_SHA256__",
+            creation_inputs_digest(render.input, render.template_digest),
+        ),
+        (
             "__PRODUCT_NAME_TOML__",
             serde_json::to_string(&render.input.product_name)
                 .context("encode normalized product name")?,
@@ -282,6 +346,11 @@ fn render_template(source: &str, render: &RenderContext<'_>) -> Result<String> {
             "__PRODUCT_ID_TOML__",
             serde_json::to_string(&render.input.product_id)
                 .context("encode normalized product id")?,
+        ),
+        (
+            "__PRODUCT_SOURCE_LICENSE_TOML__",
+            serde_json::to_string(&render.input.product_source_license)
+                .context("encode normalized product source license")?,
         ),
         ("__PRODUCT_NAME__", render.input.product_name.clone()),
         ("__PRODUCT_ID__", render.input.product_id.clone()),
@@ -307,22 +376,203 @@ fn render_template(source: &str, render: &RenderContext<'_>) -> Result<String> {
 }
 
 fn template_digest() -> String {
-    let mut files = Vec::new();
-    collect_files(&TEMPLATE, &mut files);
-    files.sort_by_key(|file| file.path());
+    let mut files = template_source_files();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut hasher = Sha256::new();
-    for file in files {
-        let path = file
-            .path()
-            .to_str()
-            .expect("embedded template paths are UTF-8");
+    for (path, contents) in files {
         hasher.update(path.as_bytes());
         hasher.update([0]);
-        hasher.update(file.contents());
+        hasher.update(contents);
         hasher.update([0]);
     }
     hex::encode(hasher.finalize())
+}
+
+fn creation_inputs_digest(input: &NormalizedInput, template_digest: &str) -> String {
+    let canonical = serde_json::to_vec(&(
+        DISTRIBUTION_VERSION,
+        TEMPLATE_IDENTITY,
+        template_digest,
+        &input.product_name,
+        &input.product_id,
+        &input.product_source_license,
+    ))
+    .expect("normalized creation inputs are JSON-encodable");
+    hex::encode(Sha256::digest(canonical))
+}
+
+fn template_source_files() -> Vec<(String, &'static [u8])> {
+    let mut embedded = Vec::new();
+    collect_files(&TEMPLATE, &mut embedded);
+    let mut files = embedded
+        .into_iter()
+        .map(|file| {
+            (
+                file.path()
+                    .to_str()
+                    .expect("embedded template paths are UTF-8")
+                    .to_owned(),
+                file.contents(),
+            )
+        })
+        .collect::<Vec<_>>();
+    files.push(("LICENSE-APACHE".to_owned(), LICENSE_APACHE));
+    files.push(("LICENSE-MIT".to_owned(), LICENSE_MIT));
+    files
+}
+
+#[derive(serde::Serialize)]
+struct DistributionInventory {
+    schema_version: u64,
+    distribution_version: &'static str,
+    template_identity: &'static str,
+    manifest_output: &'static str,
+    lifecycles: [&'static str; 5],
+    path_rule_match_policy: &'static str,
+    artifacts: Vec<InventoryArtifact>,
+    path_rules: Vec<LifecyclePathRule>,
+}
+
+#[derive(serde::Serialize)]
+struct InventoryArtifact {
+    path: String,
+    lifecycle: &'static str,
+    mode: &'static str,
+    source_sha256: String,
+    source_authority: &'static str,
+    spdx: &'static str,
+    hand_editable_after_creation: bool,
+}
+
+#[derive(serde::Serialize)]
+struct LifecyclePathRule {
+    path_patterns: &'static [&'static str],
+    lifecycle: &'static str,
+    priority: u64,
+    hand_editable: bool,
+    workspace_source_authority: bool,
+    provenance_authority: &'static str,
+    license_notice_authority: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_bytes_license_authority: Option<&'static str>,
+}
+
+fn distribution_inventory_json() -> Result<Vec<u8>> {
+    let mut artifacts = template_source_files()
+        .into_iter()
+        .map(|(path, contents)| {
+            let (lifecycle, hand_editable_after_creation) = match path.as_str() {
+                "LICENSE-APACHE" | "LICENSE-MIT" => ("exact-distribution-snapshot", false),
+                ".yydra/origin.toml" | ".yydra/product-source-license.toml" => {
+                    ("committed-generated-output", false)
+                }
+                _ => ("product-owned-source", true),
+            };
+            InventoryArtifact {
+                path,
+                lifecycle,
+                mode: "0644",
+                source_sha256: hex::encode(Sha256::digest(contents)),
+                source_authority: "yydra-distribution-template",
+                spdx: SPDX_EXPRESSION,
+                hand_editable_after_creation,
+            }
+        })
+        .collect::<Vec<_>>();
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let inventory = DistributionInventory {
+        schema_version: 1,
+        distribution_version: DISTRIBUTION_VERSION,
+        template_identity: TEMPLATE_IDENTITY,
+        manifest_output: ".yydra/distribution-inventory.json",
+        lifecycles: [
+            "product-owned-source",
+            "exact-distribution-snapshot",
+            "committed-generated-output",
+            "ephemeral-generated-output",
+            "evidence-build-output",
+        ],
+        path_rule_match_policy: "highest-priority-match",
+        artifacts,
+        path_rules: vec![
+            LifecyclePathRule {
+                path_patterns: &[
+                    "Cargo.toml",
+                    "Cargo.lock",
+                    "migrations/**",
+                    "crates/**",
+                    "frontend/package.json",
+                    "frontend/package-lock.json",
+                    "frontend/app/**",
+                    "frontend/src/**",
+                    "frontend/assets/**",
+                    "frontend/app.config.*",
+                    ".github/**",
+                ],
+                lifecycle: "product-owned-source",
+                priority: 100,
+                hand_editable: true,
+                workspace_source_authority: true,
+                provenance_authority: "product-team-after-creation",
+                license_notice_authority: "workspace-origin-record.product_source_license",
+                new_bytes_license_authority: Some("workspace-origin-record.product_source_license"),
+            },
+            LifecyclePathRule {
+                path_patterns: &["LICENSE-*", ".agents/skills/yydra-*/**"],
+                lifecycle: "exact-distribution-snapshot",
+                priority: 300,
+                hand_editable: false,
+                workspace_source_authority: false,
+                provenance_authority: "exact-yydra-distribution",
+                license_notice_authority: "embedded-artifact-spdx-and-retained-notices",
+                new_bytes_license_authority: None,
+            },
+            LifecyclePathRule {
+                path_patterns: &[
+                    ".yydra/**",
+                    "contracts/openapi.json",
+                    "frontend/src/generated/public-api/**",
+                ],
+                lifecycle: "committed-generated-output",
+                priority: 300,
+                hand_editable: false,
+                workspace_source_authority: false,
+                provenance_authority: "declared-generator-and-upstream-contract",
+                license_notice_authority: "generator-input-provenance-and-retained-notices",
+                new_bytes_license_authority: None,
+            },
+            LifecyclePathRule {
+                path_patterns: &[
+                    "frontend/android/**",
+                    "frontend/ios/**",
+                    "frontend/.expo/types/**",
+                ],
+                lifecycle: "ephemeral-generated-output",
+                priority: 300,
+                hand_editable: false,
+                workspace_source_authority: false,
+                provenance_authority: "declared-native-project-generator",
+                license_notice_authority: "generator-input-provenance-and-retained-notices",
+                new_bytes_license_authority: None,
+            },
+            LifecyclePathRule {
+                path_patterns: &["target/**", "frontend/dist/**", "evidence/**"],
+                lifecycle: "evidence-build-output",
+                priority: 400,
+                hand_editable: false,
+                workspace_source_authority: false,
+                provenance_authority: "producing-check-or-build",
+                license_notice_authority: "producing-inputs-and-tool-notices",
+                new_bytes_license_authority: None,
+            },
+        ],
+    };
+    let mut output =
+        serde_json::to_vec_pretty(&inventory).context("encode Distribution inventory")?;
+    output.push(b'\n');
+    Ok(output)
 }
 
 fn collect_files<'a>(directory: &'a Dir<'a>, files: &mut Vec<&'a File<'a>>) {
@@ -367,11 +617,70 @@ fn doctor(workspace: &Path) -> Result<()> {
             "template digest mismatch for Distribution {DISTRIBUTION_VERSION}; install exactly with: cargo install yydra-cli --version {DISTRIBUTION_VERSION} --locked"
         );
     }
-    let normalized = NormalizedInput::new(&origin.product_name, &origin.product_id)
-        .context("Workspace Origin Record has invalid normalized creation inputs")?;
-    if normalized.product_name != origin.product_name || normalized.product_id != origin.product_id
+    let normalized = NormalizedInput::new(
+        &origin.product_name,
+        &origin.product_id,
+        &origin.product_source_license,
+    )
+    .context("Workspace Origin Record has invalid normalized creation inputs")?;
+    if normalized.product_name != origin.product_name
+        || normalized.product_id != origin.product_id
+        || normalized.product_source_license != origin.product_source_license
     {
         bail!("Workspace Origin Record creation inputs are not normalized");
+    }
+    if origin.creation_inputs_sha256 != creation_inputs_digest(&normalized, &expected_template) {
+        bail!(
+            "Workspace Origin Record creation fingerprint mismatch; restore the reviewed generated record from version control"
+        );
+    }
+    for (relative, expected) in [
+        ("LICENSE-APACHE", LICENSE_APACHE),
+        ("LICENSE-MIT", LICENSE_MIT),
+    ] {
+        let path = root.join(relative);
+        let actual = fs::read(&path)
+            .with_context(|| format!("read exact Distribution snapshot '{}'", path.display()))?;
+        if actual != expected {
+            bail!(
+                "exact Distribution snapshot drift at '{relative}'; restore its reviewed bytes from the yydra-cli {DISTRIBUTION_VERSION} package"
+            );
+        }
+    }
+    let inventory_path = root.join(".yydra/distribution-inventory.json");
+    let actual_inventory = fs::read(&inventory_path).with_context(|| {
+        format!(
+            "read committed generated inventory '{}'",
+            inventory_path.display()
+        )
+    })?;
+    if actual_inventory != distribution_inventory_json()? {
+        bail!(
+            "committed generated inventory drift at '.yydra/distribution-inventory.json'; restore the reviewed generated file from version control"
+        );
+    }
+    let policy_relative = Path::new(".yydra/product-source-license.toml");
+    let policy_template = TEMPLATE
+        .get_file(policy_relative)
+        .expect("embedded product source license policy");
+    let policy_source = std::str::from_utf8(policy_template.contents())
+        .expect("embedded product source license policy is UTF-8");
+    let render = RenderContext {
+        input: &normalized,
+        template_digest: &expected_template,
+    };
+    let expected_policy = render_template(policy_source, &render)?;
+    let policy_path = root.join(policy_relative);
+    let actual_policy = fs::read_to_string(&policy_path).with_context(|| {
+        format!(
+            "read committed generated provenance '{}'",
+            policy_path.display()
+        )
+    })?;
+    if actual_policy != expected_policy {
+        bail!(
+            "committed generated provenance drift at '.yydra/product-source-license.toml'; restore the reviewed generated file from version control"
+        );
     }
     println!("status=pass");
     Ok(())
@@ -399,8 +708,10 @@ struct WorkspaceOriginRecord {
     distribution_version: String,
     template_identity: String,
     template_sha256: String,
+    creation_inputs_sha256: String,
     product_name: String,
     product_id: String,
+    product_source_license: String,
 }
 
 fn read_workspace_origin_record(root: &Path) -> Result<WorkspaceOriginRecord> {

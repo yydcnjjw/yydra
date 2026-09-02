@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+schema_version = 1
+license_expression = __PRODUCT_SOURCE_LICENSE_TOML__
+applies_to = ["product-owned-source"]
+copied_yydra_bytes = "MIT OR Apache-2.0"
+third_party_bytes = "retain-original-terms-and-notices"

@@ -1,6 +1,9 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 schema_version = 1
 distribution_version = "__YYDRA_DISTRIBUTION_VERSION__"
 template_identity = "__YYDRA_TEMPLATE_IDENTITY__"
 template_sha256 = "__YYDRA_TEMPLATE_SHA256__"
+creation_inputs_sha256 = "__YYDRA_CREATION_INPUTS_SHA256__"
 product_name = __PRODUCT_NAME_TOML__
 product_id = __PRODUCT_ID_TOML__
+product_source_license = __PRODUCT_SOURCE_LICENSE_TOML__
