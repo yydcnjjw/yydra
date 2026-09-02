@@ -22,6 +22,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
+mod check_graph;
+
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
 const TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/template/product-workspace");
@@ -66,6 +68,17 @@ enum Command {
     Dev {
         #[arg(default_value = ".")]
         workspace: PathBuf,
+    },
+    /// Evaluate the read-only Mechanical Quality Contract.
+    Check {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        /// Write evidence outside the Workspace at a path with no symlink ancestor.
+        #[arg(long)]
+        evidence_dir: Option<PathBuf>,
+        /// Run only these diagnostic nodes and their prerequisites.
+        #[arg(long = "node")]
+        nodes: Vec<String>,
     },
     /// Manage the Product Workspace database explicitly.
     Db {
@@ -126,6 +139,18 @@ fn main() -> Result<()> {
         Command::Doctor { workspace } => doctor(&workspace, &reporter),
         Command::Setup { workspace } => setup(&workspace, &reporter),
         Command::Dev { workspace } => dev(&workspace, &reporter),
+        Command::Check {
+            workspace,
+            evidence_dir,
+            nodes,
+        } => check_graph::check(
+            check_graph::CheckRequest {
+                workspace,
+                evidence_dir,
+                selected_nodes: nodes,
+            },
+            cli.message_format,
+        ),
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
             DbCommand::Migration { command } => match command {
@@ -138,7 +163,7 @@ fn main() -> Result<()> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum MessageFormat {
+pub(crate) enum MessageFormat {
     Human,
     Json,
 }
@@ -614,7 +639,7 @@ fn creation_inputs_digest(input: &NormalizedInput, template_digest: &str) -> Str
     hex::encode(Sha256::digest(canonical))
 }
 
-fn template_source_files() -> Vec<(String, &'static [u8])> {
+pub(crate) fn template_source_files() -> Vec<(String, &'static [u8])> {
     let mut embedded = Vec::new();
     collect_files(&TEMPLATE, &mut embedded);
     let mut files = embedded
@@ -810,7 +835,40 @@ fn doctor(workspace: &Path, reporter: &Reporter) -> Result<()> {
     )
 }
 
-fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)> {
+pub(crate) fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)> {
+    let verified = verify_workspace_origin_details(workspace)?;
+    verify_snapshot_authorities_with_origin(
+        &verified.root,
+        &verified.origin,
+        &verified.normalized,
+        &verified.expected_template,
+    )?;
+    Ok((verified.root, verified.origin))
+}
+
+pub(crate) fn verify_origin_authority(workspace: &Path) -> Result<()> {
+    verify_workspace_origin_details(workspace).map(|_| ())
+}
+
+pub(crate) fn verify_snapshot_authorities(root: &Path) -> Result<()> {
+    let origin = read_workspace_origin_record(root)?;
+    let normalized = NormalizedInput::new(
+        &origin.product_name,
+        &origin.product_id,
+        &origin.product_source_license,
+    )
+    .context("Workspace Origin Record has invalid normalized creation inputs")?;
+    verify_snapshot_authorities_with_origin(root, &origin, &normalized, &template_digest())
+}
+
+struct VerifiedWorkspaceOrigin {
+    root: PathBuf,
+    origin: WorkspaceOriginRecord,
+    normalized: NormalizedInput,
+    expected_template: String,
+}
+
+fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspaceOrigin> {
     let root = find_workspace_root(workspace)?;
     let origin = read_workspace_origin_record(&root)?;
     semver::Version::parse(&origin.distribution_version)
@@ -857,6 +915,20 @@ fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)
             "Workspace Origin Record creation fingerprint mismatch; restore the reviewed generated record from version control"
         );
     }
+    Ok(VerifiedWorkspaceOrigin {
+        root,
+        origin,
+        normalized,
+        expected_template,
+    })
+}
+
+fn verify_snapshot_authorities_with_origin(
+    root: &Path,
+    origin: &WorkspaceOriginRecord,
+    normalized: &NormalizedInput,
+    expected_template: &str,
+) -> Result<()> {
     for (relative, expected) in [
         ("LICENSE-APACHE", LICENSE_APACHE),
         ("LICENSE-MIT", LICENSE_MIT),
@@ -889,8 +961,8 @@ fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)
     let policy_source = std::str::from_utf8(policy_template.contents())
         .expect("embedded product source license policy is UTF-8");
     let render = RenderContext {
-        input: &normalized,
-        template_digest: &expected_template,
+        input: normalized,
+        template_digest: expected_template,
     };
     let expected_policy = render_template(policy_source, &render)?;
     let policy_path = root.join(policy_relative);
@@ -905,7 +977,10 @@ fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)
             "committed generated provenance drift at '.yydra/product-source-license.toml'; restore the reviewed generated file from version control"
         );
     }
-    Ok((root, origin))
+    if origin.product_source_license != normalized.product_source_license {
+        bail!("Workspace provenance license does not match its normalized Origin Record")
+    }
+    Ok(())
 }
 
 fn setup(workspace: &Path, reporter: &Reporter) -> Result<()> {
@@ -1506,7 +1581,7 @@ impl DerefMut for ManagedChild {
 }
 
 #[cfg(windows)]
-struct WindowsJob(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct WindowsJob(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl Drop for WindowsJob {
@@ -1518,7 +1593,7 @@ impl Drop for WindowsJob {
 }
 
 #[cfg(windows)]
-fn create_kill_on_close_job(child: &Child) -> Result<WindowsJob> {
+pub(crate) fn create_kill_on_close_job(child: &Child) -> Result<WindowsJob> {
     use std::mem::size_of;
     use std::os::windows::io::AsRawHandle;
     use std::ptr;
@@ -1687,7 +1762,7 @@ fn terminate_child(child: &mut ManagedChild) -> Result<()> {
     }
 }
 
-fn npm_program() -> &'static str {
+pub(crate) fn npm_program() -> &'static str {
     npm_program_for(cfg!(windows))
 }
 
@@ -1730,7 +1805,7 @@ fn run_process(
     }
 }
 
-fn find_workspace_root(start: &Path) -> Result<PathBuf> {
+pub(crate) fn find_workspace_root(start: &Path) -> Result<PathBuf> {
     let start = start
         .canonicalize()
         .with_context(|| format!("resolve workspace path '{}'", start.display()))?;
