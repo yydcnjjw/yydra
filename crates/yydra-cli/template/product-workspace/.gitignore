@@ -1,3 +1,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+
 /target/
+/frontend/node_modules/
+/frontend/.expo/
+/frontend/dist/
+/frontend/test-results/
 .env

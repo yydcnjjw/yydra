@@ -15,3 +15,45 @@ hand-edited authorities.
 
 Creation is a one-shot boundary: there is no template rerun, no template sync,
 no upgrade, no compatibility-range selection, and no Distribution-version override contract.
+
+## Supported local path
+
+Install exact dependency graphs and start the pinned PostgreSQL service:
+
+```console
+yydra setup .
+docker compose up -d --wait postgres
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product
+```
+
+Database source and database state have separate explicit commands:
+
+```console
+yydra db migration add add_example .
+yydra db migrate .
+```
+
+Server startup never applies migrations. It fails before listening unless the
+database has exactly the compiled versions and checksums. After migration,
+`yydra dev .` visibly starts the migration, backend, and H5 frontend phases and
+terminates their process groups together on failure or shutdown.
+
+The focused production H5 acceptance command exports static web assets, serves
+them locally, and runs Playwright against the real service URL. Start the
+diagnostic-only server leaf in one terminal:
+
+```console
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
+  cargo run --locked --bin server
+```
+
+Then run the H5 acceptance in a second terminal; do not run it alongside the
+Expo development server because both use port 8081:
+
+```console
+EXPO_PUBLIC_API_URL=http://127.0.0.1:4000 npm --prefix frontend run test:e2e
+```
+
+Add `--message-format=json` before any supported Yydra subcommand for versioned
+JSON Lines diagnostics. Cargo, npm, Expo, and Playwright output is forwarded as
+diagnostic detail rather than becoming a second supported interface.

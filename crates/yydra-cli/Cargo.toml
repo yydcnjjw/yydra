@@ -13,11 +13,9 @@ include = [
   "LICENSE-MIT",
   "src/**",
   "tests/consumer_creation.rs",
+  "tests/live_workspace.rs",
   "tests/packaged_consumer.rs",
-  "template/product-workspace/README.md",
-  "template/product-workspace/.gitignore",
-  "template/product-workspace/.yydra/origin.toml",
-  "template/product-workspace/.yydra/product-source-license.toml",
+  "/template/product-workspace/**",
   "README.md",
 ]
 
@@ -28,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 hex.workspace = true
 include_dir.workspace = true
 semver.workspace = true
@@ -36,6 +35,12 @@ serde_json.workspace = true
 sha2.workspace = true
 spdx.workspace = true
 toml.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

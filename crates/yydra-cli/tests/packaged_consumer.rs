@@ -101,6 +101,72 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&create.stderr)
     );
     assert!(workspace.join(".yydra/origin.toml").is_file());
+    for materialized in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/application/Cargo.toml",
+        "crates/domain/Cargo.toml",
+        "crates/persistence-postgres/Cargo.toml",
+        "crates/server/Cargo.toml",
+        "crates/server/src/main.rs",
+        "crates/transport-http/Cargo.toml",
+        "frontend/app/index.tsx",
+        "frontend/package-lock.json",
+        "migrations/0001_baseline.sql",
+    ] {
+        assert!(
+            workspace.join(materialized).is_file(),
+            "missing packaged template artifact {materialized}"
+        );
+    }
+    let mut pending = vec![workspace.clone()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).expect("inspect materialized Workspace") {
+            let path = entry.expect("read materialized entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                assert_ne!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("tmpl"),
+                    "unmaterialized manifest template: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    let metadata = Command::new(&cargo)
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--no-deps",
+            "--format-version=1",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .expect("read freshly created Workspace metadata");
+    assert!(
+        metadata.status.success(),
+        "metadata stderr: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    let workspace_tests = Command::new(&cargo)
+        .args([
+            "test",
+            "--locked",
+            "--offline",
+            "--workspace",
+            "--all-targets",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .expect("test freshly created Workspace");
+    assert!(
+        workspace_tests.status.success(),
+        "Workspace test stderr: {}",
+        String::from_utf8_lossy(&workspace_tests.stderr)
+    );
     for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
         assert_eq!(
             fs::read(workspace.join(license)).expect("read Workspace license snapshot"),

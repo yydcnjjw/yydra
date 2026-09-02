@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": __PRODUCT_NAME_JSON__,
+    "slug": "__PRODUCT_ID__",
+    "version": "0.1.0",
+    "scheme": "__PRODUCT_ID__",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}
