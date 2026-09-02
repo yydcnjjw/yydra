@@ -59,8 +59,10 @@ fn materializes_the_public_api_authority_chain() {
         ".yydra/api-generation.json",
         ".yydra/api-generation-history.json",
         ".yydra/api-generation.lock",
+        "crates/application/tests/reading_queue_postgres.rs",
         "crates/transport-http/src/bin/export-openapi.rs",
         "crates/transport-http/tests/public_api_contract.rs",
+        "migrations/0002_reading_queue.sql",
         "frontend/orval.config.mjs",
         "frontend/src/generated/public-api/fetch/client.ts",
         "frontend/src/generated/public-api/fetch/schemas/index.ts",
@@ -78,11 +80,31 @@ fn materializes_the_public_api_authority_chain() {
     assert!(transport.contains("OpenApiRouter"));
     assert!(transport.contains("pub fn public_routes"));
     assert!(transport.contains("operation_id = \"getFrameworkContractProfile\""));
+    assert!(transport.contains("operation_id = \"createReadingQueueEntry\""));
+    assert!(transport.contains("operation_id = \"listReadingQueueEntries\""));
+
+    let domain = fs::read_to_string(workspace.join("crates/domain/src/lib.rs"))
+        .expect("read Product Domain source");
+    assert!(domain.contains("pub struct ReadingEntryTitle"));
+    assert!(domain.contains("pub enum ReadingEntryState"));
+
+    let application = fs::read_to_string(workspace.join("crates/application/src/lib.rs"))
+        .expect("read application source");
+    assert!(application.contains("pub struct CreateReadingEntry"));
+    assert!(application.contains("pub struct ListReadingEntries"));
+    assert!(application.contains("SET TRANSACTION READ ONLY"));
+
+    let persistence = fs::read_to_string(workspace.join("crates/persistence-postgres/src/lib.rs"))
+        .expect("read PostgreSQL persistence source");
+    assert!(persistence.contains("pub async fn insert_reading_entry"));
+    assert!(persistence.contains("pub async fn list_reading_entries"));
 
     let generated =
         fs::read_to_string(workspace.join("frontend/src/generated/public-api/fetch/client.ts"))
             .expect("read generated Fetch client");
     assert!(generated.contains("getFrameworkContractProfile"));
+    assert!(generated.contains("createReadingQueueEntry"));
+    assert!(generated.contains("listReadingQueueEntries"));
     assert!(generated.contains("fetchFn"));
     let create_schema =
         fs::read_to_string(workspace.join(
@@ -97,6 +119,12 @@ fn materializes_the_public_api_authority_chain() {
     for outcome in ["problem", "transport", "cancelled", "contractViolation"] {
         assert!(facade.contains(outcome), "missing stable {outcome} outcome");
     }
+
+    let contract_fixture =
+        fs::read_to_string(workspace.join("crates/transport-http/tests/public_api_contract.rs"))
+            .expect("read runtime contract fixture");
+    assert!(contract_fixture.contains("an undocumented Product Domain state must fail"));
+    assert!(contract_fixture.contains(r#""state":"invented""#));
 }
 
 #[test]
@@ -661,7 +689,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
             "db",
             "migration",
             "add",
-            "add_reading_queue",
+            "add_reading_notes",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
         .output()
@@ -673,7 +701,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(workspace.join("migrations/0001_baseline.sql").is_file());
-    let added = workspace.join("migrations/0002_add_reading_queue.sql");
+    let added = workspace.join("migrations/0003_add_reading_notes.sql");
     let contents = fs::read_to_string(&added).expect("read migration stub");
     assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
     assert!(contents.contains("-- Add migration SQL here."));
@@ -2427,6 +2455,92 @@ fn api_generation_write_is_idempotent_when_outputs_are_current() {
 
 #[cfg(unix)]
 #[test]
+fn api_generation_allows_product_owned_reading_queue_replacement() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let workspace = sandbox.path().join("product-api-reader");
+    create_with_flags(&workspace, "Product API Reader", "product-api-reader");
+    install_fake_api_tool_authority(&workspace, "8.27.0");
+
+    let fixture_openapi = sandbox.path().join("product-openapi.json");
+    let mut openapi: serde_json::Value = serde_json::from_slice(
+        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
+    )
+    .expect("parse OpenAPI fixture");
+    openapi["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths")
+        .remove("/api/v1/reading-queue/entries");
+    let schemas = openapi["components"]["schemas"]
+        .as_object_mut()
+        .expect("OpenAPI schemas");
+    for schema in [
+        "CreateReadingEntryRequest",
+        "ReadingQueueEntryResponse",
+        "ReadingQueueEntryState",
+        "ReadingQueueResponse",
+    ] {
+        schemas.remove(schema);
+    }
+    let mut openapi = serde_json::to_vec_pretty(&openapi).expect("serialize OpenAPI fixture");
+    openapi.push(b'\n');
+    fs::write(&fixture_openapi, openapi).expect("write product-owned OpenAPI fixture");
+
+    let fixture_generated = sandbox.path().join("product-generated");
+    for (relative, source) in [
+        (
+            "fetch/client.ts",
+            "// SPDX-License-Identifier: MIT OR Apache-2.0\n// Do not edit manually.\n// getFrameworkContractProfile fetchFn FrameworkContractProfile.parse\n",
+        ),
+        (
+            "fetch/schemas/frameworkContractProfile.zod.ts",
+            "export const FrameworkContractProfile = zod.object({});\n",
+        ),
+        (
+            "fetch/schemas/problemDetails.zod.ts",
+            "export const ProblemDetails = zod.object({});\n",
+        ),
+        (
+            "request/schemas/frameworkContractCreate.zod.ts",
+            "export const FrameworkContractCreate = zod.strictObject({});\n",
+        ),
+        (
+            "request/schemas/frameworkContractPatch.zod.ts",
+            "export const FrameworkContractPatch = zod.strictObject({});\n",
+        ),
+    ] {
+        let path = fixture_generated.join(relative);
+        fs::create_dir_all(path.parent().expect("generated parent"))
+            .expect("create generated fixture directory");
+        fs::write(path, source).expect("write generated fixture");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "generate",
+            "api",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--acknowledge-breaking-change",
+            "issue-32-product-evolution",
+        ])
+        .env("PATH", fake_api_generation_tools(&sandbox))
+        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
+        .env("YYDRA_FAKE_GENERATED", fixture_generated)
+        .output()
+        .expect("replace the bounded Reading Queue fixture");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let committed = fs::read_to_string(workspace.join("contracts/openapi.json"))
+        .expect("read evolved Product API");
+    assert!(!committed.contains("reading-queue"));
+    assert!(!committed.contains("ReadingQueue"));
+}
+
+#[cfg(unix)]
+#[test]
 fn api_check_discriminates_compatible_breaking_and_client_drift_read_only() {
     let sandbox = tempdir().expect("create test sandbox");
     for case in [
@@ -2608,6 +2722,14 @@ fn api_check_recomputes_the_recorded_breaking_decision_from_history() {
         &fixture_generated,
     );
     let fake_bin = fake_api_generation_tools(&sandbox);
+    let initial_history_len = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(workspace.join(".yydra/api-generation-history.json"))
+            .expect("read initial generation history"),
+    )
+    .expect("parse initial generation history")
+    .as_array()
+    .map(Vec::len)
+    .expect("generation history array");
 
     let generated = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
@@ -2632,7 +2754,10 @@ fn api_check_recomputes_the_recorded_breaking_decision_from_history() {
             .expect("read generation history"),
     )
     .expect("parse generation history");
-    assert_eq!(history.as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        history.as_array().map(Vec::len),
+        Some(initial_history_len + 1)
+    );
 
     let clean = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([

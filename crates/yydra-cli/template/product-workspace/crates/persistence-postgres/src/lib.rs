@@ -4,10 +4,15 @@
 
 #![forbid(unsafe_code)]
 
+use std::error::Error;
+use std::fmt;
 use std::io;
 
-use sqlx::PgPool;
+use product_domain::{
+    DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryTitle, SourceUrl,
+};
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
@@ -48,6 +53,46 @@ impl Database {
         .fetch_one(&self.pool)
         .await
     }
+
+    pub async fn begin(&self) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
+        self.pool.begin().await
+    }
+}
+
+pub async fn insert_reading_entry(
+    connection: &mut PgConnection,
+    title: &ReadingEntryTitle,
+    source_url: &SourceUrl,
+) -> Result<ReadingEntry, PersistenceError> {
+    let row = sqlx::query_as::<_, ReadingEntryRow>(
+        r#"
+        INSERT INTO reading_queue_entries (title, source_url)
+        VALUES ($1, $2)
+        RETURNING id::text AS id, title, source_url, state
+        "#,
+    )
+    .bind(title.as_str())
+    .bind(source_url.as_str())
+    .fetch_one(connection)
+    .await?;
+    row.try_into()
+}
+
+pub async fn list_reading_entries(
+    connection: &mut PgConnection,
+) -> Result<Vec<ReadingEntry>, PersistenceError> {
+    sqlx::query_as::<_, ReadingEntryRow>(
+        r#"
+        SELECT id::text AS id, title, source_url, state
+        FROM reading_queue_entries
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .fetch_all(connection)
+    .await?
+    .into_iter()
+    .map(TryInto::try_into)
+    .collect()
 }
 
 pub async fn apply_migrations(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -110,6 +155,68 @@ struct AppliedMigration {
 struct ExpectedMigration {
     version: i64,
     checksum: Vec<u8>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ReadingEntryRow {
+    id: String,
+    title: String,
+    source_url: String,
+    state: String,
+}
+
+impl TryFrom<ReadingEntryRow> for ReadingEntry {
+    type Error = PersistenceError;
+
+    fn try_from(row: ReadingEntryRow) -> Result<Self, Self::Error> {
+        Ok(ReadingEntry::restore(
+            ReadingEntryId::parse(row.id)?,
+            ReadingEntryTitle::parse(row.title)?,
+            SourceUrl::parse(row.source_url)?,
+            &row.state,
+        )?)
+    }
+}
+
+#[derive(Debug)]
+pub enum PersistenceError {
+    Database(sqlx::Error),
+    CorruptDomain(DomainValidationError),
+}
+
+impl fmt::Display for PersistenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Database(error) => write!(formatter, "PostgreSQL operation failed: {error}"),
+            Self::CorruptDomain(error) => {
+                write!(
+                    formatter,
+                    "persisted Product Domain state is invalid: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for PersistenceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Database(error) => Some(error),
+            Self::CorruptDomain(error) => Some(error),
+        }
+    }
+}
+
+impl From<sqlx::Error> for PersistenceError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl From<DomainValidationError> for PersistenceError {
+    fn from(error: DomainValidationError) -> Self {
+        Self::CorruptDomain(error)
+    }
 }
 
 #[cfg(test)]

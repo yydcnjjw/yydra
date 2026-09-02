@@ -2,12 +2,20 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::rejection::JsonRejection;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use product_application::HealthService;
-use serde::Serialize;
+use product_application::{
+    CreateReadingEntryCommand, CreateReadingEntryError, HealthService, ReadingQueueApplication,
+    ReadingQueueEntry, ReadingQueueEntryState as ApplicationReadingQueueEntryState,
+    ReadingQueueService,
+};
+use serde::{Deserialize, Serialize};
 use utoipa::openapi::schema::{AdditionalProperties, Schema};
 use utoipa::openapi::{Info, OpenApi, Paths, RefOr};
 use utoipa::{PartialSchema, ToSchema};
@@ -82,6 +90,106 @@ pub struct ProblemDetails {
     pub trace_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateReadingEntryRequest {
+    pub title: String,
+    pub source_url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadingQueueEntryState {
+    Queued,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingQueueEntryResponse {
+    /// Opaque Product Domain identifier.
+    pub id: String,
+    pub title: String,
+    pub source_url: String,
+    pub state: ReadingQueueEntryState,
+}
+
+impl From<ReadingQueueEntry> for ReadingQueueEntryResponse {
+    fn from(entry: ReadingQueueEntry) -> Self {
+        let state = match entry.state {
+            ApplicationReadingQueueEntryState::Queued => ReadingQueueEntryState::Queued,
+        };
+        Self {
+            id: entry.id,
+            title: entry.title,
+            source_url: entry.source_url,
+            state,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingQueueResponse {
+    pub entries: Vec<ReadingQueueEntryResponse>,
+}
+
+#[derive(Clone)]
+pub struct ReadingQueueHttpState {
+    application: Arc<dyn ReadingQueueApplication>,
+}
+
+impl ReadingQueueHttpState {
+    pub fn new(application: impl ReadingQueueApplication + 'static) -> Self {
+        Self {
+            application: Arc::new(application),
+        }
+    }
+}
+
+struct ProblemResponse {
+    status: StatusCode,
+    body: ProblemDetails,
+}
+
+impl ProblemResponse {
+    fn invalid(detail: String) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/invalid-reading-entry".to_owned(),
+                title: "Invalid reading entry".to_owned(),
+                status: StatusCode::UNPROCESSABLE_ENTITY.as_u16(),
+                detail: Some(detail),
+                trace_id: None,
+            },
+        }
+    }
+
+    fn internal() -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: ProblemDetails {
+                type_uri: "https://yydra.dev/problems/internal".to_owned(),
+                title: "Internal service failure".to_owned(),
+                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                detail: None,
+                trace_id: None,
+            },
+        }
+    }
+}
+
+impl IntoResponse for ProblemResponse {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            [(header::CONTENT_TYPE, "application/problem+json")],
+            Json(self.body),
+        )
+            .into_response()
+    }
+}
+
 async fn health(State(service): State<HealthService>) -> Result<Json<HealthResponse>, StatusCode> {
     let status = service
         .check()
@@ -115,11 +223,71 @@ async fn get_framework_contract_profile() -> Json<FrameworkContractProfile> {
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/reading-queue/entries",
+    operation_id = "createReadingQueueEntry",
+    tag = "readingQueue",
+    request_body(content = CreateReadingEntryRequest, content_type = "application/json"),
+    responses(
+        (status = 201, description = "Reading entry created", body = ReadingQueueEntryResponse, content_type = "application/json"),
+        (status = 422, description = "Invalid reading entry", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
+    )
+)]
+async fn create_reading_queue_entry(
+    State(state): State<ReadingQueueHttpState>,
+    payload: Result<Json<CreateReadingEntryRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<ReadingQueueEntryResponse>), ProblemResponse> {
+    let Json(payload) = payload.map_err(|error| ProblemResponse::invalid(error.body_text()))?;
+    let entry = state
+        .application
+        .create(CreateReadingEntryCommand {
+            title: payload.title,
+            source_url: payload.source_url,
+        })
+        .await
+        .map_err(|error| match error {
+            CreateReadingEntryError::InvalidInput { field, message } => {
+                ProblemResponse::invalid(format!("{field} {message}"))
+            }
+            CreateReadingEntryError::Storage(_) => ProblemResponse::internal(),
+        })?;
+    Ok((StatusCode::CREATED, Json(entry.into())))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/reading-queue/entries",
+    operation_id = "listReadingQueueEntries",
+    tag = "readingQueue",
+    responses(
+        (status = 200, description = "Reading queue", body = ReadingQueueResponse, content_type = "application/json"),
+        (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
+    )
+)]
+async fn list_reading_queue_entries(
+    State(state): State<ReadingQueueHttpState>,
+) -> Result<Json<ReadingQueueResponse>, ProblemResponse> {
+    let entries = state
+        .application
+        .list()
+        .await
+        .map_err(|_| ProblemResponse::internal())?;
+    Ok(Json(ReadingQueueResponse {
+        entries: entries.into_iter().map(Into::into).collect(),
+    }))
+}
+
 /// The only registration seam for routes consumed by the Generated Client.
-pub fn public_routes() -> OpenApiRouter {
+pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
     let openapi = OpenApi::new(Info::new("Yydra Product Public API", "1.0.0"), Paths::new());
-    let mut router =
-        OpenApiRouter::with_openapi(openapi).routes(routes!(get_framework_contract_profile));
+    let mut router = OpenApiRouter::with_openapi(openapi)
+        .routes(routes!(get_framework_contract_profile))
+        .routes(routes!(
+            create_reading_queue_entry,
+            list_reading_queue_entries
+        ));
     let schemas = &mut router
         .get_openapi_mut()
         .components
@@ -133,7 +301,12 @@ pub fn public_routes() -> OpenApiRouter {
         "FrameworkContractPatch".to_owned(),
         FrameworkContractPatch::schema(),
     );
-    for response_schema in ["FrameworkContractProfile", "ProblemDetails"] {
+    for response_schema in [
+        "FrameworkContractProfile",
+        "ProblemDetails",
+        "ReadingQueueEntryResponse",
+        "ReadingQueueResponse",
+    ] {
         let Some(RefOr::T(Schema::Object(schema))) = schemas.get_mut(response_schema) else {
             panic!("{response_schema} must be a collected object schema");
         };
@@ -144,7 +317,7 @@ pub fn public_routes() -> OpenApiRouter {
 
 /// Deterministic, normalized Public API Contract derived from `public_routes`.
 pub fn normalized_openapi_json() -> Result<String, serde_json::Error> {
-    let (_, openapi) = public_routes().split_for_parts();
+    let openapi = public_routes().into_openapi();
     let value = serde_json::to_value(openapi)?;
     let mut bytes = serde_json::to_vec_pretty(&value)?;
     bytes.push(b'\n');
@@ -153,8 +326,10 @@ pub fn normalized_openapi_json() -> Result<String, serde_json::Error> {
     })
 }
 
-pub fn router(service: HealthService) -> Router {
-    let public_router: Router = public_routes().into();
+pub fn router(service: HealthService, reading_queue: ReadingQueueService) -> Router {
+    let public_router: Router = public_routes()
+        .with_state(ReadingQueueHttpState::new(reading_queue))
+        .into();
     Router::new()
         .route("/health", get(health))
         .merge(public_router.with_state::<HealthService>(()))

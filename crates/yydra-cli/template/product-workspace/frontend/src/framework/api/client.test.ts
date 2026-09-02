@@ -13,6 +13,13 @@ const validProfile = {
   nullableNote: null,
 };
 
+const validEntry = {
+  id: "opaque-entry-1",
+  title: "A useful article",
+  sourceUrl: "https://example.test/article",
+  state: "queued" as const,
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -36,6 +43,102 @@ describe("Framework Public API facade", () => {
     expect(new Headers(init?.headers).get("authorization")).toBe(
       "Bearer test-credential",
     );
+  });
+
+  it("lists and creates Reading Queue entries only through generated operations", async () => {
+    const fetchImplementation = vi.fn<typeof globalThis.fetch>(
+      async (input, init) => {
+        if (init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toEqual({
+            title: validEntry.title,
+            sourceUrl: validEntry.sourceUrl,
+          });
+          expect(new Headers(init.headers).get("content-type")).toBe(
+            "application/json",
+          );
+          return Response.json(
+            { ...validEntry, additiveFutureField: "accepted" },
+            { status: 201 },
+          );
+        }
+        return Response.json({
+          entries: [{ ...validEntry, additiveFutureField: "accepted" }],
+          additivePageField: "accepted",
+        });
+      },
+    );
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test/root",
+      fetchImplementation,
+    });
+
+    await expect(client.listReadingQueueEntries()).resolves.toEqual({
+      entries: [validEntry],
+    });
+    await expect(
+      client.createReadingQueueEntry({
+        title: validEntry.title,
+        sourceUrl: validEntry.sourceUrl,
+      }),
+    ).resolves.toEqual(validEntry);
+    expect(String(fetchImplementation.mock.calls[0][0])).toBe(
+      "https://service.test/api/v1/reading-queue/entries",
+    );
+    expect(String(fetchImplementation.mock.calls[1][0])).toBe(
+      "https://service.test/api/v1/reading-queue/entries",
+    );
+  });
+
+  it("rejects unknown create fields before Fetch and exposes declared validation Problems", async () => {
+    const fetchImplementation = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json(
+        {
+          type: "https://yydra.dev/problems/invalid-reading-entry",
+          title: "Invalid reading entry",
+          status: 422,
+          detail: "title must not be empty",
+        },
+        {
+          status: 422,
+          headers: { "content-type": "application/problem+json" },
+        },
+      ),
+    );
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation,
+    });
+
+    await expect(
+      client.createReadingQueueEntry({
+        title: "Example",
+        sourceUrl: "https://example.test",
+        handEditedField: true,
+      } as never),
+    ).rejects.toMatchObject({ kind: "contractViolation" });
+    expect(fetchImplementation).not.toHaveBeenCalled();
+
+    await expect(
+      client.createReadingQueueEntry({
+        title: "",
+        sourceUrl: "https://x.test",
+      }),
+    ).rejects.toMatchObject({
+      kind: "problem",
+      problem: { status: 422 },
+    });
+  });
+
+  it("classifies a malformed Reading Queue state as contractViolation", async () => {
+    const client = createPublicApiClient({
+      baseUrl: "https://service.test",
+      fetchImplementation: async () =>
+        Response.json({ entries: [{ ...validEntry, state: "invented" }] }),
+    });
+
+    await expect(client.listReadingQueueEntries()).rejects.toMatchObject({
+      kind: "contractViolation",
+    });
   });
 
   it("returns a contract-valid RFC 9457 Problem as the stable problem outcome", async () => {

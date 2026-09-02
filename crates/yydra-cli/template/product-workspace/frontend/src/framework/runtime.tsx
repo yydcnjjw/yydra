@@ -4,10 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
 
 import {
+  CreateReadingEntryRequest,
   createPublicApiClient,
   FrameworkContractProfile,
   FrameworkFailure,
   isTransportFailure,
+  ReadingQueueEntryResponse,
+  ReadingQueueResponse,
 } from "./api/client";
 
 export { isTransportFailure } from "./api/client";
@@ -22,6 +25,11 @@ export interface FrameworkClient {
   frameworkContractProfile(
     signal?: AbortSignal,
   ): Promise<FrameworkContractProfile>;
+  listReadingQueueEntries(signal?: AbortSignal): Promise<ReadingQueueResponse>;
+  createReadingQueueEntry(
+    input: CreateReadingEntryRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadingQueueEntryResponse>;
 }
 
 const FrameworkClientContext = createContext<FrameworkClient | null>(null);
@@ -70,6 +78,12 @@ export function createFrameworkClient(
   return {
     frameworkContractProfile(signal) {
       return publicApi.frameworkContractProfile({ signal });
+    },
+    listReadingQueueEntries(signal) {
+      return publicApi.listReadingQueueEntries({ signal });
+    },
+    createReadingQueueEntry(input, signal) {
+      return publicApi.createReadingQueueEntry(input, { signal });
     },
     async health(signal) {
       let response: Response;

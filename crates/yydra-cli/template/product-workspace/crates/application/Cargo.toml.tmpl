@@ -14,3 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
 product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }
+sqlx.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

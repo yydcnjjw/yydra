@@ -845,13 +845,20 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
     let sandbox = tempdir().expect("create sandbox");
     let rust_workspace = sandbox.path().join("rust-zero-reader");
     create_workspace(&rust_workspace, "rust-zero-reader");
-    let rust_tests = rust_workspace.join("crates/persistence-postgres/src/lib.rs");
-    let source = fs::read_to_string(&rust_tests).expect("read Rust test fixture");
-    let without_tests = source
-        .split_once("#[cfg(test)]")
-        .expect("template has Rust tests")
-        .0;
-    fs::write(&rust_tests, without_tests).expect("remove Rust tests");
+    for relative in [
+        "crates/domain/src/lib.rs",
+        "crates/persistence-postgres/src/lib.rs",
+    ] {
+        let rust_tests = rust_workspace.join(relative);
+        let source = fs::read_to_string(&rust_tests).expect("read Rust test fixture");
+        let without_tests = source
+            .split_once("#[cfg(test)]")
+            .expect("template has Rust tests")
+            .0;
+        fs::write(&rust_tests, without_tests).expect("remove inline Rust tests");
+    }
+    fs::remove_file(rust_workspace.join("crates/application/tests/reading_queue_postgres.rs"))
+        .expect("remove PostgreSQL application test");
     fs::remove_file(rust_workspace.join("crates/transport-http/tests/public_api_contract.rs"))
         .expect("remove Public API Rust tests");
     let rust = check(

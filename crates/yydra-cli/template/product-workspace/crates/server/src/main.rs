@@ -3,7 +3,7 @@
 use std::env;
 use std::net::SocketAddr;
 
-use product_application::HealthService;
+use product_application::{HealthService, ReadingQueueService};
 use product_persistence_postgres::Database;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
@@ -18,9 +18,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::connect(&database_url, 4).await?;
     database.verify_compiled_migrations().await?;
 
-    let app = product_transport_http::router(HealthService::new(database))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http());
+    let app = product_transport_http::router(
+        HealthService::new(database.clone()),
+        ReadingQueueService::new(database),
+    )
+    .layer(CorsLayer::permissive())
+    .layer(TraceLayer::new_for_http());
     let address: SocketAddr = env::var("YYDRA_BIND_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:4000".to_owned())
         .parse()?;

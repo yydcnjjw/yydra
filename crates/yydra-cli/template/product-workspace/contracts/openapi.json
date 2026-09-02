@@ -1,6 +1,22 @@
 {
   "components": {
     "schemas": {
+      "CreateReadingEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sourceUrl": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "sourceUrl"
+        ],
+        "type": "object"
+      },
       "FrameworkContractCreate": {
         "additionalProperties": false,
         "description": "Dedicated create shape retained separately from response and patch shapes.",
@@ -114,6 +130,52 @@
           "status"
         ],
         "type": "object"
+      },
+      "ReadingQueueEntryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "description": "Opaque Product Domain identifier.",
+            "type": "string"
+          },
+          "sourceUrl": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadingQueueEntryState"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "sourceUrl",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ReadingQueueEntryState": {
+        "enum": [
+          "queued"
+        ],
+        "type": "string"
+      },
+      "ReadingQueueResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingQueueEntryResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
       }
     }
   },
@@ -150,6 +212,84 @@
         },
         "tags": [
           "framework"
+        ]
+      }
+    },
+    "/api/v1/reading-queue/entries": {
+      "get": {
+        "operationId": "listReadingQueueEntries",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingQueueResponse"
+                }
+              }
+            },
+            "description": "Reading queue"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Storage failure"
+          }
+        },
+        "tags": [
+          "readingQueue"
+        ]
+      },
+      "post": {
+        "operationId": "createReadingQueueEntry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReadingEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingQueueEntryResponse"
+                }
+              }
+            },
+            "description": "Reading entry created"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid reading entry"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Storage failure"
+          }
+        },
+        "tags": [
+          "readingQueue"
         ]
       }
     }

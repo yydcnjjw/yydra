@@ -6,6 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, Response, StatusCode, header};
+use product_application::{
+    ApplicationFuture, CreateReadingEntryCommand, CreateReadingEntryError, ListReadingEntriesError,
+    ReadingQueueApplication, ReadingQueueEntry, ReadingQueueEntryState,
+};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -20,14 +24,32 @@ struct OperationFixture {
     method: &'static str,
     path: &'static str,
     body: &'static str,
+    content_type: Option<&'static str>,
 }
 
-const OPERATION_FIXTURES: &[OperationFixture] = &[OperationFixture {
-    operation_id: "getFrameworkContractProfile",
-    method: "get",
-    path: "/api/v1/framework-contract",
-    body: "",
-}];
+const OPERATION_FIXTURES: &[OperationFixture] = &[
+    OperationFixture {
+        operation_id: "createReadingQueueEntry",
+        method: "post",
+        path: "/api/v1/reading-queue/entries",
+        body: r#"{"title":"Contract fixture","sourceUrl":"https://example.test/contract"}"#,
+        content_type: Some("application/json"),
+    },
+    OperationFixture {
+        operation_id: "getFrameworkContractProfile",
+        method: "get",
+        path: "/api/v1/framework-contract",
+        body: "",
+        content_type: None,
+    },
+    OperationFixture {
+        operation_id: "listReadingQueueEntries",
+        method: "get",
+        path: "/api/v1/reading-queue/entries",
+        body: "",
+        content_type: None,
+    },
+];
 
 struct DocumentedOperation<'a> {
     method: &'a str,
@@ -37,7 +59,11 @@ struct DocumentedOperation<'a> {
 
 #[tokio::test]
 async fn public_router_executes_every_committed_operation_against_its_contract() {
-    let (router, collected) = product_transport_http::public_routes().split_for_parts();
+    let (router, collected) = product_transport_http::public_routes()
+        .with_state(product_transport_http::ReadingQueueHttpState::new(
+            FixtureReadingQueue,
+        ))
+        .split_for_parts();
     let collected: Value = serde_json::to_value(collected).expect("serialize collected OpenAPI");
     let committed: Value =
         serde_json::from_str(COMMITTED_OPENAPI).expect("parse committed OpenAPI");
@@ -60,12 +86,14 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
         assert_eq!(operation.path, fixture.path);
         let method = Method::from_bytes(fixture.method.to_ascii_uppercase().as_bytes())
             .expect("fixture HTTP method");
+        let mut request = Request::builder().method(method).uri(fixture.path);
+        if let Some(content_type) = fixture.content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
         let response = router
             .clone()
             .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(fixture.path)
+                request
                     .body(Body::from(fixture.body))
                     .expect("build request"),
             )
@@ -74,6 +102,38 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
         assert_response_contract(&committed, operation.contract, response)
             .await
             .unwrap_or_else(|error| panic!("{}: {error}", fixture.operation_id));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FixtureReadingQueue;
+
+impl ReadingQueueApplication for FixtureReadingQueue {
+    fn create<'a>(
+        &'a self,
+        command: CreateReadingEntryCommand,
+    ) -> ApplicationFuture<'a, Result<ReadingQueueEntry, CreateReadingEntryError>> {
+        Box::pin(async move {
+            Ok(ReadingQueueEntry {
+                id: "opaque-contract-entry".to_owned(),
+                title: command.title,
+                source_url: command.source_url,
+                state: ReadingQueueEntryState::Queued,
+            })
+        })
+    }
+
+    fn list(
+        &self,
+    ) -> ApplicationFuture<'_, Result<Vec<ReadingQueueEntry>, ListReadingEntriesError>> {
+        Box::pin(async {
+            Ok(vec![ReadingQueueEntry {
+                id: "opaque-contract-entry".to_owned(),
+                title: "Contract fixture".to_owned(),
+                source_url: "https://example.test/contract".to_owned(),
+                state: ReadingQueueEntryState::Queued,
+            }])
+        })
     }
 }
 
@@ -158,6 +218,21 @@ async fn conformance_fixture_rejects_undocumented_status_content_type_and_body()
             "{name} fixture did not report a schema violation"
         );
     }
+
+    let list_operation = operations["listReadingQueueEntries"].contract;
+    let invalid_state = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"entries":[{"id":"opaque","title":"Example","sourceUrl":"https://example.test","state":"invented"}]}"#,
+        ))
+        .expect("build invalid reading-entry state fixture");
+    assert!(
+        assert_response_contract(&document, list_operation, invalid_state)
+            .await
+            .expect_err("an undocumented Product Domain state must fail")
+            .contains("is outside its declared enum"),
+    );
 }
 
 fn documented_operations<'a>(
@@ -326,6 +401,13 @@ fn validate_string(schema: &Value, value: &Value, location: &str) -> Result<(), 
         .ok_or_else(|| format!("{location} is not a string"))?;
     if schema["format"] == "date-time" && !is_utc_datetime(value) {
         return Err(format!("{location} is not an RFC 3339 UTC timestamp"));
+    }
+    if schema["enum"].as_array().is_some_and(|values| {
+        !values
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(value))
+    }) {
+        return Err(format!("{location} is outside its declared enum"));
     }
     match schema["pattern"].as_str() {
         None => Ok(()),
