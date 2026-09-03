@@ -311,6 +311,8 @@ async fn run_manager(
             };
         }
         tokio::select! {
+            biased;
+
             _ = async {
                 if let Some(deadline) = shutdown_deadline {
                     sleep_until(deadline).await;

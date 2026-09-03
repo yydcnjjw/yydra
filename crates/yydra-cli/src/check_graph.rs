@@ -22,7 +22,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     DISTRIBUTION_VERSION, MessageFormat, find_workspace_root, install_shutdown_handler,
-    npm_program, template_source_files, verify_origin_authority, verify_snapshot_authorities,
+    npm_program, read_workspace_origin_record, template_source_files, verify_origin_authority,
+    verify_snapshot_authorities,
 };
 
 #[cfg(windows)]
@@ -36,9 +37,16 @@ pub(crate) struct CheckRequest {
     pub(crate) evidence_dir: Option<PathBuf>,
     pub(crate) comparison_base: Option<String>,
     pub(crate) selected_nodes: Vec<String>,
+    pub(crate) fixture: String,
 }
 
-#[derive(Clone, Copy)]
+pub(crate) struct AggregateRequest {
+    pub(crate) evidence_dir: Option<PathBuf>,
+    pub(crate) manifests: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NodeSpec {
     id: &'static str,
     prerequisites: &'static [&'static str],
@@ -49,10 +57,17 @@ struct NodeSpec {
 
 const NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
+        id: "policy.exceptions",
+        prerequisites: &[],
+        remediation: "remove .yydra/check-exceptions.toml; this exact Distribution has a deny-all exception policy and required failures must be fixed",
+        proves: "the Workspace does not attempt to waive a required Mechanical Quality Contract node",
+        does_not_prove: "that future Distributions will never admit a narrowly reviewed exception mechanism",
+    },
+    NodeSpec {
         id: "origin.exact-distribution",
         prerequisites: &[],
-        remediation: "restore the reviewed Workspace Origin Record and exact Distribution snapshots, or install the exact CLI version named by the record",
-        proves: "the Workspace identity and normalized creation inputs name this exact packaged CLI Distribution",
+        remediation: "restore the reviewed Workspace Origin Record and exact Distribution snapshots, install the exact CLI version named by the record, or recreate a named aggregate fixture with its catalog-owned exact inputs",
+        proves: "the Workspace identity and normalized creation inputs name this exact packaged CLI Distribution and, when selected, the exact catalog-owned aggregate fixture",
         does_not_prove: "that product-owned source still matches the create-once template or that the Workspace passes other quality nodes",
     },
     NodeSpec {
@@ -253,7 +268,7 @@ const NODE_SPECS: &[NodeSpec] = &[
     },
 ];
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Outcome {
     Pass,
@@ -263,8 +278,8 @@ enum Outcome {
     NotRun,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CheckCause {
     code: String,
     message: String,
@@ -272,15 +287,25 @@ struct CheckCause {
     dependency_node_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttemptResult {
+    attempt: u8,
+    outcome: Outcome,
+    duration_ms: u64,
+    cause: Option<CheckCause>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NodeResult {
     schema_version: u64,
-    event: &'static str,
+    event: String,
     node_id: String,
     prerequisites: Vec<String>,
     outcome: Outcome,
     duration_ms: u64,
+    attempts: Vec<AttemptResult>,
     cause: Option<CheckCause>,
     remediation: Option<String>,
     proves: String,
@@ -290,16 +315,22 @@ struct NodeResult {
     log: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CheckManifest {
     schema_version: u64,
-    distribution_version: &'static str,
-    cli_version: &'static str,
+    distribution_version: String,
+    cli_version: String,
+    executor_digest: String,
     rule_schema_version: u64,
     workspace: String,
-    profile: &'static str,
-    scope: &'static str,
+    fixture: String,
+    profile: String,
+    scope: String,
+    catalog_digest: String,
+    diagnostic_vocabulary: Vec<String>,
+    exception_policy: ExceptionPolicy,
+    retry_policy: RetryPolicy,
     catalog_nodes: Vec<String>,
     selected_nodes: Vec<String>,
     complete: bool,
@@ -315,26 +346,358 @@ struct CheckManifest {
     nodes: Vec<NodeResult>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ArtifactEvidence {
     path: String,
     sha256: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExceptionPolicy {
+    mode: String,
+    configuration_path: String,
+    waiver_capable_nodes: Vec<String>,
+    non_waivable_nodes: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RetryPolicy {
+    semantic_max_attempts: u8,
+    generation_max_attempts: u8,
+    conformance_max_attempts: u8,
+    infrastructure_establishment_max_attempts: u8,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SummaryEvent<'a> {
+struct CatalogDefinition {
+    schema_version: u64,
+    distribution_version: &'static str,
+    result_states: &'static [&'static str],
+    fixtures: &'static [&'static str],
+    fixture_definitions: &'static [FixtureSpec],
+    nodes: &'static [NodeSpec],
+    diagnostic_vocabulary: Vec<String>,
+    exception_policy: ExceptionPolicy,
+    retry_policy: RetryPolicy,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AggregateSource {
+    fixture: String,
+    manifest: String,
+    manifest_sha256: String,
+    executor_digest: String,
+    input_digest: String,
+    artifacts: Vec<ArtifactEvidence>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AggregateResult<'a> {
     schema_version: u64,
     event: &'static str,
-    status: &'a str,
+    outcome: Outcome,
+    cause: Option<CheckCause>,
+    remediation: Option<&'a str>,
+    proves: &'static str,
+    does_not_prove: &'static str,
+    sources: &'a [AggregateSource],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AggregateManifest {
+    schema_version: u64,
+    distribution_version: String,
+    cli_version: String,
+    executor_digest: String,
+    rule_schema_version: u64,
+    profile: &'static str,
     scope: &'static str,
+    catalog_digest: String,
+    diagnostic_vocabulary: Vec<String>,
+    exception_policy: ExceptionPolicy,
+    retry_policy: RetryPolicy,
+    required_fixtures: &'static [&'static str],
+    status: &'static str,
+    complete: bool,
+    aggregate_conformance: bool,
+    cause: Option<CheckCause>,
+    sources: Vec<AggregateSource>,
+    artifacts: Vec<ArtifactEvidence>,
+    proves: &'static str,
+    does_not_prove: &'static str,
+}
+
+#[derive(Clone, Debug)]
+struct AggregateFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl AggregateFailure {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn cause(&self) -> CheckCause {
+        CheckCause {
+            code: self.code.to_owned(),
+            message: self.message.clone(),
+            dependency_node_id: None,
+        }
+    }
+}
+
+const RESULT_STATES: &[&str] = &["pass", "fail", "infrastructure-error", "skipped", "not-run"];
+const AGGREGATE_FIXTURES: &[&str] = &["clean", "reading-queue"];
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureSpec {
+    id: &'static str,
+    product_name: &'static str,
+    product_id: &'static str,
+    product_source_license: &'static str,
+}
+
+const FIXTURE_SPECS: &[FixtureSpec] = &[
+    FixtureSpec {
+        id: "clean",
+        product_name: "Clean Product",
+        product_id: "clean-product",
+        product_source_license: "Apache-2.0",
+    },
+    FixtureSpec {
+        id: "reading-queue",
+        product_name: "Reading Queue",
+        product_id: "reading-queue",
+        product_source_license: "Apache-2.0",
+    },
+];
+
+const DIAGNOSTIC_VOCABULARY: &[&str] = &[
+    "ACCESSIBILITY_ASSERTION_FAILED",
+    "ACCESSIBILITY_FOCUSED_OR_SKIPPED",
+    "ACCESSIBILITY_MIGRATION_FAILED",
+    "ACCESSIBILITY_NO_EXECUTED_TESTS",
+    "ACCESSIBILITY_POSTGRES_CLEANUP_FAILED",
+    "ACCESSIBILITY_POSTGRES_UNAVAILABLE",
+    "ACCESSIBILITY_REPORT_INVALID",
+    "ACCESSIBILITY_SPEC_MISSING",
+    "AGGREGATE_ARTIFACT_INVALID",
+    "AGGREGATE_CATALOG_MISMATCH",
+    "AGGREGATE_DIAGNOSTICS_INVALID",
+    "AGGREGATE_DUPLICATE_FIXTURE",
+    "AGGREGATE_EVIDENCE_INCOMPLETE",
+    "AGGREGATE_EVIDENCE_MALFORMED",
+    "AGGREGATE_EVIDENCE_MISSING",
+    "AGGREGATE_EXCEPTION_REJECTED",
+    "AGGREGATE_FIXTURE_MISSING",
+    "AGGREGATE_IDENTITY_MISMATCH",
+    "AGGREGATE_NODE_SET_INVALID",
+    "ANDROID_RELEASE_BUILD_FAILED",
+    "ANDROID_RELEASE_OUTPUT_MISSING",
+    "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+    "API_BREAKING_CHANGE_UNACKNOWLEDGED",
+    "API_CHECK_EXECUTABLE_UNAVAILABLE",
+    "API_CLIENT_CONTRACT_FAILED",
+    "API_CLIENT_DRIFT",
+    "API_CLIENT_GENERATION_FAILED",
+    "API_CLIENT_IMPORT_BOUNDARY_VIOLATION",
+    "API_CLIENT_IMPORT_SCAN_FAILED",
+    "API_CLIENT_STAGE_INVALID",
+    "API_CLIENT_TOOL_VERSION_INVALID",
+    "API_CLIENT_TYPECHECK_FAILED",
+    "API_GENERATED_CONTRACT_FAILED",
+    "API_GENERATED_DRIFT",
+    "API_GENERATION_BASELINE_INVALID",
+    "API_GENERATION_BUSY",
+    "API_GENERATION_LOCK_INVALID",
+    "API_GENERATION_RECORD_DRIFT",
+    "API_GENERATION_RECOVERY_FAILED",
+    "API_GENERATION_RECOVERY_REQUIRED",
+    "API_OPENAPI_CONTENT_TYPE_INVALID",
+    "API_OPENAPI_DECIMAL_INVALID",
+    "API_OPENAPI_EXPORT_FAILED",
+    "API_OPENAPI_FIELD_NAME_INVALID",
+    "API_OPENAPI_NULLABILITY_INVALID",
+    "API_OPENAPI_OPERATION_ID_INVALID",
+    "API_OPENAPI_PROFILE_INVALID",
+    "API_OPENAPI_REQUIREDNESS_INVALID",
+    "API_OPENAPI_SAFE_INTEGER_INVALID",
+    "API_OPENAPI_SHAPE_REUSE_INVALID",
+    "API_OPENAPI_TIMESTAMP_INVALID",
+    "API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID",
+    "API_OPENAPI_WIRE_TYPE_INVALID",
+    "API_RUNTIME_CONFORMANCE_FAILED",
+    "ARCH_DEPENDENCY_CYCLE",
+    "ARCH_FORBIDDEN_DEPENDENCY",
+    "ARCH_FORBIDDEN_LAYER_EDGE",
+    "ARCH_FRAMEWORK_INTERNAL_DEPENDENCY",
+    "ARCH_METADATA_INVALID",
+    "ARCH_UNKNOWN_WORKSPACE_ROLE",
+    "ARCH_WORKSPACE_PATH_ESCAPE",
+    "BASELINE_SKILL_INVENTORY_DRIFT",
+    "CARGO_LOCK_DRIFT",
+    "CHECK_CANCELLED",
+    "CHECK_CLEANUP_TIMEOUT",
+    "CHECK_CLOCK_UNAVAILABLE",
+    "CHECK_EVIDENCE_WRITE_FAILED",
+    "CHECK_EXCEPTION_POLICY_VIOLATION",
+    "CHECK_INPUT_INVENTORY_FAILED",
+    "CHECK_MUTATED_ORIGINAL_INPUTS",
+    "CHECK_MUTATED_WORKSPACE_INPUTS",
+    "CHECK_NOT_SELECTED",
+    "CHECK_PORT_UNAVAILABLE",
+    "CHECK_PREFLIGHT_FAILED",
+    "CHECK_PREREQUISITE_FAILED",
+    "CHECK_SCRATCH_CLEANUP_FAILED",
+    "CHECK_SCRATCH_COPY_FAILED",
+    "CHECK_SYMLINK_PATH_ESCAPE",
+    "CHECK_SYMLINK_TARGET_EXCLUDED",
+    "CHECK_SYMLINK_TARGET_INVALID",
+    "CHECK_TOOL_POLL_FAILED",
+    "CHECK_TOOL_UNAVAILABLE",
+    "CHECK_TOOL_VERSION_INVALID",
+    "CHECK_TOOL_VERSION_MISMATCH",
+    "CHECK_TOOL_VERSION_UNAVAILABLE",
+    "DATABASE_MIGRATION_FAILED",
+    "DATABASE_POSTGRES_CLEANUP_FAILED",
+    "DATABASE_POSTGRES_UNAVAILABLE",
+    "DATABASE_RUNTIME_INVARIANTS_FAILED",
+    "DATABASE_RUNTIME_INVARIANT_TEST_MISSING",
+    "DB_MIGRATION_AUTHORITY_AMBIGUOUS",
+    "DB_MIGRATION_COMPARISON_BASE_DELETED",
+    "DB_MIGRATION_COMPARISON_BASE_INVALID",
+    "DB_MIGRATION_COMPARISON_BASE_MUTATED",
+    "DB_MIGRATION_COMPARISON_BASE_UNAVAILABLE",
+    "DB_MIGRATION_COMPARISON_FAILED",
+    "DB_MIGRATION_DISTRIBUTION_BASE_DELETED",
+    "DB_MIGRATION_DISTRIBUTION_BASE_MUTATED",
+    "DB_MIGRATION_HISTORY_INVALID",
+    "DB_MIGRATION_HISTORY_MISSING",
+    "DOCKER_UNAVAILABLE",
+    "FRONTEND_FORMAT_FAILED",
+    "FRONTEND_LINT_FAILED",
+    "FRONTEND_LOCK_INSTALL_FAILED",
+    "FRONTEND_LOCK_MISSING",
+    "FRONTEND_LOCK_MUTATED",
+    "FRONTEND_TESTS_EMPTY",
+    "FRONTEND_TEST_DISCOVERY_FAILED",
+    "FRONTEND_TEST_FAILED",
+    "FRONTEND_TOOLCHAIN_DRIFT",
+    "FRONTEND_TYPECHECK_FAILED",
+    "FIXTURE_IDENTITY_MISMATCH",
+    "GENERATED_SNAPSHOT_DRIFT",
+    "H5_E2E_FAILED",
+    "H5_MIGRATION_FAILED",
+    "H5_POSTGRES_CLEANUP_FAILED",
+    "H5_POSTGRES_UNAVAILABLE",
+    "H5_SERVER_ADDRESS_INVALID",
+    "H5_SERVER_EXITED",
+    "H5_SERVER_POLL_FAILED",
+    "H5_SERVER_SUPERVISION_UNAVAILABLE",
+    "H5_SERVER_TIMEOUT",
+    "H5_SERVER_UNAVAILABLE",
+    "NATIVE_GENERATION_CLEANUP_FAILED",
+    "NATIVE_GENERATION_DIRTY_OUTPUT",
+    "NATIVE_GENERATION_FAILED",
+    "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+    "NATIVE_GENERATION_INVENTORY_FAILED",
+    "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS",
+    "NATIVE_GENERATION_NONDETERMINISTIC",
+    "NATIVE_GENERATION_OUTPUT_MISSING",
+    "ORIGIN_AUTHORITY_DRIFT",
+    "PLAYWRIGHT_CHROMIUM_UNAVAILABLE",
+    "POST_COMMIT_EXECUTOR_FAILED",
+    "POST_COMMIT_EXECUTOR_TEST_MISSING",
+    "READING_QUEUE_PAGINATION_POSTGRES_FAILED",
+    "READING_QUEUE_POSTGRES_FAILED",
+    "RUST_CLIPPY_FAILED",
+    "RUST_COMPILE_FAILED",
+    "RUST_DOCTEST_FAILED",
+    "RUST_FORMAT_FAILED",
+    "RUST_TESTS_EMPTY",
+    "RUST_TEST_DISCOVERY_FAILED",
+    "RUST_TEST_FAILED",
+    "RUST_TOOLCHAIN_AUTHORITY_DRIFT",
+];
+
+fn retry_policy() -> RetryPolicy {
+    RetryPolicy {
+        semantic_max_attempts: 1,
+        generation_max_attempts: 1,
+        conformance_max_attempts: 1,
+        infrastructure_establishment_max_attempts: 2,
+    }
+}
+
+fn exception_policy() -> ExceptionPolicy {
+    ExceptionPolicy {
+        mode: "deny-all".to_owned(),
+        configuration_path: ".yydra/check-exceptions.toml".to_owned(),
+        waiver_capable_nodes: Vec::new(),
+        non_waivable_nodes: NODE_SPECS.iter().map(|spec| spec.id.to_owned()).collect(),
+    }
+}
+
+fn diagnostic_vocabulary() -> Vec<String> {
+    DIAGNOSTIC_VOCABULARY
+        .iter()
+        .map(|code| (*code).to_owned())
+        .collect()
+}
+
+fn catalog_bytes() -> Result<Vec<u8>> {
+    let catalog = CatalogDefinition {
+        schema_version: RESULT_SCHEMA_VERSION,
+        distribution_version: DISTRIBUTION_VERSION,
+        result_states: RESULT_STATES,
+        fixtures: AGGREGATE_FIXTURES,
+        fixture_definitions: FIXTURE_SPECS,
+        nodes: NODE_SPECS,
+        diagnostic_vocabulary: diagnostic_vocabulary(),
+        exception_policy: exception_policy(),
+        retry_policy: retry_policy(),
+    };
+    let mut bytes = serde_json::to_vec_pretty(&catalog)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn sha256_identity(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+fn executor_digest() -> Result<String> {
+    let executable = std::env::current_exe().context("resolve exact yydra executable")?;
+    let bytes = fs::read(&executable)
+        .with_context(|| format!("read exact yydra executable '{}'", executable.display()))?;
+    Ok(sha256_identity(&bytes))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SummaryEvent {
+    schema_version: u64,
+    event: String,
+    status: String,
+    scope: String,
     complete: bool,
     aggregate_conformance: bool,
     evidence: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct NodeFailure {
     outcome: Outcome,
     code: &'static str,
@@ -391,8 +754,15 @@ struct InputBaselines<'a> {
 }
 
 pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> {
-    let root = find_workspace_root(&request.workspace)?;
-    let evidence_root = evidence_root(&root, request.evidence_dir)?;
+    let CheckRequest {
+        workspace,
+        evidence_dir,
+        comparison_base,
+        selected_nodes,
+        fixture,
+    } = request;
+    let root = find_workspace_root(&workspace)?;
+    let evidence_root = evidence_root(&root, evidence_dir)?;
     create_private_dir_all(&evidence_root).with_context(|| {
         format!(
             "create private check evidence directory '{}'",
@@ -401,9 +771,16 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
     })?;
     create_private_dir_all(&evidence_root.join("logs"))?;
     create_private_dir_all(&evidence_root.join("artifacts"))?;
+    let catalog = catalog_bytes()?;
+    let catalog_digest = sha256_identity(&catalog);
+    let executor_digest = executor_digest()?;
+    let catalog_path = evidence_root.join("artifacts/check-catalog.json");
+    let mut catalog_file = create_private_file(&catalog_path)?;
+    catalog_file.write_all(&catalog)?;
+    catalog_file.flush()?;
 
-    let selected = selected_specs(&request.selected_nodes)?;
-    let complete = request.selected_nodes.is_empty();
+    let selected = selected_specs(&selected_nodes)?;
+    let complete = selected_nodes.is_empty();
     let diagnostics_path = evidence_root.join("diagnostics.jsonl");
     let mut diagnostics = create_private_file(&diagnostics_path)?;
     let original_inputs = match workspace_inputs(&root) {
@@ -414,9 +791,12 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
                     root: &root,
                     evidence_root: &evidence_root,
                     diagnostics: &mut diagnostics,
-                    requested_nodes: &request.selected_nodes,
+                    requested_nodes: &selected_nodes,
                     selected: &selected,
                     complete,
+                    fixture: &fixture,
+                    catalog_digest: &catalog_digest,
+                    executor_digest: &executor_digest,
                     format,
                 },
                 failure,
@@ -434,9 +814,12 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
                 root: &root,
                 evidence_root: &evidence_root,
                 diagnostics: &mut diagnostics,
-                requested_nodes: &request.selected_nodes,
+                requested_nodes: &selected_nodes,
                 selected: &selected,
                 complete,
+                fixture: &fixture,
+                catalog_digest: &catalog_digest,
+                executor_digest: &executor_digest,
                 format,
             },
             failure,
@@ -452,9 +835,12 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
                     root: &root,
                     evidence_root: &evidence_root,
                     diagnostics: &mut diagnostics,
-                    requested_nodes: &request.selected_nodes,
+                    requested_nodes: &selected_nodes,
                     selected: &selected,
                     complete,
+                    fixture: &fixture,
+                    catalog_digest: &catalog_digest,
+                    executor_digest: &executor_digest,
                     format,
                 },
                 failure,
@@ -494,7 +880,8 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
                 &evidence_root,
                 &shutdown,
                 &baselines,
-                request.comparison_base.as_deref(),
+                comparison_base.as_deref(),
+                &fixture,
             )?
         };
         emit_node(&result, format);
@@ -514,6 +901,10 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
     } else {
         "pass-selected"
     };
+    let manifest_path = evidence_root.join("manifest.json");
+    let summary = summary_event(status, "clean-core-local", complete, false);
+    serde_json::to_writer(&mut diagnostics, &summary)?;
+    diagnostics.write_all(b"\n")?;
     diagnostics.flush()?;
     let artifacts = vec![
         artifact_evidence(&evidence_root, &evidence_root.join("logs"))?,
@@ -522,14 +913,20 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
     ];
     let manifest = CheckManifest {
         schema_version: RESULT_SCHEMA_VERSION,
-        distribution_version: DISTRIBUTION_VERSION,
-        cli_version: DISTRIBUTION_VERSION,
+        distribution_version: DISTRIBUTION_VERSION.to_owned(),
+        cli_version: DISTRIBUTION_VERSION.to_owned(),
+        executor_digest,
         rule_schema_version: RESULT_SCHEMA_VERSION,
         workspace: root.display().to_string(),
-        profile: "clean-core-local",
-        scope: "clean-core-local",
+        fixture,
+        profile: "clean-core-local".to_owned(),
+        scope: "clean-core-local".to_owned(),
+        catalog_digest,
+        diagnostic_vocabulary: diagnostic_vocabulary(),
+        exception_policy: exception_policy(),
+        retry_policy: retry_policy(),
         catalog_nodes: NODE_SPECS.iter().map(|spec| spec.id.to_owned()).collect(),
-        selected_nodes: request.selected_nodes,
+        selected_nodes,
         complete,
         aggregate_conformance: false,
         status: status.to_owned(),
@@ -542,13 +939,12 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
         artifacts,
         nodes: results,
     };
-    let manifest_path = evidence_root.join("manifest.json");
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
     manifest_bytes.push(b'\n');
     let mut manifest_file = create_private_file(&manifest_path)?;
     manifest_file.write_all(&manifest_bytes)?;
     manifest_file.flush()?;
-    emit_summary(status, complete, &manifest_path, format);
+    emit_summary(&summary, &manifest_path, format);
     if failed {
         bail!(
             "Mechanical Quality Contract failed; inspect '{}'",
@@ -556,6 +952,610 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
         );
     }
     Ok(())
+}
+
+pub(crate) fn aggregate(request: AggregateRequest, format: MessageFormat) -> Result<()> {
+    let authority_root = std::env::current_dir()?.canonicalize()?;
+    let evidence_root = evidence_root(&authority_root, request.evidence_dir)?;
+    create_private_dir_all(&evidence_root)?;
+    create_private_dir_all(&evidence_root.join("logs"))?;
+    create_private_dir_all(&evidence_root.join("artifacts"))?;
+    let catalog = catalog_bytes()?;
+    let catalog_digest = sha256_identity(&catalog);
+    let executor_digest = executor_digest()?;
+    let mut catalog_file =
+        create_private_file(&evidence_root.join("artifacts/check-catalog.json"))?;
+    catalog_file.write_all(&catalog)?;
+    catalog_file.flush()?;
+    let log_path = evidence_root.join("logs/aggregate.clean-and-reading-queue.log");
+    let mut log = create_private_file(&log_path)?;
+    let diagnostics_path = evidence_root.join("diagnostics.jsonl");
+    let mut diagnostics = create_private_file(&diagnostics_path)?;
+
+    let verification = verify_aggregate_sources(
+        &request.manifests,
+        &catalog,
+        &catalog_digest,
+        &executor_digest,
+    );
+    let (status, complete, aggregate_conformance, outcome, cause, sources) = match verification {
+        Ok(sources) => ("pass-aggregate", true, true, Outcome::Pass, None, sources),
+        Err(failure) => {
+            writeln!(log, "{}: {}", failure.code, failure.message)?;
+            (
+                "fail",
+                false,
+                false,
+                Outcome::Fail,
+                Some(failure.cause()),
+                Vec::new(),
+            )
+        }
+    };
+    writeln!(
+        log,
+        "aggregate-conformance={aggregate_conformance} source-count={}",
+        sources.len()
+    )?;
+    log.flush()?;
+
+    let result = AggregateResult {
+        schema_version: RESULT_SCHEMA_VERSION,
+        event: "check-aggregate",
+        outcome,
+        cause: cause.clone(),
+        remediation: cause.as_ref().map(|_| {
+            "rerun both complete fixture checks with the exact Distribution, upload every evidence file unchanged, and aggregate those two manifests"
+        }),
+        proves: "exact complete clean and Reading Queue evidence from this Distribution is present, internally consistent, and passed every required node",
+        does_not_prove: "claims excluded by individual nodes, macOS/iOS, native runtime, physical-device behavior, native accessibility, Agent performance, or Baseline Skill effect",
+        sources: &sources,
+    };
+    serde_json::to_writer(&mut diagnostics, &result)?;
+    diagnostics.write_all(b"\n")?;
+    let manifest_path = evidence_root.join("manifest.json");
+    let summary = summary_event(
+        status,
+        "clean-and-reading-queue",
+        complete,
+        aggregate_conformance,
+    );
+    serde_json::to_writer(&mut diagnostics, &summary)?;
+    diagnostics.write_all(b"\n")?;
+    diagnostics.flush()?;
+
+    let artifacts = vec![
+        artifact_evidence(&evidence_root, &evidence_root.join("logs"))?,
+        artifact_evidence(&evidence_root, &evidence_root.join("artifacts"))?,
+        artifact_evidence(&evidence_root, &diagnostics_path)?,
+    ];
+    let manifest = AggregateManifest {
+        schema_version: RESULT_SCHEMA_VERSION,
+        distribution_version: DISTRIBUTION_VERSION.to_owned(),
+        cli_version: DISTRIBUTION_VERSION.to_owned(),
+        executor_digest,
+        rule_schema_version: RESULT_SCHEMA_VERSION,
+        profile: "aggregate-v0",
+        scope: "clean-and-reading-queue",
+        catalog_digest,
+        diagnostic_vocabulary: diagnostic_vocabulary(),
+        exception_policy: exception_policy(),
+        retry_policy: retry_policy(),
+        required_fixtures: AGGREGATE_FIXTURES,
+        status,
+        complete,
+        aggregate_conformance,
+        cause: cause.clone(),
+        sources: sources.clone(),
+        artifacts,
+        proves: result.proves,
+        does_not_prove: result.does_not_prove,
+    };
+    let mut bytes = serde_json::to_vec_pretty(&manifest)?;
+    bytes.push(b'\n');
+    let mut manifest_file = create_private_file(&manifest_path)?;
+    manifest_file.write_all(&bytes)?;
+    manifest_file.flush()?;
+    emit_aggregate_result(&result, format);
+    emit_summary(&summary, &manifest_path, format);
+
+    if let Some(cause) = cause {
+        bail!(
+            "aggregate Mechanical Quality Contract failed with {}: {}; inspect '{}'",
+            cause.code,
+            cause.message,
+            manifest_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn verify_aggregate_sources(
+    manifest_paths: &[PathBuf],
+    catalog: &[u8],
+    catalog_digest: &str,
+    executor_digest: &str,
+) -> std::result::Result<Vec<AggregateSource>, AggregateFailure> {
+    if manifest_paths.len() < AGGREGATE_FIXTURES.len() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_FIXTURE_MISSING",
+            "aggregate conformance requires uploaded clean and reading-queue manifests",
+        ));
+    }
+    let mut sources = BTreeMap::new();
+    for path in manifest_paths {
+        let (fixture, source) =
+            verify_aggregate_source(path, catalog, catalog_digest, executor_digest)?;
+        if sources.insert(fixture.clone(), source).is_some() {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_DUPLICATE_FIXTURE",
+                format!("aggregate evidence contains more than one {fixture} manifest"),
+            ));
+        }
+    }
+    for fixture in AGGREGATE_FIXTURES {
+        if !sources.contains_key(*fixture) {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_FIXTURE_MISSING",
+                format!("aggregate evidence is missing the required {fixture} manifest"),
+            ));
+        }
+    }
+    if sources.len() != AGGREGATE_FIXTURES.len() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_DUPLICATE_FIXTURE",
+            "aggregate evidence must contain exactly one clean and one reading-queue manifest",
+        ));
+    }
+    if sources
+        .values()
+        .map(|source| &source.input_digest)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != AGGREGATE_FIXTURES.len()
+    {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_IDENTITY_MISMATCH",
+            "clean and reading-queue evidence must identify independent Workspace inputs",
+        ));
+    }
+    Ok(AGGREGATE_FIXTURES
+        .iter()
+        .map(|fixture| sources.remove(*fixture).expect("required fixture exists"))
+        .collect())
+}
+
+fn verify_aggregate_source(
+    manifest_path: &Path,
+    catalog: &[u8],
+    catalog_digest: &str,
+    executor_digest: &str,
+) -> std::result::Result<(String, AggregateSource), AggregateFailure> {
+    verify_uploaded_path_ancestors(manifest_path, "AGGREGATE_EVIDENCE_MISSING")?;
+    let metadata = fs::symlink_metadata(manifest_path).map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MISSING",
+            format!(
+                "inspect source manifest '{}': {error}",
+                manifest_path.display()
+            ),
+        )
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MISSING",
+            format!(
+                "source manifest '{}' must be a regular uploaded file",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if manifest_path.file_name().and_then(OsStr::to_str) != Some("manifest.json") {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MALFORMED",
+            format!(
+                "source evidence path '{}' must name manifest.json",
+                manifest_path.display()
+            ),
+        ));
+    }
+    let manifest_bytes = fs::read(manifest_path).map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MISSING",
+            format!(
+                "read source manifest '{}': {error}",
+                manifest_path.display()
+            ),
+        )
+    })?;
+    let manifest: CheckManifest = serde_json::from_slice(&manifest_bytes).map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MALFORMED",
+            format!(
+                "parse source manifest '{}': {error}",
+                manifest_path.display()
+            ),
+        )
+    })?;
+    if manifest.schema_version != RESULT_SCHEMA_VERSION
+        || manifest.rule_schema_version != RESULT_SCHEMA_VERSION
+        || manifest.distribution_version != DISTRIBUTION_VERSION
+        || manifest.cli_version != DISTRIBUTION_VERSION
+        || manifest.executor_digest != executor_digest
+    {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_IDENTITY_MISMATCH",
+            format!(
+                "source manifest '{}' does not name this exact Distribution and evidence schema",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if manifest.catalog_digest != catalog_digest
+        || manifest.diagnostic_vocabulary != diagnostic_vocabulary()
+        || manifest.retry_policy != retry_policy()
+        || manifest.required_tool_versions != required_tool_versions()
+    {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_CATALOG_MISMATCH",
+            format!(
+                "source manifest '{}' does not match the exact current catalog",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if manifest.exception_policy != exception_policy() || !manifest.exceptions.is_empty() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_EXCEPTION_REJECTED",
+            format!(
+                "source manifest '{}' contains an unknown or unsupported exception",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if !AGGREGATE_FIXTURES.contains(&manifest.fixture.as_str()) {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_FIXTURE_MISSING",
+            format!(
+                "source manifest '{}' has unsupported fixture {:?}",
+                manifest_path.display(),
+                manifest.fixture
+            ),
+        ));
+    }
+    if manifest.profile != "clean-core-local"
+        || manifest.scope != "clean-core-local"
+        || !manifest.complete
+        || manifest.aggregate_conformance
+        || manifest.status != "pass-core"
+        || !manifest.selected_nodes.is_empty()
+    {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_INCOMPLETE",
+            format!(
+                "source manifest '{}' is selected, failed, skipped, not-run, or otherwise incomplete",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if manifest.observed_tool_versions != observed_tool_versions(&manifest.nodes) {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_IDENTITY_MISMATCH",
+            format!(
+                "source manifest '{}' does not preserve its exact observed tool identities",
+                manifest_path.display()
+            ),
+        ));
+    }
+    if required_tool_versions()
+        .iter()
+        .any(|(name, version)| manifest.observed_tool_versions.get(name) != Some(version))
+    {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_IDENTITY_MISMATCH",
+            format!(
+                "source manifest '{}' did not observe every exact required tool identity",
+                manifest_path.display()
+            ),
+        ));
+    }
+    let expected_nodes = NODE_SPECS
+        .iter()
+        .map(|spec| spec.id.to_owned())
+        .collect::<Vec<_>>();
+    if manifest.catalog_nodes != expected_nodes || manifest.nodes.len() != NODE_SPECS.len() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_NODE_SET_INVALID",
+            format!(
+                "source manifest '{}' is missing or adds required catalog nodes",
+                manifest_path.display()
+            ),
+        ));
+    }
+    for (node, spec) in manifest.nodes.iter().zip(NODE_SPECS) {
+        let max_attempts = if infrastructure_establishment_node(spec.id) {
+            retry_policy().infrastructure_establishment_max_attempts
+        } else {
+            1
+        };
+        let attempts_valid = !node.attempts.is_empty()
+            && node.attempts.len() <= usize::from(max_attempts)
+            && node.attempts.iter().enumerate().all(|(index, attempt)| {
+                attempt.attempt == u8::try_from(index + 1).unwrap_or(u8::MAX)
+                    && if index + 1 == node.attempts.len() {
+                        attempt.outcome == Outcome::Pass && attempt.cause.is_none()
+                    } else {
+                        attempt.outcome == Outcome::InfrastructureError && attempt.cause.is_some()
+                    }
+            });
+        if node.schema_version != RESULT_SCHEMA_VERSION
+            || node.event != "check-node"
+            || node.node_id != spec.id
+            || node.prerequisites
+                != spec
+                    .prerequisites
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+            || node.outcome != Outcome::Pass
+            || node.cause.is_some()
+            || node.remediation.is_some()
+            || node.proves != spec.proves
+            || node.does_not_prove != spec.does_not_prove
+            || !attempts_valid
+            || node.log != format!("logs/{}.log", spec.id)
+        {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_EVIDENCE_INCOMPLETE",
+                format!(
+                    "source manifest '{}' has incomplete or mismatched node {}",
+                    manifest_path.display(),
+                    spec.id
+                ),
+            ));
+        }
+    }
+    if !is_sha256_identity(&manifest.input_digest) {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_IDENTITY_MISMATCH",
+            format!(
+                "source manifest '{}' has an invalid input digest",
+                manifest_path.display()
+            ),
+        ));
+    }
+    let evidence_root = manifest_path.parent().ok_or_else(|| {
+        AggregateFailure::new(
+            "AGGREGATE_EVIDENCE_MALFORMED",
+            "source manifest has no evidence root",
+        )
+    })?;
+    let source_catalog_path = evidence_root.join("artifacts/check-catalog.json");
+    verify_uploaded_tree(&source_catalog_path, "AGGREGATE_CATALOG_MISMATCH")?;
+    let source_catalog = fs::read(&source_catalog_path).map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_CATALOG_MISMATCH",
+            format!("read uploaded catalog: {error}"),
+        )
+    })?;
+    if source_catalog != catalog {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_CATALOG_MISMATCH",
+            format!(
+                "source manifest '{}' uploaded a different catalog",
+                manifest_path.display()
+            ),
+        ));
+    }
+    verify_source_diagnostics(evidence_root, &manifest)?;
+    verify_source_artifacts(evidence_root, &manifest.artifacts)?;
+    Ok((
+        manifest.fixture.clone(),
+        AggregateSource {
+            fixture: manifest.fixture,
+            manifest: manifest_path.display().to_string(),
+            manifest_sha256: sha256_identity(&manifest_bytes),
+            executor_digest: manifest.executor_digest,
+            input_digest: manifest.input_digest,
+            artifacts: manifest.artifacts,
+        },
+    ))
+}
+
+fn verify_source_diagnostics(
+    evidence_root: &Path,
+    manifest: &CheckManifest,
+) -> std::result::Result<(), AggregateFailure> {
+    let diagnostics_path = evidence_root.join("diagnostics.jsonl");
+    verify_uploaded_tree(&diagnostics_path, "AGGREGATE_DIAGNOSTICS_INVALID")?;
+    let bytes = fs::read(&diagnostics_path).map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_DIAGNOSTICS_INVALID",
+            format!("read uploaded JSON Lines diagnostics: {error}"),
+        )
+    })?;
+    let lines = String::from_utf8(bytes)
+        .map_err(|error| AggregateFailure::new("AGGREGATE_DIAGNOSTICS_INVALID", error.to_string()))?
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if lines.len() != manifest.nodes.len() + 1 {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_DIAGNOSTICS_INVALID",
+            "uploaded diagnostics do not contain every node and one summary",
+        ));
+    }
+    for (line, expected) in lines.iter().zip(&manifest.nodes) {
+        let actual: NodeResult = serde_json::from_str(line).map_err(|error| {
+            AggregateFailure::new(
+                "AGGREGATE_DIAGNOSTICS_INVALID",
+                format!("parse uploaded node diagnostic: {error}"),
+            )
+        })?;
+        if &actual != expected {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_DIAGNOSTICS_INVALID",
+                format!(
+                    "uploaded diagnostic for {} differs from manifest",
+                    expected.node_id
+                ),
+            ));
+        }
+    }
+    let summary: SummaryEvent = serde_json::from_str(
+        lines.last().expect("diagnostic length was checked above"),
+    )
+    .map_err(|error| {
+        AggregateFailure::new(
+            "AGGREGATE_DIAGNOSTICS_INVALID",
+            format!("parse uploaded summary diagnostic: {error}"),
+        )
+    })?;
+    if summary != summary_event("pass-core", "clean-core-local", true, false) {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_DIAGNOSTICS_INVALID",
+            "uploaded summary is malformed or does not match complete local evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_source_artifacts(
+    evidence_root: &Path,
+    artifacts: &[ArtifactEvidence],
+) -> std::result::Result<(), AggregateFailure> {
+    let expected_paths = ["logs", "artifacts", "diagnostics.jsonl"];
+    if artifacts.len() != expected_paths.len() {
+        return Err(AggregateFailure::new(
+            "AGGREGATE_ARTIFACT_INVALID",
+            "uploaded evidence must identify logs, artifacts, and diagnostics.jsonl exactly once",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for artifact in artifacts {
+        if !expected_paths.contains(&artifact.path.as_str()) || !seen.insert(&artifact.path) {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_ARTIFACT_INVALID",
+                format!("unsupported or duplicate artifact path {:?}", artifact.path),
+            ));
+        }
+        let artifact_path = evidence_root.join(&artifact.path);
+        verify_uploaded_tree(&artifact_path, "AGGREGATE_ARTIFACT_INVALID")?;
+        let actual = artifact_evidence(evidence_root, &artifact_path).map_err(|error| {
+            AggregateFailure::new(
+                "AGGREGATE_ARTIFACT_INVALID",
+                format!("verify uploaded artifact {:?}: {error:#}", artifact.path),
+            )
+        })?;
+        if actual != *artifact {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_ARTIFACT_INVALID",
+                format!(
+                    "uploaded artifact {:?} digest does not match",
+                    artifact.path
+                ),
+            ));
+        }
+    }
+    for node in NODE_SPECS {
+        if !evidence_root
+            .join(format!("logs/{}.log", node.id))
+            .is_file()
+        {
+            return Err(AggregateFailure::new(
+                "AGGREGATE_ARTIFACT_INVALID",
+                format!("uploaded raw log for {} is missing", node.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_uploaded_path_ancestors(
+    path: &Path,
+    code: &'static str,
+) -> std::result::Result<(), AggregateFailure> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| AggregateFailure::new(code, error.to_string()))?
+            .join(path)
+    };
+    for ancestor in absolute.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let metadata = fs::symlink_metadata(ancestor).map_err(|error| {
+            AggregateFailure::new(
+                code,
+                format!(
+                    "inspect uploaded evidence path '{}': {error}",
+                    ancestor.display()
+                ),
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(AggregateFailure::new(
+                code,
+                format!(
+                    "uploaded evidence path '{}' must not contain symlinks",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_uploaded_tree(
+    path: &Path,
+    code: &'static str,
+) -> std::result::Result<(), AggregateFailure> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        AggregateFailure::new(
+            code,
+            format!(
+                "inspect uploaded evidence path '{}': {error}",
+                path.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(AggregateFailure::new(
+            code,
+            format!(
+                "uploaded evidence path '{}' must not be a symlink",
+                path.display()
+            ),
+        ));
+    }
+    if metadata.is_file() {
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(AggregateFailure::new(
+            code,
+            format!(
+                "uploaded evidence path '{}' has an unsupported file type",
+                path.display()
+            ),
+        ));
+    }
+    let mut children = fs::read_dir(path)
+        .map_err(|error| AggregateFailure::new(code, error.to_string()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(|error| AggregateFailure::new(code, error.to_string()))?;
+    children.sort_by_key(std::fs::DirEntry::file_name);
+    for child in children {
+        verify_uploaded_tree(&child.path(), code)?;
+    }
+    Ok(())
+}
+
+fn is_sha256_identity(value: &str) -> bool {
+    value.len() == "sha256:".len() + 64
+        && value.starts_with("sha256:")
+        && value["sha256:".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn selected_specs(requested: &[String]) -> Result<BTreeSet<&'static str>> {
@@ -693,7 +1693,7 @@ fn skipped_result(spec: NodeSpec, dependency: &str, evidence_root: &Path) -> Res
     log.flush()?;
     Ok(NodeResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        event: "check-node",
+        event: "check-node".to_owned(),
         node_id: spec.id.to_owned(),
         prerequisites: spec
             .prerequisites
@@ -702,6 +1702,7 @@ fn skipped_result(spec: NodeSpec, dependency: &str, evidence_root: &Path) -> Res
             .collect(),
         outcome: Outcome::Skipped,
         duration_ms: 0,
+        attempts: Vec::new(),
         cause: Some(CheckCause {
             code: "CHECK_PREREQUISITE_FAILED".to_owned(),
             message,
@@ -724,7 +1725,7 @@ fn not_run_result(spec: NodeSpec, evidence_root: &Path) -> Result<NodeResult> {
     log.flush()?;
     Ok(NodeResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        event: "check-node",
+        event: "check-node".to_owned(),
         node_id: spec.id.to_owned(),
         prerequisites: spec
             .prerequisites
@@ -733,6 +1734,7 @@ fn not_run_result(spec: NodeSpec, evidence_root: &Path) -> Result<NodeResult> {
             .collect(),
         outcome: Outcome::NotRun,
         duration_ms: 0,
+        attempts: Vec::new(),
         cause: Some(CheckCause {
             code: "CHECK_NOT_SELECTED".to_owned(),
             message: message.to_owned(),
@@ -754,6 +1756,9 @@ struct PreflightReport<'a> {
     requested_nodes: &'a [String],
     selected: &'a BTreeSet<&'static str>,
     complete: bool,
+    fixture: &'a str,
+    catalog_digest: &'a str,
+    executor_digest: &'a str,
     format: MessageFormat,
 }
 
@@ -769,6 +1774,9 @@ fn finish_preflight_failure(
         requested_nodes,
         selected,
         complete,
+        fixture,
+        catalog_digest,
+        executor_digest,
         format,
     } = report;
     let mut failure = Some(failure);
@@ -793,6 +1801,11 @@ fn finish_preflight_failure(
     }
 
     let diagnostics_path = evidence_root.join("diagnostics.jsonl");
+    let manifest_path = evidence_root.join("manifest.json");
+    let summary = summary_event("fail", "clean-core-local", complete, false);
+    serde_json::to_writer(&mut *diagnostics, &summary)?;
+    diagnostics.write_all(b"\n")?;
+    diagnostics.flush()?;
     let artifacts = vec![
         artifact_evidence(evidence_root, &evidence_root.join("logs"))?,
         artifact_evidence(evidence_root, &evidence_root.join("artifacts"))?,
@@ -800,12 +1813,18 @@ fn finish_preflight_failure(
     ];
     let manifest = CheckManifest {
         schema_version: RESULT_SCHEMA_VERSION,
-        distribution_version: DISTRIBUTION_VERSION,
-        cli_version: DISTRIBUTION_VERSION,
+        distribution_version: DISTRIBUTION_VERSION.to_owned(),
+        cli_version: DISTRIBUTION_VERSION.to_owned(),
+        executor_digest: executor_digest.to_owned(),
         rule_schema_version: RESULT_SCHEMA_VERSION,
         workspace: root.display().to_string(),
-        profile: "clean-core-local",
-        scope: "clean-core-local",
+        fixture: fixture.to_owned(),
+        profile: "clean-core-local".to_owned(),
+        scope: "clean-core-local".to_owned(),
+        catalog_digest: catalog_digest.to_owned(),
+        diagnostic_vocabulary: diagnostic_vocabulary(),
+        exception_policy: exception_policy(),
+        retry_policy: retry_policy(),
         catalog_nodes: NODE_SPECS.iter().map(|spec| spec.id.to_owned()).collect(),
         selected_nodes: requested_nodes.to_vec(),
         complete,
@@ -822,13 +1841,12 @@ fn finish_preflight_failure(
         artifacts,
         nodes: results,
     };
-    let manifest_path = evidence_root.join("manifest.json");
     let mut bytes = serde_json::to_vec_pretty(&manifest)?;
     bytes.push(b'\n');
     let mut manifest_file = create_private_file(&manifest_path)?;
     manifest_file.write_all(&bytes)?;
     manifest_file.flush()?;
-    emit_summary("fail", complete, &manifest_path, format);
+    emit_summary(&summary, &manifest_path, format);
     bail!(
         "Mechanical Quality Contract preflight failed; inspect '{}'",
         manifest_path.display()
@@ -846,11 +1864,12 @@ fn preflight_failure_result(
     log.flush()?;
     Ok(NodeResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        event: "check-node",
+        event: "check-node".to_owned(),
         node_id: spec.id.to_owned(),
         prerequisites: Vec::new(),
         outcome: failure.outcome,
         duration_ms: 0,
+        attempts: Vec::new(),
         cause: Some(CheckCause {
             code: failure.code.to_owned(),
             message: failure.message,
@@ -873,7 +1892,7 @@ fn preflight_not_run_result(spec: NodeSpec, evidence_root: &Path) -> Result<Node
     log.flush()?;
     Ok(NodeResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        event: "check-node",
+        event: "check-node".to_owned(),
         node_id: spec.id.to_owned(),
         prerequisites: spec
             .prerequisites
@@ -882,6 +1901,7 @@ fn preflight_not_run_result(spec: NodeSpec, evidence_root: &Path) -> Result<Node
             .collect(),
         outcome: Outcome::NotRun,
         duration_ms: 0,
+        attempts: Vec::new(),
         cause: Some(CheckCause {
             code: "CHECK_PREFLIGHT_FAILED".to_owned(),
             message: message.to_owned(),
@@ -923,6 +1943,7 @@ fn execute_node(
     shutdown: &AtomicBool,
     baselines: &InputBaselines<'_>,
     comparison_base: Option<&str>,
+    fixture: &str,
 ) -> Result<NodeResult> {
     let log_path = evidence_root.join("logs").join(format!("{}.log", spec.id));
     let log = create_private_file(&log_path)?;
@@ -935,19 +1956,165 @@ fn execute_node(
         tool_versions: BTreeMap::new(),
     };
     let started = Instant::now();
-    let execution = match spec.id {
+    let max_attempts = if infrastructure_establishment_node(spec.id) {
+        retry_policy().infrastructure_establishment_max_attempts
+    } else {
+        1
+    };
+    let mut attempts = Vec::new();
+    let execution = loop {
+        let attempt = u8::try_from(attempts.len() + 1).unwrap_or(u8::MAX);
+        writeln!(context.log, "attempt {attempt}/{max_attempts}")?;
+        context.log.flush()?;
+        let attempt_started = Instant::now();
+        let execution =
+            execute_node_attempt(spec, &mut context, baselines, comparison_base, fixture);
+        let attempt_duration_ms =
+            u64::try_from(attempt_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let execution = match execution {
+            Err(failure) => match writeln!(context.log, "{}: {}", failure.code, failure.message) {
+                Ok(()) => Err(failure),
+                Err(error) => Err(NodeFailure::infrastructure(
+                    "CHECK_EVIDENCE_WRITE_FAILED",
+                    error.to_string(),
+                )),
+            },
+            success => success,
+        };
+        let execution = match context.log.flush() {
+            Ok(()) => execution,
+            Err(error) => Err(NodeFailure::infrastructure(
+                "CHECK_EVIDENCE_WRITE_FAILED",
+                error.to_string(),
+            )),
+        };
+        let (attempt_outcome, attempt_cause) = match &execution {
+            Ok(()) => (Outcome::Pass, None),
+            Err(failure) => (
+                failure.outcome.clone(),
+                Some(CheckCause {
+                    code: failure.code.to_owned(),
+                    message: failure.message.clone(),
+                    dependency_node_id: None,
+                }),
+            ),
+        };
+        let retry = attempt < max_attempts && attempt_outcome == Outcome::InfrastructureError;
+        attempts.push(AttemptResult {
+            attempt,
+            outcome: attempt_outcome,
+            duration_ms: attempt_duration_ms,
+            cause: attempt_cause,
+        });
+        if retry {
+            writeln!(context.log, "retrying infrastructure establishment once")?;
+            context.log.flush()?;
+        } else {
+            break execution;
+        }
+    };
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let (outcome, cause, remediation) = match execution {
+        Ok(()) => (Outcome::Pass, None, None),
+        Err(failure) => (
+            failure.outcome,
+            Some(CheckCause {
+                code: failure.code.to_owned(),
+                message: failure.message,
+                dependency_node_id: None,
+            }),
+            Some(spec.remediation.to_owned()),
+        ),
+    };
+    Ok(NodeResult {
+        schema_version: RESULT_SCHEMA_VERSION,
+        event: "check-node".to_owned(),
+        node_id: spec.id.to_owned(),
+        prerequisites: spec
+            .prerequisites
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+        outcome,
+        duration_ms,
+        attempts,
+        cause,
+        remediation,
+        proves: spec.proves.to_owned(),
+        does_not_prove: spec.does_not_prove.to_owned(),
+        commands: context.commands,
+        tool_versions: context.tool_versions,
+        log: relative_log(&log_path, evidence_root),
+    })
+}
+
+fn infrastructure_establishment_node(node_id: &str) -> bool {
+    matches!(
+        node_id,
+        "infrastructure.docker" | "infrastructure.playwright-chromium"
+    )
+}
+
+fn check_fixture_identity(root: &Path, fixture: &str) -> std::result::Result<(), NodeFailure> {
+    if fixture == "unclassified" {
+        return Ok(());
+    }
+    let expected = FIXTURE_SPECS
+        .iter()
+        .find(|candidate| candidate.id == fixture)
+        .ok_or_else(|| {
+            NodeFailure::fail(
+                "FIXTURE_IDENTITY_MISMATCH",
+                format!("fixture {fixture:?} has no exact catalog-owned definition"),
+            )
+        })?;
+    let origin = read_workspace_origin_record(root).map_err(|error| {
+        NodeFailure::fail(
+            "FIXTURE_IDENTITY_MISMATCH",
+            format!("read named fixture Workspace Origin Record: {error:#}"),
+        )
+    })?;
+    if origin.product_name != expected.product_name
+        || origin.product_id != expected.product_id
+        || origin.product_source_license != expected.product_source_license
+    {
+        return Err(NodeFailure::fail(
+            "FIXTURE_IDENTITY_MISMATCH",
+            format!(
+                "fixture {fixture:?} requires exact creation inputs product_name={:?}, product_id={:?}, product_source_license={:?}; found product_name={:?}, product_id={:?}, product_source_license={:?}",
+                expected.product_name,
+                expected.product_id,
+                expected.product_source_license,
+                origin.product_name,
+                origin.product_id,
+                origin.product_source_license,
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn execute_node_attempt(
+    spec: NodeSpec,
+    context: &mut NodeContext<'_>,
+    baselines: &InputBaselines<'_>,
+    comparison_base: Option<&str>,
+    fixture: &str,
+) -> std::result::Result<(), NodeFailure> {
+    let root = context.root;
+    match spec.id {
+        "policy.exceptions" => check_exception_policy(root),
         "origin.exact-distribution" => verify_origin_authority(root)
-            .map_err(|error| NodeFailure::fail("ORIGIN_AUTHORITY_DRIFT", format!("{error:#}"))),
+            .map_err(|error| NodeFailure::fail("ORIGIN_AUTHORITY_DRIFT", format!("{error:#}")))
+            .and_then(|()| check_fixture_identity(root, fixture)),
         "ownership.baseline-skills" => check_baseline_skills(root),
         "ownership.generated-snapshots" => verify_snapshot_authorities(root).map_err(|error| {
             NodeFailure::fail("GENERATED_SNAPSHOT_DRIFT", format!("{error:#}"))
         }),
-        "database.migration-history" => check_migration_history(
-            &mut context,
-            baselines.original_root,
-            comparison_base,
-        ),
-        "rust.architecture" => check_rust_architecture(&mut context),
+        "database.migration-history" => {
+            check_migration_history(context, baselines.original_root, comparison_base)
+        }
+        "rust.architecture" => check_rust_architecture(context),
         "rust.format" => context.command(
             root,
             "cargo",
@@ -984,7 +2151,7 @@ fn execute_node(
             &[],
             "RUST_CLIPPY_FAILED",
         ),
-        "rust.test" => check_rust_tests(&mut context),
+        "rust.test" => check_rust_tests(context),
         "rust.doctest" => context.command(
             root,
             "cargo",
@@ -992,19 +2159,19 @@ fn execute_node(
             &[],
             "RUST_DOCTEST_FAILED",
         ),
-        "frontend.lock" => check_frontend_lock(&mut context),
-        "api.generated-contract" => check_api_generated_contract(&mut context),
-        "api.runtime-conformance" => check_api_runtime_conformance(&mut context),
-        "frontend.format" => check_frontend_format(&mut context),
-        "frontend.lint" => check_frontend_lint(&mut context),
-        "frontend.typecheck" => check_frontend_typecheck(&mut context),
-        "frontend.test" => check_frontend_tests(&mut context),
-        "native.android-generation" => check_android_generation(&mut context),
-        "android.release" => check_android_release(&mut context),
-        "api.client-contract" => check_api_client_contract(&mut context),
-        "infrastructure.docker" => check_docker(&mut context),
-        "database.runtime-invariants" => check_database_runtime_invariants(&mut context),
-        "runtime.post-commit-executor" => check_post_commit_executor(&mut context),
+        "frontend.lock" => check_frontend_lock(context),
+        "api.generated-contract" => check_api_generated_contract(context),
+        "api.runtime-conformance" => check_api_runtime_conformance(context),
+        "frontend.format" => check_frontend_format(context),
+        "frontend.lint" => check_frontend_lint(context),
+        "frontend.typecheck" => check_frontend_typecheck(context),
+        "frontend.test" => check_frontend_tests(context),
+        "native.android-generation" => check_android_generation(context),
+        "android.release" => check_android_release(context),
+        "api.client-contract" => check_api_client_contract(context),
+        "infrastructure.docker" => check_docker(context),
+        "database.runtime-invariants" => check_database_runtime_invariants(context),
+        "runtime.post-commit-executor" => check_post_commit_executor(context),
         "infrastructure.playwright-chromium" => context.infrastructure_command(
             &root.join("frontend"),
             "node",
@@ -1016,61 +2183,23 @@ fn execute_node(
             "PLAYWRIGHT_CHROMIUM_UNAVAILABLE",
         ),
         "h5.product-presentation-accessibility" => {
-            check_product_presentation_accessibility(&mut context)
+            check_product_presentation_accessibility(context)
         }
-        "h5.real-runtime" => check_h5_runtime(&mut context),
+        "h5.real-runtime" => check_h5_runtime(context),
         INPUTS_UNCHANGED_NODE => check_and_remove_scratch(root, baselines),
         _ => unreachable!("all node specs have an implementation"),
-    };
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let execution = match execution {
-        Err(failure) => match writeln!(context.log, "{}: {}", failure.code, failure.message) {
-            Ok(()) => Err(failure),
-            Err(error) => Err(NodeFailure::infrastructure(
-                "CHECK_EVIDENCE_WRITE_FAILED",
-                error.to_string(),
-            )),
-        },
-        success => success,
-    };
-    let execution = match context.log.flush() {
-        Ok(()) => execution,
-        Err(error) => Err(NodeFailure::infrastructure(
-            "CHECK_EVIDENCE_WRITE_FAILED",
-            error.to_string(),
-        )),
-    };
-    let (outcome, cause, remediation) = match execution {
-        Ok(()) => (Outcome::Pass, None, None),
-        Err(failure) => (
-            failure.outcome,
-            Some(CheckCause {
-                code: failure.code.to_owned(),
-                message: failure.message,
-                dependency_node_id: None,
-            }),
-            Some(spec.remediation.to_owned()),
-        ),
-    };
-    Ok(NodeResult {
-        schema_version: RESULT_SCHEMA_VERSION,
-        event: "check-node",
-        node_id: spec.id.to_owned(),
-        prerequisites: spec
-            .prerequisites
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect(),
-        outcome,
-        duration_ms,
-        cause,
-        remediation,
-        proves: spec.proves.to_owned(),
-        does_not_prove: spec.does_not_prove.to_owned(),
-        commands: context.commands,
-        tool_versions: context.tool_versions,
-        log: relative_log(&log_path, evidence_root),
-    })
+    }
+}
+
+fn check_exception_policy(root: &Path) -> std::result::Result<(), NodeFailure> {
+    let path = root.join(".yydra/check-exceptions.toml");
+    if path.exists() {
+        return Err(NodeFailure::fail(
+            "CHECK_EXCEPTION_POLICY_VIOLATION",
+            "this exact Distribution has a deny-all exception policy; .yydra/check-exceptions.toml is unsupported",
+        ));
+    }
+    Ok(())
 }
 
 impl NodeContext<'_> {
@@ -1974,6 +3103,8 @@ fn check_rust_tests(context: &mut NodeContext<'_>) -> std::result::Result<(), No
             "--workspace",
             "--all-targets",
             "--all-features",
+            "--",
+            "--test-threads=1",
         ],
         &[],
         "RUST_TEST_FAILED",
@@ -2613,7 +3744,15 @@ import { defineConfig } from "vitest/config";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 export default defineConfig({
   root,
-  resolve: { alias: { "@": fileURLToPath(new URL("../../src", import.meta.url)) } },
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("../../src", import.meta.url)),
+      "@react-native-community/netinfo": fileURLToPath(
+        new URL("../../src/framework/testing/netinfo.ts", import.meta.url),
+      ),
+      "react-native": "react-native-web",
+    },
+  },
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx,mjs}"],
@@ -3378,7 +4517,14 @@ fn check_post_commit_executor(
     context.command(
         context.root,
         "cargo",
-        &["test", "--locked", "--test", "post_commit_executor"],
+        &[
+            "test",
+            "--locked",
+            "--test",
+            "post_commit_executor",
+            "--",
+            "--test-threads=1",
+        ],
         &[],
         "POST_COMMIT_EXECUTOR_FAILED",
     )
@@ -4818,26 +5964,61 @@ fn emit_node(result: &NodeResult, format: MessageFormat) {
     }
 }
 
-fn emit_summary(status: &str, complete: bool, manifest: &Path, format: MessageFormat) {
+fn emit_aggregate_result(result: &AggregateResult<'_>, format: MessageFormat) {
     match format {
         MessageFormat::Json => println!(
             "{}",
-            serde_json::to_string(&SummaryEvent {
-                schema_version: RESULT_SCHEMA_VERSION,
-                event: "check-summary",
-                status,
-                scope: "clean-core-local",
-                complete,
-                aggregate_conformance: false,
-                evidence: manifest.display().to_string(),
-            })
-            .expect("serialize check summary")
+            serde_json::to_string(result).expect("serialize aggregate result")
+        ),
+        MessageFormat::Human => {
+            println!(
+                "{} aggregate.clean-and-reading-queue",
+                outcome_name(&result.outcome).to_uppercase()
+            );
+            if let Some(cause) = &result.cause {
+                println!("  cause [{}]: {}", cause.code, cause.message);
+            }
+            if let Some(remediation) = result.remediation {
+                println!("  remediation: {remediation}");
+            }
+            println!("  proves: {}", result.proves);
+            println!("  does-not-prove: {}", result.does_not_prove);
+        }
+    }
+}
+
+fn summary_event(
+    status: &str,
+    scope: &str,
+    complete: bool,
+    aggregate_conformance: bool,
+) -> SummaryEvent {
+    SummaryEvent {
+        schema_version: RESULT_SCHEMA_VERSION,
+        event: "check-summary".to_owned(),
+        status: status.to_owned(),
+        scope: scope.to_owned(),
+        complete,
+        aggregate_conformance,
+        evidence: "manifest.json".to_owned(),
+    }
+}
+
+fn emit_summary(summary: &SummaryEvent, manifest_path: &Path, format: MessageFormat) {
+    let mut output = summary.clone();
+    output.evidence = manifest_path.display().to_string();
+    match format {
+        MessageFormat::Json => println!(
+            "{}",
+            serde_json::to_string(&output).expect("serialize check summary")
         ),
         MessageFormat::Human => println!(
-            "CHECK {} scope=clean-core-local complete={} aggregate-conformance=false evidence={}",
-            status.to_uppercase(),
-            complete,
-            manifest.display()
+            "CHECK {} scope={} complete={} aggregate-conformance={} evidence={}",
+            output.status.to_uppercase(),
+            output.scope,
+            output.complete,
+            output.aggregate_conformance,
+            output.evidence
         ),
     }
 }

@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: Yydra Mechanical Quality Contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  executor:
+    name: Build the exact Distribution executor once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install the exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Build this Distribution executor
+        run: cargo build --locked --release --package yydra-cli
+      - name: Upload the one exact executor
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-executor
+          path: target/release/yydra
+          if-no-files-found: error
+          retention-days: 14
+
+  fixture:
+    name: Complete ${{ matrix.fixture }} evidence
+    needs: executor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [clean, reading-queue]
+    steps:
+      - name: Download the exact Distribution executor
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: quality-executor
+          path: ${{ runner.temp }}/executor
+      - name: Restore the executor mode without changing its bytes
+        run: chmod 0755 "${{ runner.temp }}/executor/yydra"
+      - name: Install exact Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26.8.1
+      - name: Install exact npm
+        run: npm install --global npm@12.0.2
+      - name: Install exact Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21.0.12.1+1'
+      - name: Install the exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+      - name: Create an independent Product Workspace and browser infrastructure
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          WORKSPACE_ROOT: ${{ runner.temp }}/product-workspace
+        run: |
+          product_name="Clean Product"
+          product_id="clean-product"
+          if [ "$FIXTURE" = "reading-queue" ]; then
+            product_name="Reading Queue"
+            product_id="reading-queue"
+          fi
+          "${{ runner.temp }}/executor/yydra" new "$WORKSPACE_ROOT" \
+            --product-name "$product_name" \
+            --product-id "$product_id" \
+            --product-source-license Apache-2.0
+          npm --prefix "$WORKSPACE_ROOT/frontend" ci --ignore-scripts
+          npm --prefix "$WORKSPACE_ROOT/frontend" exec -- playwright install --with-deps chromium
+      - name: Run the Distribution-owned complete graph
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          WORKSPACE_ROOT: ${{ runner.temp }}/product-workspace
+          EVIDENCE_ROOT: ${{ runner.temp }}/fixture-evidence
+        run: |
+          "${{ runner.temp }}/executor/yydra" --message-format=json check "$WORKSPACE_ROOT" \
+            --fixture "$FIXTURE" \
+            --evidence-dir "$EVIDENCE_ROOT"
+      - name: Upload the complete fixture evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-${{ matrix.fixture }}
+          path: ${{ runner.temp }}/fixture-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate clean and Reading Queue conformance
+    needs: [executor, fixture]
+    if: ${{ always() && needs.executor.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download the exact Distribution executor
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: quality-executor
+          path: ${{ runner.temp }}/executor
+      - name: Restore the executor mode without changing its bytes
+        run: chmod 0755 "${{ runner.temp }}/executor/yydra"
+      - name: Download clean evidence
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: quality-clean
+          path: ${{ runner.temp }}/uploaded/clean
+      - name: Download Reading Queue evidence
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: quality-reading-queue
+          path: ${{ runner.temp }}/uploaded/reading-queue
+      - name: Aggregate only the uploaded complete evidence
+        run: |
+          "${{ runner.temp }}/executor/yydra" --message-format=json check \
+            --aggregate-evidence "${{ runner.temp }}/uploaded/clean/manifest.json" \
+            --aggregate-evidence "${{ runner.temp }}/uploaded/reading-queue/manifest.json" \
+            --evidence-dir "${{ runner.temp }}/aggregate-evidence"
+      - name: Upload aggregate evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quality-aggregate
+          path: ${{ runner.temp }}/aggregate-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

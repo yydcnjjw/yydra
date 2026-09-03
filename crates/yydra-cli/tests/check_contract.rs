@@ -15,16 +15,30 @@ use tempfile::tempdir;
 static HEAVY_CHECK_LOCK: Mutex<()> = Mutex::new(());
 
 fn create_workspace(destination: &Path, product_id: &str) {
+    create_workspace_with_inputs(
+        destination,
+        "Check Fixture",
+        product_id,
+        "MIT OR Apache-2.0",
+    );
+}
+
+fn create_workspace_with_inputs(
+    destination: &Path,
+    product_name: &str,
+    product_id: &str,
+    product_source_license: &str,
+) {
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "new",
             destination.to_str().expect("UTF-8 destination"),
             "--product-name",
-            "Check Fixture",
+            product_name,
             "--product-id",
             product_id,
             "--product-source-license",
-            "MIT OR Apache-2.0",
+            product_source_license,
         ])
         .output()
         .expect("create Product Workspace");
@@ -418,6 +432,16 @@ fn post_commit_executor_node_rejects_behavior_and_missing_tests_read_only() {
         node(&events(&passing), "runtime.post-commit-executor")["outcome"],
         "pass"
     );
+    assert!(
+        node(&events(&passing), "runtime.post-commit-executor")["commands"]
+            .as_array()
+            .expect("post-commit commands")
+            .iter()
+            .any(|command| command
+                .as_str()
+                .is_some_and(|command| command.contains("--test-threads=1"))),
+        "the canonical multi-test target must not race process-global test instrumentation"
+    );
 
     let source_path = workspace.join("crates/application/src/post_commit.rs");
     let source = fs::read_to_string(&source_path).expect("read post-commit executor fixture");
@@ -491,6 +515,7 @@ fn json_lines_and_human_output_are_views_of_the_same_node_result() {
     let result = node(&json_events, "origin.exact-distribution");
     assert_eq!(result["schemaVersion"], 1);
     assert_eq!(result["outcome"], "pass");
+    assert_eq!(result["attempts"].as_array().map(Vec::len), Some(1));
     assert_eq!(result["prerequisites"], serde_json::json!([]));
     assert!(result["durationMs"].is_u64());
     assert!(result["proves"].is_string());
@@ -520,6 +545,7 @@ fn json_lines_and_human_output_are_views_of_the_same_node_result() {
     )
     .expect("parse evidence manifest");
     assert_eq!(manifest["schemaVersion"], 1);
+    assert_eq!(manifest["fixture"], "unclassified");
     assert_eq!(manifest["scope"], "clean-core-local");
     assert_eq!(manifest["complete"], false);
     assert_eq!(manifest["aggregateConformance"], false);
@@ -528,6 +554,27 @@ fn json_lines_and_human_output_are_views_of_the_same_node_result() {
         manifest["catalogNodes"]
             .as_array()
             .is_some_and(|nodes| !nodes.is_empty())
+    );
+    assert!(
+        manifest["catalogDigest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    assert!(
+        manifest["executorDigest"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 71 && digest.starts_with("sha256:"))
+    );
+    assert!(
+        manifest["diagnosticVocabulary"]
+            .as_array()
+            .is_some_and(|codes| { codes.iter().any(|code| code == "CHECK_PREREQUISITE_FAILED") })
+    );
+    assert_eq!(manifest["exceptionPolicy"]["mode"], "deny-all");
+    assert_eq!(manifest["retryPolicy"]["semanticMaxAttempts"], 1);
+    assert_eq!(
+        manifest["retryPolicy"]["infrastructureEstablishmentMaxAttempts"],
+        2
     );
     assert!(
         manifest["inputDigest"]
@@ -541,11 +588,795 @@ fn json_lines_and_human_output_are_views_of_the_same_node_result() {
             .as_array()
             .is_some_and(|items| items.len() == 3)
     );
+    let catalog: serde_json::Value = serde_json::from_slice(
+        &fs::read(human_evidence.join("artifacts/check-catalog.json")).expect("read exact catalog"),
+    )
+    .expect("parse exact catalog");
+    assert_eq!(
+        catalog["fixtureDefinitions"],
+        serde_json::json!([
+            {
+                "id": "clean",
+                "productName": "Clean Product",
+                "productId": "clean-product",
+                "productSourceLicense": "Apache-2.0"
+            },
+            {
+                "id": "reading-queue",
+                "productName": "Reading Queue",
+                "productId": "reading-queue",
+                "productSourceLicense": "Apache-2.0"
+            }
+        ])
+    );
     assert_eq!(node(&json_events, "rust.compile")["outcome"], "not-run");
     assert_eq!(
         node(&json_events, "rust.compile")["cause"]["code"],
         "CHECK_NOT_SELECTED"
     );
+}
+
+#[test]
+fn unknown_exception_configuration_fails_closed_without_masking_independent_nodes() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("exception-reader");
+    create_workspace(&workspace, "exception-reader");
+    let exception = workspace.join(".yydra/check-exceptions.toml");
+    fs::write(
+        &exception,
+        "rule = \"frontend.lint\"\nexpires = \"2099-01-01\"\n",
+    )
+    .expect("write unsupported exception fixture");
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["policy.exceptions", "origin.exact-distribution"],
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "policy.exceptions")["cause"]["code"],
+        "CHECK_EXCEPTION_POLICY_VIOLATION"
+    );
+    assert_eq!(
+        node(&parsed, "origin.exact-distribution")["outcome"],
+        "pass"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn infrastructure_establishment_retries_once_and_records_both_attempts() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("infrastructure-retry-reader");
+    create_workspace(&workspace, "infrastructure-retry-reader");
+    let fake_bin = sandbox.path().join("fake-bin");
+    fs::create_dir(&fake_bin).expect("create fake tool directory");
+    let counter = sandbox.path().join("docker-attempts");
+    write_executable(
+        &fake_bin.join("docker"),
+        &format!(
+            r#"#!/bin/sh
+if [ -f '{counter}' ]; then
+  printf '%s\n' '27.5.1'
+  exit 0
+fi
+: > '{counter}'
+exit 17
+"#,
+            counter = counter.display()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let evidence = sandbox.path().join("evidence");
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--node",
+            "infrastructure.docker",
+        ])
+        .env("PATH", path)
+        .output()
+        .expect("run retryable infrastructure check");
+    assert!(
+        output.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let parsed = events(&output);
+    let docker = node(&parsed, "infrastructure.docker");
+    assert_eq!(docker["outcome"], "pass");
+    assert_eq!(docker["attempts"].as_array().map(Vec::len), Some(2));
+    assert_eq!(docker["attempts"][0]["outcome"], "infrastructure-error");
+    assert_eq!(docker["attempts"][1]["outcome"], "pass");
+    assert_eq!(docker["commands"].as_array().map(Vec::len), Some(2));
+}
+
+fn artifact_digest(path: &Path) -> String {
+    fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, (u8, Vec<u8>)>) {
+        let metadata = fs::symlink_metadata(path).expect("inspect aggregate fixture artifact");
+        let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+        if metadata.file_type().is_symlink() {
+            entries.insert(
+                relative,
+                (
+                    3,
+                    fs::read_link(path)
+                        .expect("read aggregate fixture symlink")
+                        .as_os_str()
+                        .as_encoded_bytes()
+                        .to_vec(),
+                ),
+            );
+        } else if metadata.is_file() {
+            entries.insert(
+                relative,
+                (2, fs::read(path).expect("read aggregate fixture file")),
+            );
+        } else if metadata.is_dir() {
+            if path != root {
+                entries.insert(relative, (1, Vec::new()));
+            }
+            let mut children = fs::read_dir(path)
+                .expect("read aggregate fixture directory")
+                .collect::<std::io::Result<Vec<_>>>()
+                .expect("collect aggregate fixture directory");
+            children.sort_by_key(std::fs::DirEntry::file_name);
+            for child in children {
+                visit(root, &child.path(), entries);
+            }
+        }
+    }
+
+    let mut entries = BTreeMap::new();
+    visit(path, path, &mut entries);
+    let mut digest = sha2::Sha256::new();
+    for (path, (kind, bytes)) in entries {
+        digest.update(path.as_os_str().as_encoded_bytes());
+        digest.update([0]);
+        digest.update([kind]);
+        digest.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+        digest.update(bytes);
+    }
+    format!("sha256:{}", hex::encode(digest.finalize()))
+}
+
+fn complete_aggregate_fixture(sandbox: &Path, fixture: &str) -> PathBuf {
+    let workspace = sandbox.join(format!("{fixture}-workspace"));
+    let (product_name, product_id) = match fixture {
+        "clean" => ("Clean Product", "clean-product"),
+        "reading-queue" => ("Reading Queue", "reading-queue"),
+        other => panic!("unsupported aggregate fixture {other}"),
+    };
+    create_workspace_with_inputs(&workspace, product_name, product_id, "Apache-2.0");
+    let evidence = sandbox.join(format!("{fixture}-evidence"));
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence"),
+            "--fixture",
+            fixture,
+            "--node",
+            "origin.exact-distribution",
+        ])
+        .output()
+        .expect("create source aggregate evidence");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest_path = evidence.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("read source aggregate manifest"))
+            .expect("parse source aggregate manifest");
+    manifest["fixture"] = fixture.into();
+    manifest["selectedNodes"] = serde_json::json!([]);
+    manifest["complete"] = true.into();
+    manifest["status"] = "pass-core".into();
+    for node in manifest["nodes"]
+        .as_array_mut()
+        .expect("source aggregate nodes")
+    {
+        node["outcome"] = "pass".into();
+        node["durationMs"] = 1.into();
+        node["attempts"] = serde_json::json!([{
+            "attempt": 1,
+            "outcome": "pass",
+            "durationMs": 1,
+            "cause": null
+        }]);
+        node["cause"] = serde_json::Value::Null;
+        node["remediation"] = serde_json::Value::Null;
+        node["commands"] = serde_json::json!([]);
+        node["toolVersions"] = serde_json::json!({});
+    }
+    let required_tool_versions = manifest["requiredToolVersions"].clone();
+    manifest["nodes"][0]["toolVersions"] = required_tool_versions.clone();
+    manifest["observedToolVersions"] = required_tool_versions;
+    let mut diagnostics = String::new();
+    for node in manifest["nodes"]
+        .as_array()
+        .expect("source aggregate nodes")
+    {
+        diagnostics.push_str(&serde_json::to_string(node).expect("encode aggregate node"));
+        diagnostics.push('\n');
+    }
+    diagnostics.push_str(
+        &serde_json::to_string(&serde_json::json!({
+            "schemaVersion": 1,
+            "event": "check-summary",
+            "status": "pass-core",
+            "scope": "clean-core-local",
+            "complete": true,
+            "aggregateConformance": false,
+            "evidence": "manifest.json",
+        }))
+        .expect("encode aggregate source summary"),
+    );
+    diagnostics.push('\n');
+    fs::write(evidence.join("diagnostics.jsonl"), diagnostics)
+        .expect("write source aggregate diagnostics");
+    for artifact in manifest["artifacts"]
+        .as_array_mut()
+        .expect("source aggregate artifacts")
+    {
+        let relative = artifact["path"].as_str().expect("artifact path");
+        artifact["sha256"] = artifact_digest(&evidence.join(relative)).into();
+    }
+    let mut bytes = serde_json::to_vec_pretty(&manifest).expect("encode source aggregate manifest");
+    bytes.push(b'\n');
+    fs::write(&manifest_path, bytes).expect("write source aggregate manifest");
+    manifest_path
+}
+
+#[test]
+fn local_diagnostics_persist_the_exact_summary_before_manifest_digests() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("summary-reader");
+    create_workspace(&workspace, "summary-reader");
+    let evidence = sandbox.path().join("evidence");
+    let output = check(&workspace, &evidence, &["origin.exact-distribution"]);
+    assert!(output.status.success());
+    assert_eq!(
+        events(&output)
+            .iter()
+            .find(|event| event["event"] == "check-summary")
+            .expect("stdout summary")["evidence"],
+        evidence.join("manifest.json").display().to_string()
+    );
+
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(evidence.join("manifest.json")).expect("read source manifest"),
+    )
+    .expect("parse source manifest");
+    let lines = fs::read_to_string(evidence.join("diagnostics.jsonl"))
+        .expect("read persisted JSON Lines")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("parse JSON Line"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        manifest["nodes"].as_array().expect("manifest nodes").len() + 1
+    );
+    assert_eq!(
+        lines.last().expect("summary line"),
+        &serde_json::json!({
+            "schemaVersion": 1,
+            "event": "check-summary",
+            "status": "pass-selected",
+            "scope": "clean-core-local",
+            "complete": false,
+            "aggregateConformance": false,
+            "evidence": "manifest.json"
+        })
+    );
+    let diagnostics_artifact = manifest["artifacts"]
+        .as_array()
+        .expect("manifest artifacts")
+        .iter()
+        .find(|artifact| artifact["path"] == "diagnostics.jsonl")
+        .expect("diagnostics artifact");
+    assert_eq!(
+        diagnostics_artifact["sha256"],
+        artifact_digest(&evidence.join("diagnostics.jsonl"))
+    );
+}
+
+#[test]
+fn named_fixture_requires_its_exact_workspace_origin_inputs() {
+    let sandbox = tempdir().expect("create sandbox");
+    let impostor = sandbox.path().join("impostor");
+    create_workspace(&impostor, "different-product");
+    let rejected = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            impostor.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("impostor-evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--fixture",
+            "reading-queue",
+            "--node",
+            "origin.exact-distribution",
+        ])
+        .output()
+        .expect("check mislabeled fixture");
+    assert!(!rejected.status.success());
+    assert_eq!(
+        node(&events(&rejected), "origin.exact-distribution")["cause"]["code"],
+        "FIXTURE_IDENTITY_MISMATCH"
+    );
+
+    let exact = sandbox.path().join("reading-queue");
+    create_workspace_with_inputs(&exact, "Reading Queue", "reading-queue", "Apache-2.0");
+    let accepted = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            exact.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            sandbox
+                .path()
+                .join("exact-evidence")
+                .to_str()
+                .expect("UTF-8 evidence"),
+            "--fixture",
+            "reading-queue",
+            "--node",
+            "origin.exact-distribution",
+        ])
+        .output()
+        .expect("check exact fixture");
+    assert!(
+        accepted.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&accepted.stderr),
+        String::from_utf8_lossy(&accepted.stdout)
+    );
+}
+
+fn aggregate(evidence: &Path, manifests: &[&Path]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_yydra"));
+    command.args([
+        "--message-format=json",
+        "check",
+        "--evidence-dir",
+        evidence.to_str().expect("UTF-8 aggregate evidence"),
+    ]);
+    for manifest in manifests {
+        command.args([
+            "--aggregate-evidence",
+            manifest.to_str().expect("UTF-8 source manifest"),
+        ]);
+    }
+    command.output().expect("aggregate conformance evidence")
+}
+
+fn assert_aggregate_failure(output: &Output, code: &str) {
+    assert!(
+        !output.status.success(),
+        "aggregate unexpectedly passed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let parsed = events(output);
+    let result = parsed
+        .iter()
+        .find(|event| event["event"] == "check-aggregate")
+        .expect("aggregate failure result");
+    assert_eq!(result["outcome"], "fail");
+    assert_eq!(result["cause"]["code"], code);
+    let summary = parsed
+        .iter()
+        .find(|event| event["event"] == "check-summary")
+        .expect("aggregate failure summary");
+    assert_eq!(summary["complete"], false);
+    assert_eq!(summary["aggregateConformance"], false);
+}
+
+#[test]
+fn exact_complete_clean_and_reading_queue_evidence_produces_aggregate_conformance() {
+    let sandbox = tempdir().expect("create sandbox");
+    let clean = complete_aggregate_fixture(sandbox.path(), "clean");
+    let reading = complete_aggregate_fixture(sandbox.path(), "reading-queue");
+    let evidence = sandbox.path().join("aggregate-evidence");
+    let output = aggregate(&evidence, &[&clean, &reading]);
+    assert!(
+        output.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let parsed = events(&output);
+    let result = parsed
+        .iter()
+        .find(|event| event["event"] == "check-aggregate")
+        .expect("aggregate result event");
+    assert_eq!(result["outcome"], "pass");
+    let summary = parsed
+        .iter()
+        .find(|event| event["event"] == "check-summary")
+        .expect("aggregate summary event");
+    assert_eq!(summary["status"], "pass-aggregate");
+    assert_eq!(summary["scope"], "clean-and-reading-queue");
+    assert_eq!(summary["complete"], true);
+    assert_eq!(summary["aggregateConformance"], true);
+    let aggregate_manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(evidence.join("manifest.json")).expect("read aggregate manifest"),
+    )
+    .expect("parse aggregate manifest");
+    assert_eq!(aggregate_manifest["catalogDigest"], {
+        let source: serde_json::Value =
+            serde_json::from_slice(&fs::read(&clean).expect("read clean source manifest"))
+                .expect("parse clean source manifest");
+        source["catalogDigest"].clone()
+    });
+    assert_eq!(
+        aggregate_manifest["sources"].as_array().map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
+fn aggregate_does_not_emit_success_before_its_manifest_is_durable() {
+    let sandbox = tempdir().expect("create sandbox");
+    let clean = complete_aggregate_fixture(sandbox.path(), "clean");
+    let reading = complete_aggregate_fixture(sandbox.path(), "reading-queue");
+    let reading_root = reading.parent().expect("reading evidence root");
+    let slow_artifact = reading_root.join("logs/slow-verification-fixture.bin");
+    fs::File::create(&slow_artifact)
+        .expect("create sparse verification fixture")
+        .set_len(64 * 1024 * 1024)
+        .expect("size sparse verification fixture");
+    let mut reading_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&reading).expect("read reading manifest"))
+            .expect("parse reading manifest");
+    reading_manifest["artifacts"]
+        .as_array_mut()
+        .expect("manifest artifacts")
+        .iter_mut()
+        .find(|artifact| artifact["path"] == "logs")
+        .expect("logs artifact")["sha256"] = artifact_digest(&reading_root.join("logs")).into();
+    let mut reading_bytes =
+        serde_json::to_vec_pretty(&reading_manifest).expect("encode reading manifest");
+    reading_bytes.push(b'\n');
+    fs::write(&reading, reading_bytes).expect("write reading manifest");
+
+    let evidence = sandbox.path().join("unwritable-manifest-evidence");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args([
+            "--message-format=json",
+            "check",
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 aggregate evidence"),
+            "--aggregate-evidence",
+            clean.to_str().expect("UTF-8 clean manifest"),
+            "--aggregate-evidence",
+            reading.to_str().expect("UTF-8 reading manifest"),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start aggregate verifier");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !evidence.join("diagnostics.jsonl").is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "aggregate verifier did not create its diagnostics in time"
+        );
+        assert!(
+            child.try_wait().expect("poll aggregate verifier").is_none(),
+            "aggregate verifier exited before the failure fixture was installed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    fs::create_dir(evidence.join("manifest.json"))
+        .expect("occupy aggregate manifest path before persistence");
+    let output = child
+        .wait_with_output()
+        .expect("wait for aggregate verifier");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 aggregate stdout");
+    assert!(
+        !stdout.contains("\"outcome\":\"pass\"")
+            && !stdout.contains("\"status\":\"pass-aggregate\""),
+        "aggregate emitted success before its manifest was durable: {stdout}"
+    );
+}
+
+#[test]
+fn github_quality_workflow_executes_the_distribution_graph_and_aggregates_uploaded_evidence() {
+    let workflow_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/quality.yml");
+    if !workflow_path.is_file() {
+        return;
+    }
+    let workflow = fs::read_to_string(workflow_path).expect("read quality workflow");
+    assert!(workflow.contains("fixture: [clean, reading-queue]"));
+    assert!(workflow.contains("--fixture \"$FIXTURE\""));
+    assert_eq!(workflow.matches("--aggregate-evidence").count(), 2);
+    assert!(workflow.contains("name: quality-clean"));
+    assert!(workflow.contains("name: quality-reading-queue"));
+    assert!(workflow.contains("name: quality-aggregate"));
+    assert_eq!(workflow.matches("name: quality-executor").count(), 3);
+    assert!(workflow.contains("${{ runner.temp }}/executor/yydra"));
+    assert!(workflow.contains("if: ${{ always() && needs.executor.result == 'success' }}"));
+    assert_eq!(workflow.matches("include-hidden-files: true").count(), 2);
+    assert_eq!(workflow.matches("continue-on-error: true").count(), 2);
+    for mutable_action_tag in [
+        "actions/checkout@v",
+        "actions/setup-node@v",
+        "actions/setup-java@v",
+        "actions/upload-artifact@v",
+        "actions/download-artifact@v",
+    ] {
+        assert!(
+            !workflow.contains(mutable_action_tag),
+            "quality workflow must pin {mutable_action_tag} by full commit SHA"
+        );
+    }
+    for duplicate_semantic_authority in ["cargo test", "cargo clippy", "npm test", "gradlew"] {
+        assert!(
+            !workflow.contains(duplicate_semantic_authority),
+            "CI must execute yydra check instead of duplicating {duplicate_semantic_authority}"
+        );
+    }
+}
+
+#[test]
+fn aggregate_rejects_missing_malformed_mismatched_incomplete_and_tampered_evidence() {
+    let sandbox = tempdir().expect("create sandbox");
+    let clean = complete_aggregate_fixture(sandbox.path(), "clean");
+    let reading = complete_aggregate_fixture(sandbox.path(), "reading-queue");
+
+    let missing = aggregate(&sandbox.path().join("missing"), &[&clean]);
+    assert_aggregate_failure(&missing, "AGGREGATE_FIXTURE_MISSING");
+
+    let absent = sandbox.path().join("not-uploaded/manifest.json");
+    let unuploaded = aggregate(&sandbox.path().join("unuploaded"), &[&clean, &absent]);
+    assert_aggregate_failure(&unuploaded, "AGGREGATE_EVIDENCE_MISSING");
+
+    let duplicate = aggregate(&sandbox.path().join("duplicate"), &[&clean, &clean]);
+    assert_aggregate_failure(&duplicate, "AGGREGATE_DUPLICATE_FIXTURE");
+
+    let malformed_path = sandbox.path().join("malformed.json");
+    fs::write(&malformed_path, "{not-json\n").expect("write malformed manifest");
+    let malformed = aggregate(
+        &sandbox.path().join("malformed-result"),
+        &[&clean, &malformed_path],
+    );
+    assert_aggregate_failure(&malformed, "AGGREGATE_EVIDENCE_MALFORMED");
+
+    let original = fs::read(&reading).expect("read original reading manifest");
+    let mut altered: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    altered["catalogDigest"] = "sha256:stale".into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&altered).expect("encode mismatched manifest"),
+    )
+    .expect("write mismatched manifest");
+    let mismatched = aggregate(&sandbox.path().join("mismatched"), &[&clean, &reading]);
+    assert_aggregate_failure(&mismatched, "AGGREGATE_CATALOG_MISMATCH");
+
+    for outcome in ["fail", "skipped", "not-run"] {
+        let mut incomplete: serde_json::Value =
+            serde_json::from_slice(&original).expect("parse reading manifest");
+        incomplete["nodes"][0]["outcome"] = outcome.into();
+        fs::write(
+            &reading,
+            serde_json::to_vec_pretty(&incomplete).expect("encode incomplete manifest"),
+        )
+        .expect("write incomplete manifest");
+        let incomplete_output = aggregate(
+            &sandbox.path().join(format!("incomplete-{outcome}")),
+            &[&clean, &reading],
+        );
+        assert_aggregate_failure(&incomplete_output, "AGGREGATE_EVIDENCE_INCOMPLETE");
+    }
+
+    let mut identity: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    identity["distributionVersion"] = "0.0.3".into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&identity).expect("encode identity mismatch"),
+    )
+    .expect("write identity mismatch");
+    let identity_output = aggregate(&sandbox.path().join("identity"), &[&clean, &reading]);
+    assert_aggregate_failure(&identity_output, "AGGREGATE_IDENTITY_MISMATCH");
+
+    let mut executor_identity: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    executor_identity["executorDigest"] = format!("sha256:{}", "0".repeat(64)).into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&executor_identity).expect("encode executor identity mismatch"),
+    )
+    .expect("write executor identity mismatch");
+    let executor_identity_output = aggregate(
+        &sandbox.path().join("executor-identity"),
+        &[&clean, &reading],
+    );
+    assert_aggregate_failure(&executor_identity_output, "AGGREGATE_IDENTITY_MISMATCH");
+
+    let mut digest: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    digest["inputDigest"] = "sha256:not-a-complete-digest".into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&digest).expect("encode invalid input digest"),
+    )
+    .expect("write invalid input digest");
+    let digest_output = aggregate(&sandbox.path().join("input-digest"), &[&clean, &reading]);
+    assert_aggregate_failure(&digest_output, "AGGREGATE_IDENTITY_MISMATCH");
+
+    let clean_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&clean).expect("read clean manifest"))
+            .expect("parse clean manifest");
+    let mut reused: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    reused["inputDigest"] = clean_manifest["inputDigest"].clone();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&reused).expect("encode reused input identity"),
+    )
+    .expect("write reused input identity");
+    let reused_output = aggregate(&sandbox.path().join("reused-input"), &[&clean, &reading]);
+    assert_aggregate_failure(&reused_output, "AGGREGATE_IDENTITY_MISMATCH");
+
+    let mut observed: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    observed["observedToolVersions"] = serde_json::json!({"invented": "1.0.0"});
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&observed).expect("encode observed identity mismatch"),
+    )
+    .expect("write observed identity mismatch");
+    let observed_output = aggregate(
+        &sandbox.path().join("observed-identity"),
+        &[&clean, &reading],
+    );
+    assert_aggregate_failure(&observed_output, "AGGREGATE_IDENTITY_MISMATCH");
+
+    let mut exception: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse reading manifest");
+    exception["exceptions"] = serde_json::json!(["waive-required-node"]);
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&exception).expect("encode exception"),
+    )
+    .expect("write exception manifest");
+    let exception_output = aggregate(&sandbox.path().join("exception"), &[&clean, &reading]);
+    assert_aggregate_failure(&exception_output, "AGGREGATE_EXCEPTION_REJECTED");
+
+    fs::write(&reading, &original).expect("restore reading manifest again");
+    let diagnostics = reading
+        .parent()
+        .expect("reading evidence root")
+        .join("diagnostics.jsonl");
+    let original_diagnostics = fs::read(&diagnostics).expect("read source diagnostics");
+    fs::write(&diagnostics, "{}\n").expect("corrupt source diagnostics");
+    let diagnostics_output = aggregate(&sandbox.path().join("diagnostics"), &[&clean, &reading]);
+    assert_aggregate_failure(&diagnostics_output, "AGGREGATE_DIAGNOSTICS_INVALID");
+    let mut diagnostic_lines = String::from_utf8(original_diagnostics.clone())
+        .expect("UTF-8 source diagnostics")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("parse diagnostic"))
+        .collect::<Vec<_>>();
+    diagnostic_lines.last_mut().expect("summary diagnostic")["unexpected"] = true.into();
+    let mut encoded_diagnostics = diagnostic_lines
+        .iter()
+        .map(|line| serde_json::to_string(line).expect("encode diagnostic"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    encoded_diagnostics.push('\n');
+    fs::write(&diagnostics, encoded_diagnostics).expect("write unknown summary field");
+    let mut strict_manifest: serde_json::Value =
+        serde_json::from_slice(&original).expect("parse strict summary manifest");
+    strict_manifest["artifacts"]
+        .as_array_mut()
+        .expect("manifest artifacts")
+        .iter_mut()
+        .find(|artifact| artifact["path"] == "diagnostics.jsonl")
+        .expect("diagnostics artifact")["sha256"] = artifact_digest(&diagnostics).into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&strict_manifest).expect("encode strict summary manifest"),
+    )
+    .expect("write strict summary manifest");
+    let unknown_summary = aggregate(
+        &sandbox.path().join("unknown-summary-field"),
+        &[&clean, &reading],
+    );
+    assert_aggregate_failure(&unknown_summary, "AGGREGATE_DIAGNOSTICS_INVALID");
+
+    diagnostic_lines
+        .last_mut()
+        .expect("summary diagnostic")
+        .as_object_mut()
+        .expect("summary object")
+        .remove("unexpected");
+    diagnostic_lines.last_mut().expect("summary diagnostic")["evidence"] =
+        "arbitrary-location.json".into();
+    let mut encoded_diagnostics = diagnostic_lines
+        .iter()
+        .map(|line| serde_json::to_string(line).expect("encode diagnostic"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    encoded_diagnostics.push('\n');
+    fs::write(&diagnostics, encoded_diagnostics).expect("write arbitrary summary evidence");
+    strict_manifest["artifacts"]
+        .as_array_mut()
+        .expect("manifest artifacts")
+        .iter_mut()
+        .find(|artifact| artifact["path"] == "diagnostics.jsonl")
+        .expect("diagnostics artifact")["sha256"] = artifact_digest(&diagnostics).into();
+    fs::write(
+        &reading,
+        serde_json::to_vec_pretty(&strict_manifest).expect("encode strict summary manifest"),
+    )
+    .expect("write strict summary manifest");
+    let arbitrary_summary = aggregate(
+        &sandbox.path().join("arbitrary-summary-evidence"),
+        &[&clean, &reading],
+    );
+    assert_aggregate_failure(&arbitrary_summary, "AGGREGATE_DIAGNOSTICS_INVALID");
+
+    fs::write(&reading, &original).expect("restore source manifest");
+    fs::write(&diagnostics, original_diagnostics).expect("restore source diagnostics");
+
+    let log = reading
+        .parent()
+        .expect("reading evidence root")
+        .join("logs/origin.exact-distribution.log");
+    fs::write(log, "tampered\n").expect("tamper source raw log");
+    let tampered = aggregate(&sandbox.path().join("tampered"), &[&clean, &reading]);
+    assert_aggregate_failure(&tampered, "AGGREGATE_ARTIFACT_INVALID");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        fs::write(&reading, &original).expect("restore reading manifest for symlink fixtures");
+        let linked_manifest = sandbox.path().join("linked-manifest.json");
+        symlink(&reading, &linked_manifest).expect("link uploaded manifest");
+        let linked_manifest_output = aggregate(
+            &sandbox.path().join("linked-manifest-result"),
+            &[&clean, &linked_manifest],
+        );
+        assert_aggregate_failure(&linked_manifest_output, "AGGREGATE_EVIDENCE_MISSING");
+
+        let log = reading
+            .parent()
+            .expect("reading evidence root")
+            .join("logs/origin.exact-distribution.log");
+        fs::remove_file(&log).expect("remove uploaded log before linking");
+        let external_log = sandbox.path().join("external.log");
+        fs::write(&external_log, "external\n").expect("write external log");
+        symlink(&external_log, &log).expect("link uploaded raw log");
+        let linked_log_output = aggregate(
+            &sandbox.path().join("linked-log-result"),
+            &[&clean, &reading],
+        );
+        assert_aggregate_failure(&linked_log_output, "AGGREGATE_ARTIFACT_INVALID");
+    }
 }
 
 #[test]
@@ -741,6 +1572,25 @@ test("tsx presentation fixture is executed", () => {
     let failure = node(&parsed, "frontend.test");
     assert_eq!(failure["cause"]["code"], "FRONTEND_TEST_FAILED");
     assert!(failure["remediation"].is_string());
+}
+
+#[test]
+fn distribution_owned_frontend_test_resolves_committed_native_compatibility_aliases() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("frontend-positive-reader");
+    create_workspace(&workspace, "frontend-positive-reader");
+
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["frontend.test"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(node(&events(&output), "frontend.test")["outcome"], "pass");
 }
 
 #[test]
@@ -1814,6 +2664,18 @@ exit 2
     assert_eq!(
         node(&parsed, "native.android-generation")["cause"]["code"],
         "NATIVE_GENERATION_OUTPUT_MISSING"
+    );
+    assert_eq!(
+        node(&parsed, "native.android-generation")["attempts"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        node(&parsed, "native.android-generation")["commands"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
     );
     assert_eq!(workspace_files(&workspace), before);
 }

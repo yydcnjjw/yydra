@@ -83,6 +83,12 @@ enum Command {
         /// Run only these diagnostic nodes and their prerequisites.
         #[arg(long = "node")]
         nodes: Vec<String>,
+        /// Require an exact catalog-owned fixture identity for later aggregation.
+        #[arg(long, value_enum, default_value_t = CheckFixture::Unclassified)]
+        fixture: CheckFixture,
+        /// Verify uploaded complete fixture manifests and produce aggregate conformance.
+        #[arg(long = "aggregate-evidence", value_name = "MANIFEST")]
+        aggregate_evidence: Vec<PathBuf>,
     },
     /// Regenerate committed derived outputs from Product Workspace authorities.
     Generate {
@@ -168,15 +174,39 @@ fn main() -> Result<()> {
             evidence_dir,
             comparison_base,
             nodes,
-        } => check_graph::check(
-            check_graph::CheckRequest {
-                workspace,
-                evidence_dir,
-                comparison_base,
-                selected_nodes: nodes,
-            },
-            cli.message_format,
-        ),
+            fixture,
+            aggregate_evidence,
+        } => {
+            if aggregate_evidence.is_empty() {
+                check_graph::check(
+                    check_graph::CheckRequest {
+                        workspace,
+                        evidence_dir,
+                        comparison_base,
+                        selected_nodes: nodes,
+                        fixture: fixture.as_str().to_owned(),
+                    },
+                    cli.message_format,
+                )
+            } else {
+                if comparison_base.is_some()
+                    || !nodes.is_empty()
+                    || fixture != CheckFixture::Unclassified
+                    || workspace.as_path() != Path::new(".")
+                {
+                    bail!(
+                        "--aggregate-evidence cannot be combined with a Workspace argument, --comparison-base, --node, or --fixture"
+                    );
+                }
+                check_graph::aggregate(
+                    check_graph::AggregateRequest {
+                        evidence_dir,
+                        manifests: aggregate_evidence,
+                    },
+                    cli.message_format,
+                )
+            }
+        }
         Command::Generate { command } => match command {
             GenerateCommand::Api {
                 workspace,
@@ -206,6 +236,24 @@ fn main() -> Result<()> {
 pub(crate) enum MessageFormat {
     Human,
     Json,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum CheckFixture {
+    #[default]
+    Unclassified,
+    Clean,
+    ReadingQueue,
+}
+
+impl CheckFixture {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unclassified => "unclassified",
+            Self::Clean => "clean",
+            Self::ReadingQueue => "reading-queue",
+        }
+    }
 }
 
 struct Reporter {

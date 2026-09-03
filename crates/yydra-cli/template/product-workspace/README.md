@@ -119,6 +119,7 @@ committed-generated, lock, migration, and configuration inputs:
 ```console
 yydra check .
 yydra check . --comparison-base main --node database.migration-history
+yydra check . --fixture clean --evidence-dir /absolute/external/clean-evidence
 ```
 
 It emits one result model as human output or versioned JSON Lines and writes a
@@ -126,11 +127,39 @@ manifest plus raw node logs to a private, unique system-temporary directory
 outside this Workspace by default. An explicit `--evidence-dir` must also be
 outside the Workspace and have no symlink ancestor. A focused `--node
 <stable-id>` run is diagnostic and records `complete=false`; it is not a
-complete core-graph claim. A full #30 pass remains
-`scope=clean-core-local` with `aggregateConformance=false`; cross-fixture CI
-aggregation belongs to a later contract. Missing required infrastructure is
-reported separately from semantic failure, and a failed prerequisite skips
-only its dependent nodes.
+complete core-graph claim. Every invocation embeds the exact
+Distribution-owned catalog and executor digests, stable diagnostic vocabulary, prerequisite
+graph, result states, retry policy, exception policy, proof boundaries, and
+per-node attempts in its manifest and `artifacts/check-catalog.json`.
+Missing required infrastructure is reported separately from semantic failure,
+and a failed prerequisite skips only its dependent nodes while independent
+nodes continue. Semantic, generation, and conformance nodes never retry;
+Docker and Playwright browser establishment may retry once, with both attempts
+recorded. This Distribution's exception policy is deny-all, so
+`.yydra/check-exceptions.toml`, unknown exceptions, and omitted required nodes
+fail closed.
+
+A full local pass remains `scope=clean-core-local` with
+`aggregateConformance=false`. For aggregate evidence, the Distribution checks
+the Workspace Origin Record against exact catalog-owned inputs: `clean` is
+`Clean Product` / `clean-product` / `Apache-2.0`, and `reading-queue` is
+`Reading Queue` / `reading-queue` / `Apache-2.0`; the option is not a
+caller-trusted label. Aggregate conformance requires exactly one
+complete, unchanged, uploaded evidence tree for each fixture. The same exact
+CLI verifies their catalog, exact executor and Distribution/tool identities, all node and attempt
+results, JSON Lines, raw logs, artifact digests, and absence of exceptions:
+
+```console
+yydra check \
+  --aggregate-evidence /uploaded/clean/manifest.json \
+  --aggregate-evidence /uploaded/reading-queue/manifest.json \
+  --evidence-dir /absolute/external/aggregate-evidence
+```
+
+Missing, malformed, stale, mismatched, unuploaded, symlinked, failed, skipped,
+or not-run evidence returns non-zero and cannot produce aggregate conformance.
+The repository CI is only an executor of this graph; its complete fixture and
+aggregate evidence directories are retained as artifacts.
 `database.migration-history` rejects edits or deletions to exact-Distribution
 migrations and, when `--comparison-base <git-revision>` is supplied, migrations
 present at that Git base; corrections require a new forward migration.
