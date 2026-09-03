@@ -78,9 +78,38 @@ evidence directory is a private, unique system-temporary
 directory outside the Product Workspace; an explicit `--evidence-dir` must
 also be outside the Workspace and have no symlink ancestor. Diagnostic
 `--node` selection is explicitly incomplete. A full result is scoped as
-`clean-core-local` and explicitly does not claim aggregate conformance. Add
-`--message-format=json` before the subcommand for versioned JSON Lines
-diagnostics.
+`clean-core-local` and explicitly does not claim aggregate conformance. Every
+result embeds the exact Distribution catalog and executor digests, prerequisite graph,
+stable diagnostics, result states, proof boundaries, deny-all exception
+policy, and every execution attempt. Semantic, generation, and conformance
+nodes do not retry; infrastructure establishment may retry once and records
+both attempts. Add `--message-format=json` before the subcommand for versioned
+JSON Lines diagnostics.
+
+CI builds and uploads one exact executor, then uses those same bytes to create
+independent clean and Reading Queue Workspaces. The Distribution validates
+`clean` as `Clean Product` / `clean-product` / `Apache-2.0` and
+`reading-queue` as `Reading Queue` / `reading-queue` / `Apache-2.0` from each
+Workspace Origin Record; `--fixture` is not a caller-trusted label. CI uploads
+the entire evidence trees, including hidden files, before that executor can grant
+aggregate conformance:
+
+```console
+yydra check ./clean --fixture clean --evidence-dir /external/clean-evidence
+yydra check ./reading --fixture reading-queue --evidence-dir /external/reading-evidence
+yydra check \
+  --aggregate-evidence /uploaded/clean/manifest.json \
+  --aggregate-evidence /uploaded/reading-queue/manifest.json \
+  --evidence-dir /external/aggregate-evidence
+```
+
+The aggregate verifier requires both exact current catalogs and executor
+identities, full
+pass node sets, JSON Lines, raw logs, and artifact digests. Missing, malformed,
+stale, mismatched, unuploaded, symlinked, failed, skipped, not-run, or excepted
+evidence fails closed. Neither local nor aggregate evidence proves macOS/iOS,
+native runtime, physical-device behavior, native accessibility, Agent
+performance, Baseline Skill effect, or any narrower per-node non-claim.
 
 Run the focused Android evidence path through the supported quality entrypoint:
 

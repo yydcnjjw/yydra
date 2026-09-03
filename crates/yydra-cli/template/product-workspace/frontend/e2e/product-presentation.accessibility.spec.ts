@@ -5,16 +5,29 @@ import { expect, test } from "@playwright/test";
 test("Reading Queue exposes registered Product Presentation semantics", async ({
   page,
 }) => {
+  const productName: string = __PRODUCT_NAME_JSON__;
   const title = `Visible semantics ${Date.now()}`;
   const sourceUrl = `https://example.test/visible-semantics/${Date.now()}`;
 
   await page.setViewportSize({ width: 320, height: 480 });
   await page.goto("/");
+  const productHeadings = page.getByRole("heading", {
+    name: productName,
+    exact: true,
+  });
+  await expect(productHeadings).toHaveCount(
+    ["Add to Reading Queue", "Reading Queue"].includes(productName) ? 2 : 1,
+  );
+  await expect(productHeadings.first()).toBeVisible();
+  const queueHeadings = page.getByRole("heading", {
+    name: "Reading Queue",
+    exact: true,
+  });
+  await expect(queueHeadings).toHaveCount(
+    productName === "Reading Queue" ? 2 : 1,
+  );
   await expect(
-    page.getByRole("heading", { name: __PRODUCT_NAME_JSON__, exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Reading Queue", exact: true }),
+    productName === "Reading Queue" ? queueHeadings.nth(1) : queueHeadings,
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "All entries", exact: true }),

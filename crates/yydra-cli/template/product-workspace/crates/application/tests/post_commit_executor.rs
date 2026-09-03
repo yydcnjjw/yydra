@@ -69,7 +69,8 @@ async fn bounded_lossy_executor_reports_admission_deadline_timeout_failure_and_c
     let subscriber = tracing_subscriber::registry().with(TraceCapture {
         entries: trace_entries.clone(),
     });
-    let _trace_guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("post-commit integration test owns its process-global trace subscriber");
     let executor = PostCommitExecutor::start(PostCommitExecutorConfig {
         queue_capacity: 1,
         max_concurrency: 1,

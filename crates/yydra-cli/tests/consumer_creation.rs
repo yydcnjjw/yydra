@@ -199,6 +199,22 @@ fn records_one_normalized_license_choice_for_future_product_owned_source_only() 
 }
 
 #[test]
+fn reading_queue_named_product_keeps_product_and_section_heading_proofs_distinct() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let destination = sandbox.path().join("reading-queue");
+    create_with_flags(&destination, "Reading Queue", "reading-queue");
+
+    let semantics = fs::read_to_string(
+        destination.join("frontend/e2e/product-presentation.accessibility.spec.ts"),
+    )
+    .expect("read rendered accessibility semantics");
+    assert!(semantics.contains("const productName: string = \"Reading Queue\";"));
+    assert!(semantics.contains("productHeadings.first()"));
+    assert!(semantics.contains("productName === \"Reading Queue\" ? 2 : 1"));
+    assert!(semantics.contains("queueHeadings.nth(1)"));
+}
+
+#[test]
 fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     let sandbox = tempdir().expect("create test sandbox");
     let destination = sandbox.path().join("inventoried-reader");
