@@ -797,25 +797,27 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 .expect("materialized template paths are UTF-8")
                 .to_owned();
             let third_party = path.starts_with("frontend/modules/yydra-bolts-tasks/vendor/");
-            let (lifecycle, hand_editable_after_creation) =
-                if third_party || matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT") {
-                    ("exact-distribution-snapshot", false)
-                } else if matches!(
-                    path.as_str(),
-                    ".yydra/origin.toml"
-                        | ".yydra/product-source-license.toml"
-                        | ".yydra/supply-chain-policy.json"
-                        | ".yydra/supply-chain-exceptions.json"
-                        | ".yydra/api-generation.json"
-                        | ".yydra/api-generation-history.json"
-                        | ".yydra/api-generation.lock"
-                        | "contracts/openapi.json"
-                ) || path.starts_with("frontend/src/generated/public-api/")
-                {
-                    ("committed-generated-output", false)
-                } else {
-                    ("product-owned-source", true)
-                };
+            let (lifecycle, hand_editable_after_creation) = if third_party
+                || matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT")
+                || path.starts_with(".agents/skills/yydra-")
+            {
+                ("exact-distribution-snapshot", false)
+            } else if matches!(
+                path.as_str(),
+                ".yydra/origin.toml"
+                    | ".yydra/product-source-license.toml"
+                    | ".yydra/supply-chain-policy.json"
+                    | ".yydra/supply-chain-exceptions.json"
+                    | ".yydra/api-generation.json"
+                    | ".yydra/api-generation-history.json"
+                    | ".yydra/api-generation.lock"
+                    | "contracts/openapi.json"
+            ) || path.starts_with("frontend/src/generated/public-api/")
+            {
+                ("committed-generated-output", false)
+            } else {
+                ("product-owned-source", true)
+            };
             InventoryArtifact {
                 path,
                 lifecycle,

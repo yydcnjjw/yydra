@@ -10,6 +10,7 @@ use std::process::Stdio;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[test]
@@ -252,6 +253,181 @@ fn reading_queue_named_product_keeps_product_and_section_heading_proofs_distinct
     assert!(semantics.contains("productHeadings.first()"));
     assert!(semantics.contains("productName === \"Reading Queue\" ? 2 : 1"));
     assert!(semantics.contains("queueHeadings.nth(1)"));
+}
+
+#[test]
+fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_digests() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let destination = sandbox.path().join("skilled-reader");
+    create_with_flags(&destination, "Skilled Reader", "skilled-reader");
+
+    let skills_root = destination.join(".agents/skills");
+    let mut skill_names = fs::read_dir(&skills_root)
+        .expect("read portable Agent Skills directory")
+        .map(|entry| {
+            entry
+                .expect("read Skill directory entry")
+                .file_name()
+                .into_string()
+                .expect("UTF-8 Skill directory name")
+        })
+        .collect::<Vec<_>>();
+    skill_names.sort_unstable();
+    assert_eq!(
+        skill_names,
+        ["yydra-diagnose", "yydra-product-change"],
+        "the Distribution must contain exactly the two Baseline Skills"
+    );
+
+    let expected_files = [
+        "yydra-diagnose/SKILL.md",
+        "yydra-diagnose/references/diagnostic-contract.md",
+        "yydra-diagnose/references/repair-routes.md",
+        "yydra-product-change/SKILL.md",
+        "yydra-product-change/references/product-change-path.md",
+        "yydra-product-change/references/validation.md",
+    ];
+    let actual_files = byte_inventory(&skills_root)
+        .into_keys()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    assert_eq!(actual_files, expected_files);
+
+    for skill_name in &skill_names {
+        let skill = fs::read_to_string(skills_root.join(skill_name).join("SKILL.md"))
+            .expect("read Baseline Skill instructions");
+        let (frontmatter, body) = skill
+            .strip_prefix("---\n")
+            .and_then(|contents| contents.split_once("\n---\n"))
+            .expect("portable YAML frontmatter and Markdown body");
+        let frontmatter_lines = frontmatter
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            frontmatter_lines.len(),
+            2,
+            "only standard metadata is portable"
+        );
+        assert_eq!(frontmatter_lines[0], format!("name: {skill_name}"));
+        assert!(frontmatter_lines[1].starts_with("description: "));
+        assert!(frontmatter_lines[1].len() > "description: ".len());
+        assert!(!frontmatter.contains("version"));
+        assert!(!frontmatter.contains("allowed-tools"));
+        assert!(body.lines().count() < 500);
+        assert!(
+            body.contains("references/"),
+            "Skill must disclose references on demand"
+        );
+    }
+
+    let product_change =
+        fs::read_to_string(skills_root.join("yydra-product-change").join("SKILL.md"))
+            .expect("read product-change Skill");
+    for required in [
+        "Product Domain",
+        "use case",
+        "transaction",
+        "persistence",
+        "Public API",
+        "atomic",
+        "Product Presentation",
+        "accessibility",
+        "yydra check",
+    ] {
+        assert!(
+            product_change.contains(required),
+            "product-change Skill must route {required}"
+        );
+    }
+
+    let diagnose = fs::read_to_string(skills_root.join("yydra-diagnose").join("SKILL.md"))
+        .expect("read diagnose Skill");
+    for forbidden_repair in [
+        "Do not hand-edit snapshots",
+        "Do not hand-edit generated authorities",
+        "Do not weaken required rules",
+        "Do not silently retry semantic failures",
+        "Do not invent an exception",
+    ] {
+        assert!(
+            diagnose.contains(forbidden_repair),
+            "diagnose Skill must state: {forbidden_repair}"
+        );
+    }
+    let diagnostic_contract =
+        fs::read_to_string(skills_root.join("yydra-diagnose/references/diagnostic-contract.md"))
+            .expect("read structured diagnostic reference");
+    for required in [
+        "cause.code",
+        "infrastructure-error",
+        "CHECK_PREREQUISITE_FAILED",
+        "CHECK_NOT_SELECTED",
+        "incomplete diagnostic evidence",
+        "API_GENERATION_BUSY",
+    ] {
+        assert!(
+            diagnostic_contract.contains(required),
+            "diagnose Skill must interpret {required}"
+        );
+    }
+    let repair_routes =
+        fs::read_to_string(skills_root.join("yydra-diagnose/references/repair-routes.md"))
+            .expect("read safe repair routes");
+    for required in [
+        "DOCTOR_WORKSPACE_VERIFY",
+        "Do not edit those",
+        "authorities into agreement",
+        "API_GENERATION_BUSY",
+        "Do not edit API source",
+        "remove a live lock",
+        "API_GENERATION_LOCK_INVALID",
+        "edit records, history, OpenAPI, or client digests into agreement",
+        "API_CLIENT_TOOL_VERSION_INVALID",
+        "Do not change",
+        "Public API source to disguise a missing or wrong tool",
+        "ACCESSIBILITY_POSTGRES_UNAVAILABLE",
+        "Do not edit Product Presentation",
+        "disguise availability",
+        "ACCESSIBILITY_MIGRATION_FAILED",
+        "Do not change Product Presentation for a migration failure",
+        "An unlisted API code follows the global safe-stop rule",
+        "DB_MIGRATION_COMPARISON_BASE_INVALID",
+        "Do not edit migrations to repair comparison infrastructure",
+        "NATIVE_GENERATION_CLEANUP_FAILED",
+        "Do not edit authored Expo inputs for a cleanup failure",
+        "shared prefixes are not default routes",
+        "rather than guessing",
+    ] {
+        assert!(
+            repair_routes.contains(required),
+            "diagnose Skill must safely route {required}"
+        );
+    }
+
+    let inventory: serde_json::Value = serde_json::from_slice(
+        &fs::read(destination.join(".yydra/distribution-inventory.json"))
+            .expect("read Distribution inventory"),
+    )
+    .expect("parse Distribution inventory");
+    let artifacts = inventory["artifacts"]
+        .as_array()
+        .expect("artifact inventory array");
+    for relative in expected_files {
+        let inventory_path = format!(".agents/skills/{relative}");
+        let artifact = artifacts
+            .iter()
+            .find(|artifact| artifact["path"] == inventory_path)
+            .unwrap_or_else(|| panic!("missing Baseline Skill artifact {inventory_path}"));
+        assert_eq!(artifact["lifecycle"], "exact-distribution-snapshot");
+        assert_eq!(artifact["hand_editable_after_creation"], false);
+        let bytes = fs::read(destination.join(&inventory_path)).expect("read inventoried Skill");
+        assert_eq!(
+            artifact["source_sha256"],
+            hex::encode(Sha256::digest(bytes)),
+            "inventory digest must bind the materialized Skill bytes"
+        );
+    }
 }
 
 #[test]

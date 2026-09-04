@@ -13,6 +13,15 @@ bytes authored by the Product team. Template bytes copied from Yydra remain
 Exact-Distribution snapshots and committed generated output are not second
 hand-edited authorities.
 
+Exactly two portable Baseline Skill snapshots are materialized under
+`.agents/skills`: `yydra-product-change` routes an end-to-end Product Domain
+change, and `yydra-diagnose` interprets structured `doctor` and `check` results
+for safe focused repair. Their exact Distribution inventory and digests are the
+authority; the Skills have no independent version, compatibility resolver,
+upgrade path, or lifecycle. Client discovery is only a thin integration seam and
+does not establish identical activation, tools, permissions, behavior, Agent
+performance, Agent Eval success, or Skill effect.
+
 Creation is a one-shot boundary: there is no template rerun, no template sync,
 no upgrade, no compatibility-range selection, and no Distribution-version override contract.
 
