@@ -49,6 +49,15 @@ and notices, and both complete Yydra license texts ship with the package and the
 new Workspace. `.yydra/distribution-inventory.json` records lifecycle,
 provenance, mode, digest, license-notice authority, and edit authority.
 
+Each new Workspace also contains exactly two portable, exact-Distribution
+Baseline Skill snapshots under `.agents/skills`: `yydra-product-change` guides
+the stable vertical Product Domain change path, and `yydra-diagnose` interprets
+structured `doctor` and `check` results for safe focused repair. The Distribution
+inventory and digests are authoritative. The Skills have no independent semantic
+version, compatibility resolver, upgrade path, or lifecycle, and their presence
+does not establish identical client activation, tools, permissions, behavior,
+Agent performance, Agent Eval success, or Skill effect.
+
 Continue only through supported commands:
 
 ```console

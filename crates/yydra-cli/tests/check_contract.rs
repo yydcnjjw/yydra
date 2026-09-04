@@ -2791,6 +2791,55 @@ fn baseline_skill_inventory_rejects_an_unexpected_snapshot() {
 }
 
 #[test]
+fn baseline_skill_inventory_accepts_exact_bytes_and_rejects_missing_or_modified_snapshots() {
+    let sandbox = tempdir().expect("create sandbox");
+    let exact = sandbox.path().join("exact-skill-reader");
+    create_workspace(&exact, "exact-skill-reader");
+
+    let output = check(
+        &exact,
+        &sandbox.path().join("exact-evidence"),
+        &["ownership.baseline-skills"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        node(&events(&output), "ownership.baseline-skills")["outcome"],
+        "pass"
+    );
+
+    for (name, mutation) in [("missing", "remove"), ("modified", "modify")] {
+        let workspace = sandbox.path().join(format!("{name}-skill-reader"));
+        create_workspace(&workspace, &format!("{name}-skill-reader"));
+        let skill = workspace.join(".agents/skills/yydra-diagnose/SKILL.md");
+        if mutation == "remove" {
+            fs::remove_file(&skill).expect("remove exact Skill snapshot");
+        } else {
+            fs::write(
+                &skill,
+                "---\nname: yydra-diagnose\ndescription: edited\n---\n",
+            )
+            .expect("modify exact Skill snapshot");
+        }
+
+        let output = check(
+            &workspace,
+            &sandbox.path().join(format!("{name}-evidence")),
+            &["ownership.baseline-skills"],
+        );
+        assert!(!output.status.success(), "accepted {name} Skill snapshot");
+        let parsed = events(&output);
+        assert_eq!(
+            node(&parsed, "ownership.baseline-skills")["cause"]["code"],
+            "BASELINE_SKILL_INVENTORY_DRIFT"
+        );
+    }
+}
+
+#[test]
 fn generated_snapshot_drift_is_reported_by_its_own_node() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("snapshot-reader");

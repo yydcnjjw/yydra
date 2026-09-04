@@ -48,6 +48,22 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             .join("template/product-workspace/.yydra/origin.toml")
             .is_file()
     );
+    for baseline_skill in [
+        "yydra-product-change/SKILL.md",
+        "yydra-product-change/references/product-change-path.md",
+        "yydra-product-change/references/validation.md",
+        "yydra-diagnose/SKILL.md",
+        "yydra-diagnose/references/diagnostic-contract.md",
+        "yydra-diagnose/references/repair-routes.md",
+    ] {
+        assert!(
+            extracted
+                .join("template/product-workspace/.agents/skills")
+                .join(baseline_skill)
+                .is_file(),
+            "missing packaged Baseline Skill artifact {baseline_skill}"
+        );
+    }
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));
@@ -177,4 +193,22 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             fs::read(package_root.join(license)).expect("read crate license")
         );
     }
+    let evidence = sandbox.path().join("skill-evidence");
+    let skill_check = Command::new(&executable)
+        .args([
+            "--message-format=json",
+            "check",
+            workspace.to_str().expect("UTF-8 workspace"),
+            "--evidence-dir",
+            evidence.to_str().expect("UTF-8 evidence path"),
+            "--node",
+            "ownership.baseline-skills",
+        ])
+        .output()
+        .expect("check exact packaged Baseline Skill inventory");
+    assert!(
+        skill_check.status.success(),
+        "packaged Skill check stderr: {}",
+        String::from_utf8_lossy(&skill_check.stderr)
+    );
 }
