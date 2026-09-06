@@ -111,6 +111,70 @@ evidence fails closed. Neither local nor aggregate evidence proves macOS/iOS,
 native runtime, physical-device behavior, native accessibility, Agent
 performance, Baseline Skill effect, or any narrower per-node non-claim.
 
+The Distribution owns the dependency inventory and known-advisory policy.
+`supply-chain.dependencies` records the exact CLI/server Cargo and frontend npm
+versions, features, transitives, dependency kinds, targets, and build-tool
+exposure. Lock-preserving installation, version consistency and artifact
+identity checks remain required.
+
+Under the maintainer-approved scope of Issues #26/#39, dependency-license
+admission, source/repository trust review, upstream provenance attestation, and
+third-party notice completeness certification are not evaluated. They must not
+be represented as passing checks or require individual license approvals.
+Existing LICENSE/NOTICE files and attribution are retained; repository licensing,
+DCO, Product Workspace ownership and the Workspace Origin Record are unchanged.
+Optional declaration metadata is not an independently verified license or source
+identity. A declared third-party source commit used for an advisory query does
+not prove that locally modified source equals that upstream commit.
+If the same locked component has different installed declaration metadata, the
+inventory retains per-installation `metadataObservations`; those differences
+do not invalidate the component's version and lock-integrity identity.
+
+`supply-chain.advisories` makes one OSV querybatch request for the reported
+component identities and requires complete responses and applicable advisory
+details. Service failure remains an infrastructure error, not a waiver. A
+vulnerability exception must match the advisory, exact component version and
+each affected target, with analysis, owner, evidence, approval, expiry and a
+re-review trigger. Results cover only the reported query identities at check
+time, not unqueried material or unknown/future vulnerabilities.
+
+Created Product Workspaces declare a local Expo config plugin that applies
+exact Android runtime constraints for `gson@2.14.0` and
+`commons-io@2.22.0`, replacing the vulnerable transitives covered by
+GHSA-4jrv-ppp4-jm57 and GHSA-gwrp-pvrq-jmwv. These are reviewed dependency
+upgrades, not vulnerability exceptions; the resolved release graph and OSV
+result remain authoritative on every check.
+
+After the same check invocation builds and exercises the supported CLI, server,
+production H5 Application Surface and Android outputs, the release inventory
+retains target-specific CycloneDX SBOMs, artifact paths, checksums and build/test
+evidence under `artifacts/supply-chain.release-artifacts/<target>/`.
+Dependency graph membership and actual artifact entries are distinct facts;
+neither is a claim of independently verified upstream provenance.
+
+Android evidence records resolved release-runtime dependencies, selected
+variants and artifact hashes, APK entries including each native library's
+decompressed hash, and a separate one-attempt OSV result for reported Maven
+identities. Native entries without upstream producer attribution remain
+unattributed; no arbitrary matching AAR is promoted to a verified producer.
+License/source reviews and notice-completeness checks are outside the current
+scope, including the earlier exact native-runtime review requests.
+Android material inventory schema 4 distinguishes `runtime-build-input` from
+`dependency-graph-only`; neither label asserts that the component was shipped.
+APK native entries carry their own paths and hashes without invented producer
+edges or entry-level advisory results. Hermes maps may omit `file`: the captured
+Gradle task/output paths and bundle/map hashes still bind the retained outputs,
+and the bundle hash must match the APK entry. A contradictory `file` fails.
+
+Retained H5 bundles and source maps identify the same build outputs.
+Export preparation validates Metro's unique map URL and matching debug ID before
+filling an omitted `file` declaration, before browser tests and hashing;
+contradictory declarations fail and bundle bytes remain unchanged.
+Available build metadata can relate npm inputs to exported bundles without
+implying source authenticity or license approval. Reports must explicitly state
+what was inventoried, queried, and not evaluated. Full clean and Reading Queue
+packaged-consumer acceptance is still required; focused nodes are diagnostic.
+
 Run the focused Android evidence path through the supported quality entrypoint:
 
 ```console
@@ -124,6 +188,20 @@ inspection. Express every fix in `app.json`, exact dependencies, a declared
 config plugin, or a local Expo Module, then delete and regenerate the host;
 never patch generated Java, Kotlin, Gradle, manifest, or resource files as an
 authority.
+
+The Android release gate uses one Gradle invocation for assembly, dependency
+resolution, and material capture. It limits Gradle to one worker, compiles
+Kotlin in the same bounded process, and applies one-slot CMake compile and link
+pools to every generated Android module. Its cache seed, retained files,
+archives, and source maps have explicit file/count/byte limits. Do not run
+multiple Android release checks in parallel on a memory-constrained host.
+
+An ephemeral runner may set `YYDRA_GRADLE_DEPENDENCY_CACHE_SEED` to an absolute
+directory containing a prepared `modules-2` cache. The gate copies that cache
+into its account-free Gradle home before the build and rejects symlinks, lock
+files, `gc.properties`, relative paths, and unsupported entries. Prepare the
+seed by copying only Gradle's public dependency cache; never include user
+configuration, credentials, daemon state, or other Gradle home content.
 
 Creation does not establish a template rerun, synchronization, upgrade,
 compatibility-range, or Distribution-version override contract.

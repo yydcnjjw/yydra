@@ -43,6 +43,22 @@ fn distribution_ships_both_complete_license_texts_and_exact_spdx_markers() {
     }
 }
 
+#[test]
+fn embedded_cli_supply_chain_graph_matches_the_locked_release_resolution() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = Command::new("node")
+        .args(["scripts/generate-cli-supply-chain.mjs", "--check"])
+        .current_dir(&repository)
+        .output()
+        .expect("check generated CLI supply-chain graph");
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn yydra_authored_sources(repository: &Path) -> BTreeSet<PathBuf> {
     let output = Command::new("git")
         .args(["ls-files", "-z"])
@@ -96,6 +112,18 @@ fn collect_template_sources(repository: &Path, relative: &Path, sources: &mut BT
 }
 
 fn requires_spdx_prologue(path: &Path) -> bool {
+    // Only exact source-import manifest entries retain their original upstream
+    // prologues. Arbitrary files under vendor/ do not gain an exemption.
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../supply-chain/bolts-source.json")).unwrap();
+    if manifest["files"].as_array().unwrap().iter().any(|file| {
+        path == Path::new(
+            "crates/yydra-cli/template/product-workspace/frontend/modules/yydra-bolts-tasks/vendor",
+        )
+        .join(file["path"].as_str().unwrap())
+    }) {
+        return false;
+    }
     if is_complete_license_text(path) {
         return false;
     }

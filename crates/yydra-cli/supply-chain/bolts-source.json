@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/BoltsFramework/Bolts-Android",
+  "commit": "5465bcc3bbea3350dbb2affb4511a5726efb321e",
+  "purl": "pkg:github/boltsframework/bolts-android@5465bcc3bbea3350dbb2affb4511a5726efb321e#bolts-tasks",
+  "license": "MIT",
+  "path": "frontend/modules/yydra-bolts-tasks/vendor",
+  "upstreamSubdirectory": "bolts-tasks",
+  "extraction": "Unmodified LICENSE and every bolts-tasks/src/main/java file from the exact upstream commit. No old Maven artifact is reused.",
+  "replaces": "pkg:maven/com.parse.bolts/bolts-tasks@1.4.0",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/AggregateException.java",
+      "sha256": "81f57ee5c88d9e7d3319b248a7c4d5fbcc28fc24afd29fc56d56d3cceba56388",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/AndroidExecutors.java",
+      "sha256": "85d45a9a99898ad47d13cc36152e3551e6cb48ad36a611f68545c8fe71b3b627",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/BoltsExecutors.java",
+      "sha256": "f6c9d73f1d9386321a4ea6b512f0f688b9100c30e029629faef71ba088eae858",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/CancellationToken.java",
+      "sha256": "c23383b8a2d6f938fe9e679fb42ffe9fdda90df81229f39377c13269328fa38e",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/CancellationTokenRegistration.java",
+      "sha256": "ef31b6be3a0bae4b6e6cdbff0abc265b84cd384b633e37e30a1551402e682125",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/CancellationTokenSource.java",
+      "sha256": "a9fe83e52b0a913fe8b1a752febc12e1046df581567d026f3011f77bd4ea8b1b",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/Capture.java",
+      "sha256": "1a045ba0550e2de7ebea9d1bc82522ee0b0432d35f7108eff25e7496584be399",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/Continuation.java",
+      "sha256": "a1b51d44840cf78e128d67741a5ebee96ccf3ef4903c58dba845db4023e49e2b",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/ExecutorException.java",
+      "sha256": "a84183c9f67976ebcb853490e2d0bd103d1196bbaf94969d1909558de699e012",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/Task.java",
+      "sha256": "4ebacd03b8f1257870b102bb95c59103aeab5dd2a30a8d3c9d6f7c60aeb13f5a",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/TaskCompletionSource.java",
+      "sha256": "9ee6e13c3061b3c6ee5c896f9cd183c3e9a698031d61c18cee0f0db845c6ce46",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/UnobservedErrorNotifier.java",
+      "sha256": "f739dff4af51fc1cf96f76a038c226c558b660bd89a420f9c89951e61a3b23ad",
+      "mode": 420
+    },
+    {
+      "path": "src/main/java/bolts/UnobservedTaskException.java",
+      "sha256": "1c360284ec52853fea46f3db591549a9bca760c8b8198e30b2d23eab2485318d",
+      "mode": 420
+    }
+  ]
+}

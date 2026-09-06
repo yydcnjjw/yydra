@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -62,6 +62,13 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "remove .yydra/check-exceptions.toml; this exact Distribution has a deny-all exception policy and required failures must be fixed",
         proves: "the Workspace does not attempt to waive a required Mechanical Quality Contract node",
         does_not_prove: "that future Distributions will never admit a narrowly reviewed exception mechanism",
+    },
+    NodeSpec {
+        id: "supply-chain.policy",
+        prerequisites: &[],
+        remediation: "restore the exact Distribution advisory policy and remove stale, duplicate, incomplete, or overly broad vulnerability exception records",
+        proves: "the policy uses this exact Distribution schema and OSV authority, and every vulnerability exception has complete exact identity, ownership, approval, evidence, expiry, and re-review fields",
+        does_not_prove: "license review, source trust, upstream provenance, notice completeness, a match against current advisory results, or dependency and artifact conformance",
     },
     NodeSpec {
         id: "origin.exact-distribution",
@@ -141,6 +148,20 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "advisory, provenance, or artifact license policy",
     },
     NodeSpec {
+        id: "supply-chain.dependencies",
+        prerequisites: &["supply-chain.policy", "rust.architecture", "frontend.lock"],
+        remediation: "restore consistent exact dependency identities and lock-preserving installations; license and source review are outside this Goal's scope",
+        proves: "the resolved CLI/server Cargo and frontend npm graphs identify versions, enabled features, transitives, dependency kinds, targets and build-tool exposure, with conservative target-specific CycloneDX inventories",
+        does_not_prove: "license approval, legal compatibility, source trust, upstream provenance, notice completeness, absence of malicious code, a current known-vulnerability result, or that every runtime candidate is present in a built artifact",
+    },
+    NodeSpec {
+        id: "supply-chain.advisories",
+        prerequisites: &["supply-chain.dependencies"],
+        remediation: "restore the exact advisory policy and dependency inventory, make OSV querybatch available, remove or upgrade affected material, or record a complete exact-version, exact-target, approved, expiring exception",
+        proves: "OSV querybatch returned complete results for every reported Cargo/npm query identity and Distribution-declared Bolts commit; every advisory was expanded from the same OSV authority and applicable vulnerabilities are absent or covered for each target by a current exact exception",
+        does_not_prove: "that local source matches a declared upstream commit, source authenticity, absence of vulnerabilities in unqueried or locally modified material, or absence of unknown, unpublished, malicious, ecosystem-misclassified, or later-disclosed vulnerabilities",
+    },
+    NodeSpec {
         id: "api.generated-contract",
         prerequisites: &["rust.compile", "frontend.lock"],
         remediation: "run `yydra generate api`, review every contract and Generated Client change, and commit the complete atomic output set",
@@ -180,7 +201,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         prerequisites: &["frontend.lock"],
         remediation: "restore non-empty canonical Vitest coverage and fix the reported failure",
         proves: "the canonical frontend test runner discovered tests and all selected tests passed",
-        does_not_prove: "production H5 behavior against the real service",
+        does_not_prove: "production H5 Application Surface behavior against the real service",
     },
     NodeSpec {
         id: "native.android-generation",
@@ -195,6 +216,13 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "inspect the raw Expo and Gradle logs, then fix authored Expo inputs, exact dependencies, local Expo Modules, or the pinned Android runner; do not patch frontend/android generated source or require Expo/EAS credentials",
         proves: "a clean generated Android host produces an identified release APK through the local Gradle wrapper without Expo or EAS credentials",
         does_not_prove: "Android runtime behavior, installation, physical-device behavior, native accessibility, signing for store distribution, or bit-for-bit cross-host reproducibility",
+    },
+    NodeSpec {
+        id: "server.release",
+        prerequisites: &["rust.compile"],
+        remediation: "fix the exact locked Product server release build and ensure Cargo emits the named binary without changing the build profile or package identity",
+        proves: "the exact Product Workspace and committed Cargo.lock produce the named server release binary whose bytes and SHA-256 identity are retained in this evidence root",
+        does_not_prove: "deployment compatibility, production configuration, cross-host reproducibility, runtime correctness, or absence of vulnerabilities",
     },
     NodeSpec {
         id: "api.client-contract",
@@ -233,7 +261,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         prerequisites: &["frontend.lock"],
         remediation: "install the pinned Playwright Chromium browser for this host, then rerun yydra check",
         proves: "the pinned Playwright package resolves to an installed Chromium executable on this host",
-        does_not_prove: "that the production H5 export or its browser assertions will pass",
+        does_not_prove: "that the production H5 Application Surface export or its browser assertions will pass",
     },
     NodeSpec {
         id: "h5.product-presentation-accessibility",
@@ -255,9 +283,21 @@ const NODE_SPECS: &[NodeSpec] = &[
             "infrastructure.docker",
             "infrastructure.playwright-chromium",
         ],
-        remediation: "inspect the node log, run yydra db migrate and the focused production H5 test, then fix the first semantic failure",
-        proves: "the production H5 export creates, completes, reopens, filters, paginates, refreshes from page one, and restores URL state through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; stable request, cursor, transition, and authentication Problems plus focused rollback and keyset-order fixtures also pass",
+        remediation: "inspect the node log, run yydra db migrate and the focused production H5 Application Surface test, then fix the first semantic failure",
+        proves: "the production H5 Application Surface export creates, completes, reopens, filters, paginates, refreshes from page one, and restores URL state through the Framework client, real Axum handlers, explicit SQLx transactions, database constraints, and PostgreSQL; stable request, cursor, transition, and authentication Problems plus focused rollback and keyset-order fixtures also pass",
         does_not_prove: "cross-request snapshot consistency, universal totals or pagination, a full Identity system, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
+    },
+    NodeSpec {
+        id: "supply-chain.release-artifacts",
+        prerequisites: &[
+            "supply-chain.advisories",
+            "server.release",
+            "android.release",
+            "h5.real-runtime",
+        ],
+        remediation: "restore every prerequisite artifact, exact dependency inventory, artifact hash and applicable advisory response, then regenerate the single-run target bundles; license and upstream source review are outside this Goal's scope",
+        proves: "the exact invoked CLI and same-run server, production H5 Application Surface and Android outputs are retained with target-specific CycloneDX SBOMs, checksums, artifact entries, source-map-linked npm inputs, a separate selected Gradle build-input graph, reported Maven OSV query results, and build/test evidence references",
+        does_not_prove: "license approval, notice completeness, source trust, upstream source-to-binary attribution, vulnerability absence outside reported query coverage, cross-host bit-for-bit reproducibility, store signing, deployment compatibility, absence of malicious code, or absence of unknown or later-disclosed vulnerabilities",
     },
     NodeSpec {
         id: INPUTS_UNCHANGED_NODE,
@@ -505,6 +545,8 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "AGGREGATE_IDENTITY_MISMATCH",
     "AGGREGATE_NODE_SET_INVALID",
     "ANDROID_RELEASE_BUILD_FAILED",
+    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+    "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
     "ANDROID_RELEASE_OUTPUT_MISSING",
     "ANDROID_RELEASE_OUTPUT_UNREADABLE",
     "API_BREAKING_CHANGE_UNACKNOWLEDGED",
@@ -630,6 +672,40 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "RUST_TEST_DISCOVERY_FAILED",
     "RUST_TEST_FAILED",
     "RUST_TOOLCHAIN_AUTHORITY_DRIFT",
+    "SERVER_RELEASE_BUILD_FAILED",
+    "SERVER_RELEASE_OUTPUT_MISSING",
+    "SERVER_RELEASE_OUTPUT_UNREADABLE",
+    "SUPPLY_CHAIN_ADVISORY_INPUT_INVALID",
+    "SUPPLY_CHAIN_ADVISORY_RESPONSE_INCOMPLETE",
+    "SUPPLY_CHAIN_ADVISORY_RESPONSE_INVALID",
+    "SUPPLY_CHAIN_ADVISORY_SERVICE_UNAVAILABLE",
+    "SUPPLY_CHAIN_ARTIFACT_INVENTORY_FAILED",
+    "SUPPLY_CHAIN_BUILD_TOOL_SHIPPED",
+    "SUPPLY_CHAIN_CARGO_METADATA_FAILED",
+    "SUPPLY_CHAIN_CARGO_METADATA_INVALID",
+    "SUPPLY_CHAIN_CLI_GRAPH_INVALID",
+    "SUPPLY_CHAIN_CLOCK_UNAVAILABLE",
+    "SUPPLY_CHAIN_COMPONENT_COLLISION",
+    "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
+    "SUPPLY_CHAIN_EXCEPTION_INVALID",
+    "SUPPLY_CHAIN_EXCEPTION_OVERBROAD",
+    "SUPPLY_CHAIN_EXCEPTION_STALE",
+    "SUPPLY_CHAIN_EXCEPTION_UNMATCHED",
+    "SUPPLY_CHAIN_LICENSE_MISMATCH",
+    "SUPPLY_CHAIN_LICENSE_MISSING",
+    "SUPPLY_CHAIN_LICENSE_PROHIBITED",
+    "SUPPLY_CHAIN_LICENSE_REVIEW_REQUIRED",
+    "SUPPLY_CHAIN_LICENSE_UNKNOWN",
+    "SUPPLY_CHAIN_NATIVE_COMPONENT_MISSING",
+    "SUPPLY_CHAIN_NOTICE_INVALID",
+    "SUPPLY_CHAIN_NOTICE_MISSING",
+    "SUPPLY_CHAIN_NOTICE_UNMATCHED",
+    "SUPPLY_CHAIN_POLICY_INVALID",
+    "SUPPLY_CHAIN_PROVENANCE_MISMATCH",
+    "SUPPLY_CHAIN_PROVENANCE_MISSING",
+    "SUPPLY_CHAIN_PROVENANCE_UNKNOWN",
+    "SUPPLY_CHAIN_RELEASE_INPUT_INVALID",
+    "SUPPLY_CHAIN_VULNERABILITY_FOUND",
 ];
 
 fn retry_policy() -> RetryPolicy {
@@ -676,6 +752,134 @@ fn catalog_bytes() -> Result<Vec<u8>> {
 
 fn sha256_identity(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+fn retain_bounded_artifact(
+    source: &Path,
+    destination: &Path,
+    max_bytes: u64,
+    failure_code: &'static str,
+) -> std::result::Result<(u64, String), NodeFailure> {
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        NodeFailure::fail(
+            failure_code,
+            format!("inspect release artifact '{}': {error}", source.display()),
+        )
+    })?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() == 0
+        || metadata.len() > max_bytes
+    {
+        return Err(NodeFailure::fail(
+            failure_code,
+            format!(
+                "release artifact '{}' is not a non-empty plain file within the {max_bytes} byte limit",
+                source.display()
+            ),
+        ));
+    }
+    let mut input = File::open(source).map_err(|error| {
+        NodeFailure::fail(
+            failure_code,
+            format!("open release artifact '{}': {error}", source.display()),
+        )
+    })?;
+    let mut output = create_private_file(destination).map_err(evidence_write_failure)?;
+    let mut digest = Sha256::new();
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(|error| {
+            NodeFailure::fail(
+                failure_code,
+                format!("read release artifact '{}': {error}", source.display()),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..read])
+            .map_err(evidence_write_failure)?;
+        digest.update(&buffer[..read]);
+        copied = copied
+            .checked_add(u64::try_from(read).unwrap_or(u64::MAX))
+            .ok_or_else(|| NodeFailure::fail(failure_code, "release byte count overflow"))?;
+        if copied > max_bytes {
+            return Err(NodeFailure::fail(
+                failure_code,
+                "release artifact changed beyond its bounded copy limit",
+            ));
+        }
+    }
+    output.flush().map_err(evidence_write_failure)?;
+    if copied != metadata.len() {
+        return Err(NodeFailure::fail(
+            failure_code,
+            "release artifact changed while it was retained",
+        ));
+    }
+    Ok((copied, format!("sha256:{}", hex::encode(digest.finalize()))))
+}
+
+fn hash_bounded_artifact(
+    source: &Path,
+    max_bytes: u64,
+    failure_code: &'static str,
+) -> std::result::Result<String, NodeFailure> {
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        NodeFailure::fail(
+            failure_code,
+            format!("inspect evidence artifact '{}': {error}", source.display()),
+        )
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > max_bytes {
+        return Err(NodeFailure::fail(
+            failure_code,
+            format!(
+                "evidence artifact '{}' is not a plain file within the {max_bytes} byte limit",
+                source.display()
+            ),
+        ));
+    }
+    let mut input = File::open(source).map_err(|error| {
+        NodeFailure::fail(
+            failure_code,
+            format!("open evidence artifact '{}': {error}", source.display()),
+        )
+    })?;
+    let mut digest = Sha256::new();
+    let mut hashed = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(|error| {
+            NodeFailure::fail(
+                failure_code,
+                format!("read evidence artifact '{}': {error}", source.display()),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        hashed = hashed
+            .checked_add(u64::try_from(read).unwrap_or(u64::MAX))
+            .ok_or_else(|| NodeFailure::fail(failure_code, "evidence byte count overflow"))?;
+        if hashed > max_bytes {
+            return Err(NodeFailure::fail(
+                failure_code,
+                "evidence artifact changed beyond its bounded hash limit",
+            ));
+        }
+        digest.update(&buffer[..read]);
+    }
+    if hashed != metadata.len() {
+        return Err(NodeFailure::fail(
+            failure_code,
+            "evidence artifact changed while it was hashed",
+        ));
+    }
+    Ok(format!("sha256:{}", hex::encode(digest.finalize())))
 }
 
 fn executor_digest() -> Result<String> {
@@ -2104,6 +2308,8 @@ fn execute_node_attempt(
     let root = context.root;
     match spec.id {
         "policy.exceptions" => check_exception_policy(root),
+        "supply-chain.policy" => crate::supply_chain::validate_policy_authorities(root)
+            .map_err(supply_chain_failure),
         "origin.exact-distribution" => verify_origin_authority(root)
             .map_err(|error| NodeFailure::fail("ORIGIN_AUTHORITY_DRIFT", format!("{error:#}")))
             .and_then(|()| check_fixture_identity(root, fixture)),
@@ -2160,6 +2366,8 @@ fn execute_node_attempt(
             "RUST_DOCTEST_FAILED",
         ),
         "frontend.lock" => check_frontend_lock(context),
+        "supply-chain.dependencies" => check_supply_chain_dependencies(context),
+        "supply-chain.advisories" => check_supply_chain_advisories(context),
         "api.generated-contract" => check_api_generated_contract(context),
         "api.runtime-conformance" => check_api_runtime_conformance(context),
         "frontend.format" => check_frontend_format(context),
@@ -2168,6 +2376,7 @@ fn execute_node_attempt(
         "frontend.test" => check_frontend_tests(context),
         "native.android-generation" => check_android_generation(context),
         "android.release" => check_android_release(context),
+        "server.release" => check_server_release(context),
         "api.client-contract" => check_api_client_contract(context),
         "infrastructure.docker" => check_docker(context),
         "database.runtime-invariants" => check_database_runtime_invariants(context),
@@ -2186,6 +2395,7 @@ fn execute_node_attempt(
             check_product_presentation_accessibility(context)
         }
         "h5.real-runtime" => check_h5_runtime(context),
+        "supply-chain.release-artifacts" => check_supply_chain_release_artifacts(context),
         INPUTS_UNCHANGED_NODE => check_and_remove_scratch(root, baselines),
         _ => unreachable!("all node specs have an implementation"),
     }
@@ -3180,6 +3390,122 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
     Ok(())
 }
 
+fn check_supply_chain_dependencies(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    let output = context.capture(
+        context.root,
+        "cargo",
+        &[
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--filter-platform",
+            env!("YYDRA_BUILD_TARGET"),
+            "--all-features",
+        ],
+        &[],
+    )?;
+    if !output.status.success() {
+        return Err(NodeFailure::fail(
+            "SUPPLY_CHAIN_CARGO_METADATA_FAILED",
+            format!("cargo metadata exited with {}", output.status),
+        ));
+    }
+    crate::supply_chain::dependency_evidence(context.root, context.evidence_root, &output.stdout)
+        .map_err(|failure| {
+            if failure.code == "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED" {
+                NodeFailure::infrastructure(failure.code, failure.message)
+            } else {
+                NodeFailure::fail(failure.code, failure.message)
+            }
+        })
+}
+
+fn check_supply_chain_advisories(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    let invocation =
+        crate::supply_chain::prepare_advisory_query(context.root, context.evidence_root)
+            .map_err(supply_chain_failure)?;
+    run_supply_chain_advisory_query(context, invocation)?;
+    crate::supply_chain::advisory_evidence(context.root, context.evidence_root)
+        .map_err(supply_chain_failure)
+}
+
+fn run_supply_chain_advisory_query(
+    context: &mut NodeContext<'_>,
+    invocation: crate::supply_chain::AdvisoryInvocation,
+) -> std::result::Result<(), NodeFailure> {
+    let script = invocation.script.to_str().ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
+            "OSV query script path is not valid UTF-8",
+        )
+    })?;
+    let request = invocation.request.to_str().ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
+            "OSV query request path is not valid UTF-8",
+        )
+    })?;
+    let response = invocation.response.to_str().ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
+            "OSV query response path is not valid UTF-8",
+        )
+    })?;
+    let output = context.capture(
+        context.evidence_root,
+        "node",
+        &[script, request, response, &invocation.endpoint],
+        &[],
+    )?;
+    if !output.status.success() {
+        return Err(NodeFailure::infrastructure(
+            "SUPPLY_CHAIN_ADVISORY_SERVICE_UNAVAILABLE",
+            format!(
+                "the single fail-fast OSV evidence invocation exited with {}; no advisory request was waived or retried",
+                output.status
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn check_supply_chain_release_artifacts(
+    context: &mut NodeContext<'_>,
+) -> std::result::Result<(), NodeFailure> {
+    let invocation =
+        crate::supply_chain::prepare_android_advisory_query(context.root, context.evidence_root)
+            .map_err(supply_chain_failure)?;
+    run_supply_chain_advisory_query(context, invocation)?;
+    crate::supply_chain::android_advisory_evidence(context.root, context.evidence_root)
+        .map_err(supply_chain_failure)?;
+    let executable = std::env::current_exe().map_err(|error| {
+        NodeFailure::infrastructure(
+            "SUPPLY_CHAIN_RELEASE_INPUT_INVALID",
+            format!("resolve the exact invoked CLI executable: {error}"),
+        )
+    })?;
+    crate::supply_chain::release_artifacts(context.root, context.evidence_root, &executable)
+        .map_err(supply_chain_failure)
+}
+
+fn supply_chain_failure(failure: crate::supply_chain::SupplyChainFailure) -> NodeFailure {
+    if matches!(
+        failure.code,
+        "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED"
+            | "SUPPLY_CHAIN_ADVISORY_RESPONSE_INVALID"
+            | "SUPPLY_CHAIN_ADVISORY_RESPONSE_INCOMPLETE"
+    ) {
+        NodeFailure::infrastructure(failure.code, failure.message)
+    } else {
+        NodeFailure::fail(failure.code, failure.message)
+    }
+}
+
 fn check_api_generated_contract(
     context: &mut NodeContext<'_>,
 ) -> std::result::Result<(), NodeFailure> {
@@ -3605,6 +3931,7 @@ impl Drop for DerivedFiles {
 const FRONTEND_SOURCES: &[&str] = &[
     "app",
     "e2e",
+    "modules",
     "src",
     "scripts",
     "app.json",
@@ -3619,6 +3946,7 @@ const FRONTEND_SOURCES: &[&str] = &[
 const FRONTEND_LINT_SOURCES: &[&str] = &[
     "app",
     "e2e",
+    "modules",
     "src",
     "scripts",
     "eslint.config.mjs",
@@ -3806,6 +4134,7 @@ struct AccountFreeAndroidEnvironment {
     npm_cache: String,
     npm_user_config: String,
     gradle_user_home: String,
+    gradle_opts: String,
 }
 
 impl AccountFreeAndroidEnvironment {
@@ -3816,15 +4145,18 @@ impl AccountFreeAndroidEnvironment {
         let xdg_cache_home = root.join("xdg-cache");
         let npm_cache = root.join("npm-cache");
         let gradle_user_home = root.join("gradle-user-home");
+        let maven_local = home.join(".m2/repository");
         for directory in [
             &home,
             &xdg_config_home,
             &xdg_cache_home,
             &npm_cache,
             &gradle_user_home,
+            &maven_local,
         ] {
             create_private_dir_all(directory).map_err(evidence_write_failure)?;
         }
+        seed_gradle_dependency_cache(&gradle_user_home)?;
         Ok(Self {
             npm_user_config: root.join("empty-npmrc").display().to_string(),
             home: home.display().to_string(),
@@ -3832,6 +4164,12 @@ impl AccountFreeAndroidEnvironment {
             xdg_cache_home: xdg_cache_home.display().to_string(),
             npm_cache: npm_cache.display().to_string(),
             gradle_user_home: gradle_user_home.display().to_string(),
+            gradle_opts: account_free_gradle_options(
+                std::env::var("HTTPS_PROXY")
+                    .or_else(|_| std::env::var("https_proxy"))
+                    .ok()
+                    .as_deref(),
+            ),
         })
     }
 
@@ -3847,20 +4185,419 @@ impl AccountFreeAndroidEnvironment {
         ]
     }
 
-    fn gradle(&self) -> [(&str, &str); 7] {
+    fn gradle(&self) -> [(&str, &str); 8] {
         [
             ("CI", "1"),
+            ("CMAKE_BUILD_PARALLEL_LEVEL", "1"),
             ("NODE_ENV", "production"),
-            (
-                "GRADLE_OPTS",
-                "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.workers.max=2",
-            ),
+            ("GRADLE_OPTS", &self.gradle_opts),
             ("HOME", &self.home),
             ("XDG_CONFIG_HOME", &self.xdg_config_home),
             ("XDG_CACHE_HOME", &self.xdg_cache_home),
             ("GRADLE_USER_HOME", &self.gradle_user_home),
         ]
     }
+}
+
+fn seed_gradle_dependency_cache(gradle_user_home: &Path) -> std::result::Result<(), NodeFailure> {
+    let Some(seed) = std::env::var_os("YYDRA_GRADLE_DEPENDENCY_CACHE_SEED") else {
+        return Ok(());
+    };
+    let seed = PathBuf::from(seed);
+    if !seed.is_absolute() {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "YYDRA_GRADLE_DEPENDENCY_CACHE_SEED must be an absolute path",
+        ));
+    }
+    let source = seed.join("modules-2");
+    let destination = gradle_user_home.join("caches/modules-2");
+    let completion_marker = gradle_user_home
+        .join("caches")
+        .join(".yydra-modules-2-seed-complete");
+    if destination.exists() {
+        return if completion_marker.is_file() {
+            Ok(())
+        } else {
+            Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "isolated Gradle dependency cache '{}' exists without a completed seed copy",
+                    destination.display()
+                ),
+            ))
+        };
+    }
+    copy_gradle_dependency_cache_tree(&source, &destination)?;
+    let mut marker = create_private_file(&completion_marker).map_err(evidence_write_failure)?;
+    marker
+        .write_all(b"complete\n")
+        .map_err(evidence_write_failure)?;
+    marker.flush().map_err(evidence_write_failure)
+}
+
+fn copy_gradle_dependency_cache_tree(
+    source: &Path,
+    destination: &Path,
+) -> std::result::Result<(), NodeFailure> {
+    preflight_gradle_dependency_cache_tree(source, GradleCacheSeedLimits::DEFAULT)?;
+    let mut usage = GradleCacheSeedUsage::default();
+    copy_validated_gradle_dependency_cache_tree(
+        source,
+        destination,
+        GradleCacheSeedLimits::DEFAULT,
+        &mut usage,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct GradleCacheSeedLimits {
+    max_entries: u64,
+    max_files: u64,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+}
+
+impl GradleCacheSeedLimits {
+    const DEFAULT: Self = Self {
+        max_entries: 200_000,
+        max_files: 100_000,
+        max_file_bytes: 512 * 1024 * 1024,
+        max_total_bytes: 4 * 1024 * 1024 * 1024,
+    };
+}
+
+#[derive(Default)]
+struct GradleCacheSeedUsage {
+    entries: u64,
+    files: u64,
+    total_bytes: u64,
+}
+
+fn preflight_gradle_dependency_cache_tree(
+    source: &Path,
+    limits: GradleCacheSeedLimits,
+) -> std::result::Result<(u64, u64), NodeFailure> {
+    let mut pending = vec![source.to_path_buf()];
+    let mut entries = 0_u64;
+    let mut files = 0_u64;
+    let mut total_bytes = 0_u64;
+    while let Some(path) = pending.pop() {
+        entries = entries.checked_add(1).ok_or_else(|| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed entry count overflow",
+            )
+        })?;
+        if entries > limits.max_entries {
+            return Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed exceeds its bounded entry-count limit",
+            ));
+        }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "inspect Gradle dependency cache seed '{}': {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "Gradle dependency cache seed '{}' contains a symlink",
+                    path.display()
+                ),
+            ));
+        }
+        if metadata.is_dir() {
+            let directory = fs::read_dir(&path).map_err(|error| {
+                NodeFailure::infrastructure(
+                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    format!(
+                        "read Gradle dependency cache seed '{}': {error}",
+                        path.display()
+                    ),
+                )
+            })?;
+            let remaining = limits.max_entries.saturating_sub(entries);
+            let mut children = Vec::new();
+            for child in directory {
+                if u64::try_from(children.len()).unwrap_or(u64::MAX) >= remaining {
+                    return Err(NodeFailure::infrastructure(
+                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                        "Gradle dependency cache seed exceeds its bounded entry-count limit",
+                    ));
+                }
+                children.push(child.map_err(|error| {
+                    NodeFailure::infrastructure(
+                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                        format!(
+                            "read Gradle dependency cache seed '{}': {error}",
+                            path.display()
+                        ),
+                    )
+                })?);
+            }
+            children.sort_by_key(std::fs::DirEntry::file_name);
+            for child in children.into_iter().rev() {
+                let name = child.file_name();
+                if name == OsStr::new("gc.properties") || name.to_string_lossy().ends_with(".lock")
+                {
+                    return Err(NodeFailure::infrastructure(
+                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                        format!(
+                            "Gradle dependency cache seed '{}' must omit locks and gc.properties",
+                            child.path().display()
+                        ),
+                    ));
+                }
+                pending.push(child.path());
+            }
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "Gradle dependency cache seed '{}' contains an unsupported file type",
+                    path.display()
+                ),
+            ));
+        }
+        files = files.checked_add(1).ok_or_else(|| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed file count overflow",
+            )
+        })?;
+        total_bytes = total_bytes.checked_add(metadata.len()).ok_or_else(|| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed byte count overflow",
+            )
+        })?;
+        if files > limits.max_files
+            || metadata.len() > limits.max_file_bytes
+            || total_bytes > limits.max_total_bytes
+        {
+            return Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "Gradle dependency cache seed exceeds its bounded copy budget (files {files}/{}, file bytes {}/{}, total bytes {total_bytes}/{})",
+                    limits.max_files,
+                    metadata.len(),
+                    limits.max_file_bytes,
+                    limits.max_total_bytes
+                ),
+            ));
+        }
+    }
+    Ok((files, total_bytes))
+}
+
+fn copy_validated_gradle_dependency_cache_tree(
+    source: &Path,
+    destination: &Path,
+    limits: GradleCacheSeedLimits,
+    usage: &mut GradleCacheSeedUsage,
+) -> std::result::Result<(), NodeFailure> {
+    usage.entries = usage.entries.checked_add(1).ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "Gradle dependency cache seed entry count overflow during copy",
+        )
+    })?;
+    if usage.entries > limits.max_entries {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "Gradle dependency cache seed exceeds its bounded entry-count limit during copy",
+        ));
+    }
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            format!(
+                "inspect Gradle dependency cache seed '{}': {error}",
+                source.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            format!(
+                "Gradle dependency cache seed '{}' contains a symlink",
+                source.display()
+            ),
+        ));
+    }
+    if metadata.is_dir() {
+        create_private_dir_all(destination).map_err(evidence_write_failure)?;
+        let directory = fs::read_dir(source).map_err(|error| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "read Gradle dependency cache seed '{}': {error}",
+                    source.display()
+                ),
+            )
+        })?;
+        let remaining = limits.max_entries.saturating_sub(usage.entries);
+        let mut children = Vec::new();
+        for child in directory {
+            if u64::try_from(children.len()).unwrap_or(u64::MAX) >= remaining {
+                return Err(NodeFailure::infrastructure(
+                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    "Gradle dependency cache seed exceeds its bounded entry-count limit during copy",
+                ));
+            }
+            children.push(child.map_err(|error| {
+                NodeFailure::infrastructure(
+                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    format!(
+                        "read Gradle dependency cache seed '{}': {error}",
+                        source.display()
+                    ),
+                )
+            })?);
+        }
+        children.sort_by_key(std::fs::DirEntry::file_name);
+        for child in children {
+            let name = child.file_name();
+            if name == OsStr::new("gc.properties") || name.to_string_lossy().ends_with(".lock") {
+                return Err(NodeFailure::infrastructure(
+                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    format!(
+                        "Gradle dependency cache seed '{}' must omit locks and gc.properties",
+                        child.path().display()
+                    ),
+                ));
+            }
+            copy_validated_gradle_dependency_cache_tree(
+                &child.path(),
+                &destination.join(name),
+                limits,
+                usage,
+            )?;
+        }
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            format!(
+                "Gradle dependency cache seed '{}' contains an unsupported file type",
+                source.display()
+            ),
+        ));
+    }
+    usage.files = usage.files.checked_add(1).ok_or_else(|| {
+        NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "Gradle dependency cache seed file count overflow during copy",
+        )
+    })?;
+    if usage.files > limits.max_files || metadata.len() > limits.max_file_bytes {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "Gradle dependency cache seed exceeds its bounded file-count or per-file limit during copy",
+        ));
+    }
+    let mut input = File::open(source).map_err(|error| {
+        NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            format!(
+                "open Gradle dependency cache seed '{}': {error}",
+                source.display()
+            ),
+        )
+    })?;
+    let mut output = create_private_file(destination).map_err(evidence_write_failure)?;
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(|error| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                format!(
+                    "read Gradle dependency cache seed '{}': {error}",
+                    source.display()
+                ),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        let read = u64::try_from(read).unwrap_or(u64::MAX);
+        copied = copied.checked_add(read).ok_or_else(|| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed file byte count overflow during copy",
+            )
+        })?;
+        usage.total_bytes = usage.total_bytes.checked_add(read).ok_or_else(|| {
+            NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed total byte count overflow during copy",
+            )
+        })?;
+        if copied > limits.max_file_bytes || usage.total_bytes > limits.max_total_bytes {
+            return Err(NodeFailure::infrastructure(
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                "Gradle dependency cache seed grew beyond its bounded byte budget during copy",
+            ));
+        }
+        output
+            .write_all(&buffer[..usize::try_from(read).unwrap_or(buffer.len())])
+            .map_err(evidence_write_failure)?;
+    }
+    if copied != metadata.len() {
+        return Err(NodeFailure::infrastructure(
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            "Gradle dependency cache seed changed while it was copied",
+        ));
+    }
+    output.flush().map_err(evidence_write_failure)
+}
+
+fn account_free_gradle_options(proxy: Option<&str>) -> String {
+    let mut options = "-Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.workers.max=1".to_owned();
+    let Some(proxy) = proxy else {
+        return options;
+    };
+    let Some(authority) = proxy
+        .strip_prefix("http://")
+        .or_else(|| proxy.strip_prefix("https://"))
+        .and_then(|value| value.split('/').next())
+    else {
+        return options;
+    };
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority.contains('?')
+        || authority.contains('#')
+    {
+        return options;
+    }
+    let Some((host, port)) = authority.rsplit_once(':') else {
+        return options;
+    };
+    if host.is_empty()
+        || !host.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
+        })
+        || port.parse::<u16>().ok().filter(|port| *port > 0).is_none()
+    {
+        return options;
+    }
+    options.push_str(&format!(
+        " -Dhttps.proxyHost={host} -Dhttps.proxyPort={port} -Dhttp.proxyHost={host} -Dhttp.proxyPort={port}"
+    ));
+    options
 }
 
 fn check_android_generation(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
@@ -4276,7 +5013,15 @@ struct AndroidArtifactIdentity {
     path: &'static str,
     bytes: u64,
     sha256: String,
+    bundle_path: &'static str,
+    bundle_bytes: u64,
+    bundle_sha256: String,
+    source_map_path: &'static str,
+    source_map_bytes: u64,
+    source_map_sha256: String,
     native_inventory_sha256: String,
+    resolved_dependency_graph_sha256: String,
+    gradle_material_inventory_sha256: String,
     runner_os: &'static str,
     runner_arch: &'static str,
     gradle_wrapper: String,
@@ -4299,13 +5044,50 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
             &["--version"],
             &environment,
         )?;
-        context.command(
+        let concurrency_init_path = artifact_root.join("gradle-concurrency.init.gradle");
+        write_gradle_concurrency_init_script(&concurrency_init_path)?;
+        let concurrency_init_path_text = concurrency_init_path.display().to_string();
+        let material_init_path = artifact_root.join("gradle-materials.init.gradle");
+        write_gradle_material_init_script(&material_init_path)?;
+        let raw_material_path = context
+            .evidence_root
+            .join("scratch/android-account-free/gradle-materials.raw.json");
+        let raw_material_path_text = raw_material_path.display().to_string();
+        let mut material_environment = environment.to_vec();
+        material_environment.push((
+            "YYDRA_GRADLE_MATERIALS_RAW",
+            raw_material_path_text.as_str(),
+        ));
+        let material_init_path_text = material_init_path.display().to_string();
+        let resolved = context.capture(
             &android,
             "./gradlew",
-            &["--no-daemon", "assembleRelease"],
-            &environment,
-            "ANDROID_RELEASE_BUILD_FAILED",
+            &[
+                "--no-daemon",
+                "assembleRelease",
+                ":app:dependencies",
+                "--configuration",
+                "releaseRuntimeClasspath",
+                ":app:yydraReleaseRuntimeMaterials",
+                "-I",
+                concurrency_init_path_text.as_str(),
+                "-I",
+                material_init_path_text.as_str(),
+                "-Pkotlin.compiler.execution.strategy=in-process",
+                "--max-workers=1",
+            ],
+            &material_environment,
         )?;
+        if !resolved.status.success() {
+            return Err(NodeFailure::fail(
+                "ANDROID_RELEASE_BUILD_FAILED",
+                format!(
+                    "the single bounded Gradle release and material-capture invocation exited with {}: {}",
+                    resolved.status,
+                    String::from_utf8_lossy(&resolved.stderr).trim()
+                ),
+            ));
+        }
         let source = android.join("app/build/outputs/apk/release/app-release.apk");
         if !source.is_file() {
             return Err(NodeFailure::fail(
@@ -4316,29 +5098,103 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
                 ),
             ));
         }
-        let apk_bytes = fs::read(&source).map_err(|error| {
-            NodeFailure::fail(
-                "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        let source_map =
+            android.join("app/build/generated/sourcemaps/react/release/index.android.bundle.map");
+        if !source_map.is_file() {
+            return Err(NodeFailure::fail(
+                "ANDROID_RELEASE_OUTPUT_MISSING",
                 format!(
-                    "read Android release artifact '{}': {error}",
-                    source.display()
+                    "Gradle succeeded without producing the required release source map at '{}'",
+                    source_map.display()
                 ),
+            ));
+        }
+        let bundle = android.join("app/build/generated/assets/react/release/index.android.bundle");
+        if !bundle.is_file() {
+            return Err(NodeFailure::fail(
+                "ANDROID_RELEASE_OUTPUT_MISSING",
+                format!(
+                    "Gradle succeeded without producing the required release JavaScript bundle at '{}'",
+                    bundle.display()
+                ),
+            ));
+        }
+        let resolved_text = std::str::from_utf8(&resolved.stdout).map_err(|error| {
+            NodeFailure::fail(
+                "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
+                format!("Gradle dependency graph is not UTF-8: {error}"),
             )
         })?;
+        if !resolved_text.contains("releaseRuntimeClasspath") {
+            return Err(NodeFailure::fail(
+                "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
+                "Gradle dependency output does not identify releaseRuntimeClasspath",
+            ));
+        }
+        let resolved_path = artifact_root.join("release-runtime-classpath.txt");
+        let mut resolved_file =
+            create_private_file(&resolved_path).map_err(evidence_write_failure)?;
+        resolved_file
+            .write_all(&resolved.stdout)
+            .map_err(evidence_write_failure)?;
+        resolved_file.flush().map_err(evidence_write_failure)?;
+        let gradle_material_path = artifact_root.join("gradle-materials.json");
+        crate::supply_chain::record_android_gradle_materials(
+            &android,
+            Path::new(&account_free.gradle_user_home),
+            &raw_material_path,
+            &gradle_material_path,
+        )
+        .map_err(supply_chain_failure)?;
         let apk_path = artifact_root.join("app-release.apk");
-        let mut apk = create_private_file(&apk_path).map_err(evidence_write_failure)?;
-        apk.write_all(&apk_bytes).map_err(evidence_write_failure)?;
-        apk.flush().map_err(evidence_write_failure)?;
-        let native_inventory_bytes =
-            fs::read(&native_inventory_path).map_err(evidence_write_failure)?;
+        let (apk_bytes, apk_sha256) = retain_bounded_artifact(
+            &source,
+            &apk_path,
+            512 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
+        let retained_source_map = artifact_root.join("index.android.bundle.map");
+        let (source_map_bytes, source_map_sha256) = retain_bounded_artifact(
+            &source_map,
+            &retained_source_map,
+            128 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
+        let retained_bundle = artifact_root.join("index.android.bundle");
+        let (bundle_bytes, bundle_sha256) = retain_bounded_artifact(
+            &bundle,
+            &retained_bundle,
+            256 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
+        let native_inventory_sha256 = hash_bounded_artifact(
+            &native_inventory_path,
+            128 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
+        let resolved_dependency_graph_sha256 = hash_bounded_artifact(
+            &resolved_path,
+            128 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
+        let gradle_material_inventory_sha256 = hash_bounded_artifact(
+            &gradle_material_path,
+            512 * 1024 * 1024,
+            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
+        )?;
         let identity = AndroidArtifactIdentity {
             path: "app-release.apk",
-            bytes: u64::try_from(apk_bytes.len()).unwrap_or(u64::MAX),
-            sha256: format!("sha256:{}", hex::encode(Sha256::digest(&apk_bytes))),
-            native_inventory_sha256: format!(
-                "sha256:{}",
-                hex::encode(Sha256::digest(native_inventory_bytes))
-            ),
+            bytes: apk_bytes,
+            sha256: apk_sha256,
+            bundle_path: "index.android.bundle",
+            bundle_bytes,
+            bundle_sha256,
+            source_map_path: "index.android.bundle.map",
+            source_map_bytes,
+            source_map_sha256,
+            native_inventory_sha256,
+            resolved_dependency_graph_sha256,
+            gradle_material_inventory_sha256,
             runner_os: std::env::consts::OS,
             runner_arch: std::env::consts::ARCH,
             gradle_wrapper,
@@ -4356,6 +5212,272 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
     let cleanup = remove_android_host(context.root);
     cleanup?;
     execution
+}
+
+fn write_gradle_concurrency_init_script(path: &Path) -> std::result::Result<(), NodeFailure> {
+    let mut file = create_private_file(path).map_err(evidence_write_failure)?;
+    file.write_all(
+        br#"def isolatedHome = System.getenv('HOME')
+if (isolatedHome == null || isolatedHome.isEmpty()) {
+  throw new GradleException('HOME is required for the account-free Gradle invocation')
+}
+System.setProperty('user.home', isolatedHome)
+
+gradle.afterProject { candidate, state ->
+  def android = candidate.extensions.findByName('android')
+  def cmake = android?.defaultConfig?.externalNativeBuild?.cmake
+  if (cmake != null) {
+    cmake.arguments(
+      '-DCMAKE_JOB_POOLS=yydra_compile=1;yydra_link=1',
+      '-DCMAKE_JOB_POOL_COMPILE=yydra_compile',
+      '-DCMAKE_JOB_POOL_LINK=yydra_link'
+    )
+  }
+}
+"#,
+    )
+    .map_err(evidence_write_failure)?;
+    file.flush().map_err(evidence_write_failure)
+}
+
+fn write_gradle_material_init_script(path: &Path) -> std::result::Result<(), NodeFailure> {
+    let mut file = create_private_file(path).map_err(evidence_write_failure)?;
+    file.write_all(
+        br#"import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+
+// AGP project runtime variants expose classes/resources, not the final AAR.
+// Retain the public artifact provider for each producer variant, then bind it
+// to the variant actually selected by releaseRuntimeClasspath (never a path guess).
+def projectAarProviders = [:].withDefault { [:] }
+gradle.beforeProject { producer ->
+  producer.pluginManager.withPlugin('com.android.library') {
+    def plugin = producer.plugins.findPlugin('com.android.library')
+    def aarType = plugin.class.classLoader
+      .loadClass('com.android.build.api.artifact.SingleArtifact$AAR')
+      .getField('INSTANCE').get(null)
+    def components = producer.extensions.getByName('androidComponents')
+    components.onVariants(components.selector().all()) { variant ->
+      projectAarProviders[producer.path][variant.name] = variant.artifacts.get(aarType)
+    }
+  }
+}
+
+gradle.afterProject { candidate, state ->
+  if (candidate.path == ':app') {
+    candidate.tasks.register('yydraReleaseRuntimeMaterials') {
+      doLast {
+        def configuration = candidate.configurations.getByName('releaseRuntimeClasspath')
+        def resolution = configuration.incoming.resolutionResult
+        def componentRef = { id ->
+          if (id instanceof ModuleComponentIdentifier) {
+            return "pkg:maven/${id.group}/${id.module}@${id.version}"
+          }
+          if (id instanceof ProjectComponentIdentifier) {
+            return "urn:yydra:gradle-project:${id.projectPath}"
+          }
+          throw new GradleException("unsupported releaseRuntimeClasspath component identifier ${id.displayName}")
+        }
+        def dependencies = resolution.allDependencies.collect { dependency ->
+          if (!(dependency instanceof ResolvedDependencyResult)) {
+            throw new GradleException("unresolved releaseRuntimeClasspath dependency ${dependency.requested.displayName}")
+          }
+          def variant = dependency.resolvedVariant
+          def attributes = variant.attributes.keySet().sort { left, right -> left.name <=> right.name }.collectEntries { attribute ->
+            [(attribute.name): variant.attributes.getAttribute(attribute)?.toString() ?: 'unavailable']
+          }
+          return [
+            from: componentRef(dependency.from.id),
+            to: componentRef(dependency.selected.id),
+            selectedVariant: variant.displayName,
+            selectedVariantAttributes: attributes,
+            requested: dependency.requested.displayName
+          ]
+        }.unique { dependency ->
+          [dependency.from, dependency.to, dependency.selectedVariant, JsonOutput.toJson(dependency.selectedVariantAttributes), dependency.requested].join('\u0000')
+        }.sort { left, right ->
+          [left.from, left.to, left.selectedVariant, JsonOutput.toJson(left.selectedVariantAttributes), left.requested].join('\u0000') <=>
+            [right.from, right.to, right.selectedVariant, JsonOutput.toJson(right.selectedVariantAttributes), right.requested].join('\u0000')
+        }
+        def artifactsByComponent = [:].withDefault { [] }
+        def recordArtifacts = { collection ->
+          collection.artifacts.each { artifact ->
+            def key = artifact.id.componentIdentifier.displayName
+            def filename = artifact.file.name
+            def extensionAt = filename.lastIndexOf('.')
+            artifactsByComponent[key] << [
+              file: artifact.file.absolutePath,
+              extension: extensionAt < 0 ? 'unknown' : filename.substring(extensionAt + 1),
+              classifier: ''
+            ]
+          }
+        }
+        def externalArtifacts = configuration.incoming.artifactView {
+          componentFilter { id -> id instanceof ModuleComponentIdentifier }
+        }
+        recordArtifacts(externalArtifacts)
+        resolution.allComponents.each { result ->
+          def id = result.id
+          if (id instanceof ProjectComponentIdentifier && id.projectPath != ':app') {
+            if (result.variants.size() != 1 || candidate.rootProject.findProject(id.projectPath) == null) {
+              throw new GradleException("ambiguous or foreign Android project variant ${id.displayName}")
+            }
+            def variant = result.variants.first()
+            def variantKey = variant.attributes.keySet().find {
+              it.name == 'com.android.build.gradle.internal.attributes.VariantAttr'
+            }
+            def variantName = variantKey == null ? null : variant.attributes.getAttribute(variantKey)?.toString()
+            def provider = variantName == null ? null : projectAarProviders[id.projectPath][variantName]
+            if (provider == null) {
+              throw new GradleException("no AGP AAR producer for selected ${id.displayName}/${variant.displayName}")
+            }
+            def aar = provider.get().asFile
+            if (!aar.isFile() || !aar.name.endsWith('.aar')) {
+              throw new GradleException("selected AAR producer output is missing after assembleRelease: ${aar}")
+            }
+            artifactsByComponent[id.displayName] << [file: aar.absolutePath, extension: 'aar', classifier: '']
+          }
+        }
+        def components = resolution.allComponents.collect { result ->
+          def id = result.id
+          if (id instanceof ModuleComponentIdentifier) {
+            return [
+              componentType: 'module',
+              group: id.group,
+              name: id.module,
+              version: id.version,
+              projectPath: null,
+              sourceDirectory: null,
+              artifacts: artifactsByComponent[id.displayName].sort { left, right -> left.file <=> right.file }
+            ]
+          }
+          if (id instanceof ProjectComponentIdentifier && id.projectPath != ':app') {
+            def moduleVersion = result.moduleVersion
+            return [
+              componentType: 'project',
+              group: moduleVersion?.group ?: 'workspace-project',
+              name: moduleVersion?.name ?: id.projectName,
+              version: moduleVersion?.version == null || moduleVersion.version == 'unspecified' ? 'workspace' : moduleVersion.version,
+              projectPath: id.projectPath,
+              sourceDirectory: candidate.rootProject.findProject(id.projectPath)?.projectDir?.absolutePath,
+              artifacts: artifactsByComponent[id.displayName].sort { left, right -> left.file <=> right.file }
+            ]
+          }
+          return null
+        }.findAll { it != null }.sort { left, right ->
+          [left.componentType, left.group, left.name, left.version, left.projectPath ?: ''].join('\u0000') <=>
+            [right.componentType, right.group, right.name, right.version, right.projectPath ?: ''].join('\u0000')
+        }
+        def bundleTask = candidate.tasks.findByName('createBundleReleaseJsAndAssets')
+        if (bundleTask == null) {
+          throw new GradleException('createBundleReleaseJsAndAssets is required')
+        }
+        def bundleAssetName = bundleTask.bundleAssetName.get()
+        def bundleBinding = [
+          taskPath: bundleTask.path,
+          bundleFile: new File(bundleTask.jsBundleDir.get().asFile, bundleAssetName).absolutePath,
+          sourceMapFile: new File(bundleTask.jsSourceMapsDir.get().asFile, "${bundleAssetName}.map").absolutePath
+        ]
+        def output = System.getenv('YYDRA_GRADLE_MATERIALS_RAW')
+        if (output == null || output.isEmpty()) {
+          throw new GradleException('YYDRA_GRADLE_MATERIALS_RAW is required')
+        }
+        new File(output).withWriter('UTF-8') { writer ->
+          writer.write(JsonOutput.prettyPrint(JsonOutput.toJson([
+            schemaVersion: 3,
+            configuration: 'releaseRuntimeClasspath',
+            bundleBinding: bundleBinding,
+            components: components,
+            dependencies: dependencies
+          ])))
+          writer.write('\n')
+        }
+      }
+    }
+  }
+}
+"#,
+    )
+    .map_err(evidence_write_failure)?;
+    file.flush().map_err(evidence_write_failure)
+}
+
+fn check_server_release(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
+    let origin = read_workspace_origin_record(context.root).map_err(|error| {
+        NodeFailure::fail(
+            "SERVER_RELEASE_BUILD_FAILED",
+            format!("read exact Product identity: {error:#}"),
+        )
+    })?;
+    let package = format!("{}-server", origin.product_id);
+    context.command(
+        context.root,
+        "cargo",
+        &[
+            "build",
+            "--locked",
+            "--release",
+            "--package",
+            &package,
+            "--bin",
+            "server",
+        ],
+        &[],
+        "SERVER_RELEASE_BUILD_FAILED",
+    )?;
+    let built_name = if cfg!(windows) {
+        "server.exe".to_owned()
+    } else {
+        "server".to_owned()
+    };
+    let source = context.root.join("target/release").join(&built_name);
+    if !source.is_file() {
+        return Err(NodeFailure::fail(
+            "SERVER_RELEASE_OUTPUT_MISSING",
+            format!(
+                "Cargo succeeded without producing the required server binary at '{}'",
+                source.display()
+            ),
+        ));
+    }
+    let artifact_root = context.evidence_root.join("artifacts/server.release");
+    create_private_dir_all(&artifact_root).map_err(evidence_write_failure)?;
+    let retained_name = if cfg!(windows) {
+        "server.exe"
+    } else {
+        "server"
+    };
+    let retained = artifact_root.join(retained_name);
+    let (bytes, sha256) = retain_bounded_artifact(
+        &source,
+        &retained,
+        1024 * 1024 * 1024,
+        "SERVER_RELEASE_OUTPUT_UNREADABLE",
+    )?;
+    #[cfg(unix)]
+    fs::set_permissions(&retained, fs::Permissions::from_mode(0o700))
+        .map_err(evidence_write_failure)?;
+    let identity = serde_json::json!({
+        "schemaVersion": 1,
+        "path": retained_name,
+        "package": package,
+        "binary": "server",
+        "bytes": bytes,
+        "sha256": sha256,
+        "runnerOs": std::env::consts::OS,
+        "runnerArch": std::env::consts::ARCH,
+    });
+    let mut identity_bytes =
+        serde_json::to_vec_pretty(&identity).map_err(evidence_write_failure)?;
+    identity_bytes.push(b'\n');
+    let mut identity_file = create_private_file(&artifact_root.join("artifact.json"))
+        .map_err(evidence_write_failure)?;
+    identity_file
+        .write_all(&identity_bytes)
+        .map_err(evidence_write_failure)?;
+    identity_file.flush().map_err(evidence_write_failure)
 }
 
 fn has_canonical_frontend_test(root: &Path) -> std::result::Result<bool, NodeFailure> {
@@ -4686,7 +5808,7 @@ export default defineConfig({
 "#;
     const PLAYWRIGHT_SPEC: &str = r#"import { expect, test } from "@playwright/test";
 
-test("production H5 reaches Axum and PostgreSQL after refresh", async ({ page }) => {
+test("production H5 Application Surface reaches Axum and PostgreSQL after refresh", async ({ page }) => {
   const healthResponse = page.waitForResponse((response) => response.url().endsWith("/health"));
   await page.goto("/");
   const observed = await healthResponse;
@@ -5772,6 +6894,7 @@ fn sanitized_command(program: &str) -> Command {
     const ALLOWED_ENVIRONMENT: &[&str] = &[
         "ANDROID_HOME",
         "ANDROID_SDK_ROOT",
+        "CARGO_BUILD_JOBS",
         "CARGO_HOME",
         "COMSPEC",
         "DOCKER_CONFIG",
@@ -6149,6 +7272,138 @@ mod tests {
             b"benches::throughput: benchmark\n"
         ));
         assert!(has_discovered_rust_tests(b"tests::transition: test\n"));
+    }
+
+    #[test]
+    fn frontend_authority_commands_cover_local_modules() {
+        assert!(FRONTEND_SOURCES.contains(&"modules"));
+        assert!(FRONTEND_LINT_SOURCES.contains(&"modules"));
+    }
+
+    #[test]
+    fn android_gradle_options_are_single_worker_low_memory_and_never_forward_credentials() {
+        let direct = account_free_gradle_options(None);
+        assert!(direct.contains("-Xmx2g"));
+        assert!(direct.contains("workers.max=1"));
+        assert!(!direct.contains("proxyHost"));
+
+        let proxied = account_free_gradle_options(Some("http://127.0.0.1:10808"));
+        assert!(proxied.contains("-Dhttps.proxyHost=127.0.0.1"));
+        assert!(proxied.contains("-Dhttps.proxyPort=10808"));
+        let credentialed = account_free_gradle_options(Some("http://secret@proxy:8080"));
+        assert!(!credentialed.contains("secret"));
+        assert!(!credentialed.contains("proxyHost"));
+        let malformed = account_free_gradle_options(Some("http://proxy:not-a-port"));
+        assert!(!malformed.contains("proxyHost"));
+    }
+
+    #[test]
+    fn gradle_material_capture_selects_external_artifacts_and_project_aars_separately() {
+        let sandbox = tempfile::tempdir().expect("create Gradle script sandbox");
+        let script = sandbox.path().join("materials.init.gradle");
+        write_gradle_material_init_script(&script).expect("write Gradle material script");
+        let source = fs::read_to_string(script).expect("read Gradle material script");
+        assert!(
+            source.contains("componentFilter { id -> id instanceof ModuleComponentIdentifier }")
+        );
+        assert!(
+            source.contains("id instanceof ProjectComponentIdentifier && id.projectPath != ':app'")
+        );
+        assert!(source.contains("com.android.build.api.artifact.SingleArtifact$AAR"));
+        assert!(source.contains("projectAarProviders[id.projectPath][variantName]"));
+        assert!(source.contains("if (!aar.isFile() || !aar.name.endsWith('.aar'))"));
+        assert!(!source.contains("configuration.incoming.artifacts.artifacts"));
+
+        let concurrency_script = sandbox.path().join("concurrency.init.gradle");
+        write_gradle_concurrency_init_script(&concurrency_script)
+            .expect("write Gradle concurrency script");
+        let concurrency_source =
+            fs::read_to_string(concurrency_script).expect("read Gradle concurrency script");
+        assert!(concurrency_source.contains("System.setProperty('user.home', isolatedHome)"));
+    }
+
+    #[test]
+    fn gradle_dependency_cache_copy_rejects_runtime_state_and_symlinks() {
+        let sandbox = tempfile::tempdir().expect("create cache-copy sandbox");
+        let source = sandbox.path().join("source");
+        let destination = sandbox.path().join("destination");
+        create_private_dir_all(&source).expect("create source");
+        fs::write(source.join("modules-2.lock"), "runtime lock").expect("write lock");
+        let failure = copy_gradle_dependency_cache_tree(&source, &destination)
+            .expect_err("lock files must be rejected");
+        assert_eq!(
+            failure.code,
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let symlink_source = sandbox.path().join("symlink-source");
+            let symlink_destination = sandbox.path().join("symlink-destination");
+            create_private_dir_all(&symlink_source).expect("create symlink source");
+            fs::write(sandbox.path().join("material"), "material").expect("write material");
+            symlink(
+                sandbox.path().join("material"),
+                symlink_source.join("material-link"),
+            )
+            .expect("create cache symlink");
+            let failure = copy_gradle_dependency_cache_tree(&symlink_source, &symlink_destination)
+                .expect_err("symlinks must be rejected");
+            assert_eq!(
+                failure.code,
+                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
+            );
+        }
+    }
+
+    #[test]
+    fn gradle_dependency_cache_preflight_enforces_file_and_byte_budgets() {
+        let sandbox = tempfile::tempdir().expect("create cache-budget sandbox");
+        let source = sandbox.path().join("source");
+        create_private_dir_all(&source).expect("create source");
+        fs::write(source.join("one.bin"), [0_u8; 8]).expect("write first fixture");
+        fs::write(source.join("two.bin"), [0_u8; 8]).expect("write second fixture");
+
+        let files = preflight_gradle_dependency_cache_tree(
+            &source,
+            GradleCacheSeedLimits {
+                max_entries: 3,
+                max_files: 1,
+                max_file_bytes: 16,
+                max_total_bytes: 32,
+            },
+        )
+        .expect_err("file-count overflow must fail closed");
+        assert_eq!(files.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
+
+        let bytes = preflight_gradle_dependency_cache_tree(
+            &source,
+            GradleCacheSeedLimits {
+                max_entries: 3,
+                max_files: 2,
+                max_file_bytes: 7,
+                max_total_bytes: 32,
+            },
+        )
+        .expect_err("per-file overflow must fail closed");
+        assert_eq!(bytes.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
+
+        let mut usage = GradleCacheSeedUsage::default();
+        let copied = copy_validated_gradle_dependency_cache_tree(
+            &source,
+            &sandbox.path().join("bounded-copy"),
+            GradleCacheSeedLimits {
+                max_entries: 3,
+                max_files: 2,
+                max_file_bytes: 8,
+                max_total_bytes: 15,
+            },
+            &mut usage,
+        )
+        .expect_err("the copy itself must enforce the total-byte budget");
+        assert_eq!(copied.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
     }
 
     #[test]

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "boundary": "Corroborated summaries and attribution, never standalone full grants. Byte-exact matching retains every original scope statement.",
+  "forms": [
+    {
+      "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "example": "cargo/linux-raw-sys-0.12.1/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:3290ae0fbc9ddb77d2239121d710f0bb9d31b3b4744e6d97fe01e652b4c1870b",
+      "text": "Short version for non-lawyers:\n\n`linux-raw-sys` is triple-licensed under Apache 2.0 with the LLVM Exception,\nApache 2.0, and MIT terms.\n\n\nLonger version:\n\nCopyrights in the `linux-raw-sys` project are retained by their contributors.\nNo copyright assignment is required to contribute to the `linux-raw-sys`\nproject.\n\nSome files include code derived from Rust's `libstd`; see the comments in\nthe code for details.\n\nExcept as otherwise noted (below and/or in individual files), `linux-raw-sys`\nis licensed under:\n\n - the Apache License, Version 2.0, with the LLVM Exception\n   <LICENSE-Apache-2.0_WITH_LLVM-exception> or\n   <http://llvm.org/foundation/relicensing/LICENSE.txt>\n - the Apache License, Version 2.0\n   <LICENSE-APACHE> or\n   <http://www.apache.org/licenses/LICENSE-2.0>,\n - or the MIT license\n   <LICENSE-MIT> or\n   <http://opensource.org/licenses/MIT>,\n\nat your option.\n"
+    },
+    {
+      "expression": "Apache-2.0 OR MIT",
+      "example": "cargo/rand-0.10.2/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5",
+      "text": "Copyrights in the Rand project are retained by their contributors. No\ncopyright assignment is required to contribute to the Rand project.\n\nFor full authorship information, see the version control history.\n\nExcept as otherwise noted (below and/or in individual files), Rand is\nlicensed under the Apache License, Version 2.0 <LICENSE-APACHE> or\n<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license\n<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.\n\nThe Rand project includes code from the Rust project\npublished under these same licenses.\n"
+    },
+    {
+      "expression": "Apache-2.0 OR MIT",
+      "example": "cargo/rand_core-0.10.1/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7",
+      "text": "Copyrights in the Rand project are retained by their contributors. No\ncopyright assignment is required to contribute to the Rand project.\n\nFor full authorship information, see the version control history.\n\nExcept as otherwise noted (below and/or in individual files), Rand is\nlicensed under the Apache License, Version 2.0 <LICENSE-APACHE> or\n<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license\n<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.\n"
+    },
+    {
+      "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "example": "cargo/rustix-1.1.4/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9",
+      "text": "Short version for non-lawyers:\n\n`rustix` is triple-licensed under Apache 2.0 with the LLVM Exception,\nApache 2.0, and MIT terms.\n\n\nLonger version:\n\nCopyrights in the `rustix` project are retained by their contributors.\nNo copyright assignment is required to contribute to the `rustix`\nproject.\n\nSome files include code derived from Rust's `libstd`; see the comments in\nthe code for details.\n\nExcept as otherwise noted (below and/or in individual files), `rustix`\nis licensed under:\n\n - the Apache License, Version 2.0, with the LLVM Exception\n   <LICENSE-Apache-2.0_WITH_LLVM-exception> or\n   <http://llvm.org/foundation/relicensing/LICENSE.txt>\n - the Apache License, Version 2.0\n   <LICENSE-APACHE> or\n   <http://www.apache.org/licenses/LICENSE-2.0>,\n - or the MIT license\n   <LICENSE-MIT> or\n   <http://opensource.org/licenses/MIT>,\n\nat your option.\n"
+    },
+    {
+      "expression": "Apache-2.0 OR MIT",
+      "example": "cargo/unicode-bidi-0.3.18/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:edb20b474f6cbd4f4db066b54a9e0f687d0009d309412a63431189b59b8e2a07",
+      "text": "This project is copyright 2015, The Servo Project Developers (given in the\nfile AUTHORS).\n\nLicensed under the Apache License, Version 2.0 <LICENSE-APACHE or\nhttp://www.apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or\nhttp://opensource.org/licenses/MIT>, at your option. All files in the project\ncarrying such notice may not be copied, modified, or distributed except\naccording to those terms.\n"
+    },
+    {
+      "expression": "Apache-2.0 OR MIT",
+      "example": "cargo/unicode-normalization-0.1.25/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
+      "text": "Licensed under the Apache License, Version 2.0\n<LICENSE-APACHE or\nhttp://www.apache.org/licenses/LICENSE-2.0> or the MIT\nlicense <LICENSE-MIT or http://opensource.org/licenses/MIT>,\nat your option. All files in the project carrying such\nnotice may not be copied, modified, or distributed except\naccording to those terms.\n"
+    },
+    {
+      "expression": "Apache-2.0 OR MIT",
+      "example": "cargo/utf8_iter-1.0.4/COPYRIGHT",
+      "interpretation": "Exact attribution and scoped alternative-license summary only; each named grant must be independently corroborated. Source/test pointers and conditional PD designation remain in the original document, not assertions of artifact exclusion or an independently inspected PD grant.",
+      "sha256": "sha256:c30152c94a6d75e021adbc52b3a52470366a46edb917e17deae3259251af244c",
+      "text": "Copyright Mozilla Foundation\n\nLicensed under the Apache License (Version 2.0), or the MIT license,\n(the \"Licenses\") at your option. You may not use this file except in\ncompliance with one of the Licenses. You may obtain copies of the\nLicenses at:\n\n   https://www.apache.org/licenses/LICENSE-2.0\n   https://opensource.org/licenses/MIT\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the Licenses is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the Licenses for the specific language governing permissions and\nlimitations under the Licenses.\n\n--\n\nTest code is dedicated to the Public Domain when so designated (see\nthe individual files for PD/CC0-dedicated sections).\n\n--\n\nThe implementation for Utf8CharIndices was adapted from the\nCharIndices implementation of the Rust standard library at revision\nab32548539ec38a939c1b58599249f3b54130026\n(https://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/library/core/src/str/iter.rs).\n\nExcerpt from https://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/COPYRIGHT ,\nwhich refers to\nhttps://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/LICENSE-APACHE\nand\nhttps://github.com/rust-lang/rust/blob/ab32548539ec38a939c1b58599249f3b54130026/LICENSE-MIT\n:\n\nFor full authorship information, see the version control history or\nhttps://thanks.rust-lang.org\n\nExcept as otherwise noted (below and/or in individual files), Rust is\nlicensed under the Apache License, Version 2.0 <LICENSE-APACHE> or\n<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license\n<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.\n"
+    },
+    {
+      "expression": "Apache-2.0",
+      "example": "npm/playwright/NOTICE",
+      "interpretation": "Exact project/derivation attribution; no new grant, no arbitrary project, copyright, or URL wildcard. Requires independent complete Apache grant.",
+      "sha256": "sha256:6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
+      "text": "Playwright\nCopyright (c) Microsoft Corporation\n\nThis software contains code derived from the Puppeteer project (https://github.com/puppeteer/puppeteer),\navailable under the Apache 2.0 license (https://github.com/puppeteer/puppeteer/blob/master/LICENSE).\n"
+    },
+    {
+      "expression": "Apache-2.0",
+      "example": "npm/xcode/NOTICE",
+      "interpretation": "Exact project/derivation attribution; no new grant, no arbitrary project, copyright, or URL wildcard. Requires independent complete Apache grant.",
+      "sha256": "sha256:0e5b0fe8d11e1627336bc6361de610ba8acf9a035fd73e07b5b4a0909a48371f",
+      "text": "Apache Cordova\nCopyright 2012-2020 The Apache Software Foundation\n\nThis product includes software developed at\nThe Apache Software Foundation (http://www.apache.org/).\n"
+    },
+    {
+      "expression": "Apache-2.0",
+      "example": "maven/commons-codec@1.10/META-INF/NOTICE.txt",
+      "interpretation": "Exact Apache project and derivation attribution including original-author credits and scoped test-data pointers where present. No waiver of unknown remainder or inference of artifact exclusion; independent full Apache text required.",
+      "sha256": "sha256:bcb83645cb4d1a46e551f21a53477b3f8b7518471480e1b6afe04a5f9fc3af80",
+      "text": "Apache Commons Codec\r\nCopyright 2002-2014 The Apache Software Foundation\r\n\r\nThis product includes software developed at\r\nThe Apache Software Foundation (http://www.apache.org/).\r\n\r\nsrc/test/org/apache/commons/codec/language/DoubleMetaphoneTest.java\r\ncontains test data from http://aspell.net/test/orig/batch0.tab.\r\nCopyright (C) 2002 Kevin Atkinson (kevina@gnu.org)\r\n\r\n===============================================================================\r\n\r\nThe content of package org.apache.commons.codec.language.bm has been translated\r\nfrom the original php source code available at http://stevemorse.org/phoneticinfo.htm\r\nwith permission from the original authors.\r\nOriginal source copyright:\r\nCopyright (c) 2008 Alexander Beider & Stephen P. Morse.\r\n"
+    },
+    {
+      "expression": "Apache-2.0",
+      "example": "maven/commons-io@2.22.0/META-INF/NOTICE.txt",
+      "interpretation": "Exact Apache project and derivation attribution including original-author credits and scoped test-data pointers where present. No waiver of unknown remainder or inference of artifact exclusion; independent full Apache text required.",
+      "sha256": "sha256:85394d154ee5c7b48057f0a29329b6d4c80d2513d4c02b233a69207c522763cf",
+      "text": "Apache Commons IO\nCopyright 2002-2026 The Apache Software Foundation\n\nThis product includes software developed at\nThe Apache Software Foundation (https://www.apache.org/).\n"
+    }
+  ]
+}

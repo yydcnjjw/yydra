@@ -259,14 +259,14 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
                 "YYDRA_PLAYWRIGHT_OUTPUT",
                 sandbox.path().join("playwright-output"),
             ),
-        "run production H5 acceptance after refresh",
+        "run production H5 Application Surface acceptance after refresh",
     );
     if !h5.status.success() {
         server.shutdown();
         drop(compose);
         let retained = sandbox.keep();
         panic!(
-            "production H5 acceptance failed; retained diagnostics at {}\nstdout:\n{}\nstderr:\n{}",
+            "production H5 Application Surface acceptance failed; retained diagnostics at {}\nstdout:\n{}\nstderr:\n{}",
             retained.display(),
             String::from_utf8_lossy(&h5.stdout),
             String::from_utf8_lossy(&h5.stderr)

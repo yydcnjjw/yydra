@@ -8,7 +8,9 @@ rust-version.workspace = true
 description = "Exact-version CLI for the Yydra application framework"
 repository = "https://github.com/yydcnjjw/yydra"
 readme = "README.md"
+build = "build.rs"
 include = [
+  "build.rs",
   "LICENSE-APACHE",
   "LICENSE-MIT",
   "src/**",
@@ -18,6 +20,7 @@ include = [
   "tests/packaged_consumer.rs",
   "/template/product-workspace/**",
   "README.md",
+  "supply-chain/**",
 ]
 
 [[bin]]
@@ -28,6 +31,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 ctrlc.workspace = true
+flate2.workspace = true
 hex.workspace = true
 include_dir.workspace = true
 semver.workspace = true

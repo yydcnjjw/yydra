@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "distributionVersion": "__YYDRA_DISTRIBUTION_VERSION__",
+  "advisoryService": {
+    "name": "OSV",
+    "endpoint": "https://api.osv.dev/v1/querybatch",
+    "responseSchema": "OSV API 1.0 querybatch"
+  },
+  "allowedSources": {
+    "cargo": [
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "workspace-path"
+    ],
+    "npmHosts": [
+      "mirrors.cloud.tencent.com",
+      "registry.npmjs.org"
+    ],
+    "gradleRepositories": [
+      "google()",
+      "gradlePluginPortal()",
+      "https://www.jitpack.io",
+      "mavenCentral()",
+      "npm-locked-local-maven-repo"
+    ]
+  },
+  "allowedLicenses": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "BlueOak-1.0.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Python-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib"
+  ],
+  "reviewRequiredLicensePrefixes": [
+    "BSD-2-Clause-Views",
+    "LGPL-",
+    "MPL-",
+    "Python-2.0.1",
+    "Unicode-DFS-2016"
+  ],
+  "prohibitedLicensePrefixes": [
+    "AGPL-",
+    "GPL-"
+  ],
+  "prohibitedTerms": [
+    "LicenseRef-Custom",
+    "LicenseRef-NonCommercial",
+    "LicenseRef-NonCompete"
+  ],
+  "requiredNotices": [
+    {
+      "purl": "pkg:cargo/regex-syntax@0.8.11",
+      "path": "src/unicode_tables/LICENSE-UNICODE",
+      "sha256": "sha256:74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"
+    },
+    {
+      "purl": "pkg:npm/argparse@2.0.1",
+      "path": "LICENSE",
+      "sha256": "sha256:de4d1f2d2ad5ad0cfd1657a106476b31cb5db5ef9d1ff842b237c0c81f0c8a23"
+    },
+    {
+      "purl": "pkg:npm/uri-js@4.4.1",
+      "path": "LICENSE",
+      "sha256": "sha256:0af366eff4c01ec147c9c61ea9e8ffad64a4294754c9d79355f3fd1b97cb2fb9"
+    },
+    {
+      "purl": "pkg:npm/caniuse-lite@1.0.30001810",
+      "path": "LICENSE",
+      "sha256": "sha256:fd3a263fe19ed8faa9068b43abaebafc02c77897b0c6fc09abc04bb592e5f16e"
+    },
+    {
+      "purl": "pkg:npm/lightningcss@1.33.0",
+      "path": "LICENSE",
+      "sha256": "sha256:5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e"
+    },
+    {
+      "purl": "pkg:npm/lightningcss-linux-x64-gnu@1.33.0",
+      "path": "LICENSE",
+      "sha256": "sha256:5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e"
+    },
+    {
+      "purl": "pkg:npm/lightningcss-linux-x64-musl@1.33.0",
+      "path": "LICENSE",
+      "sha256": "sha256:5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e"
+    },
+    {
+      "purl": "pkg:npm/react@19.2.3",
+      "path": "LICENSE",
+      "sha256": "sha256:da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+    }
+  ],
+  "reportBoundary": "Inventory and known-advisory results only. License review, dependency source trust, upstream provenance, and notice completeness are not evaluated; not blanket legal compatibility or absence of malicious code."
+}
