@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+apply plugin: 'com.android.library'
+
+group = 'dev.yydra.thirdparty'
+version = '5465bcc3bbea3350dbb2affb4511a5726efb321e'
+layout.buildDirectory = rootProject.layout.buildDirectory.dir('yydra-bolts-tasks')
+
+android {
+    namespace 'bolts'
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+    }
+    sourceSets {
+        main.java.srcDirs = ['../vendor/src/main/java']
+        main.manifest.srcFile 'AndroidManifest.xml'
+        main.resources.srcDirs = ['../vendor']
+        main.resources.include 'LICENSE'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}

@@ -2,7 +2,14 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import {
+  lstat,
+  opendir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import {
   extname,
@@ -64,11 +71,13 @@ async function main() {
     "web",
     "--output-dir",
     distributionRoot,
+    "--source-maps",
   ]);
   if (shutdownSignal !== undefined) {
     return;
   }
   canonicalDistributionRoot = await realpath(distributionRoot);
+  await bindExportedSourceMaps(canonicalDistributionRoot);
 
   server = createServer(async (request, response) => {
     try {
@@ -148,6 +157,101 @@ async function main() {
     ]);
   } finally {
     await closeServer(server);
+  }
+}
+
+// Metro identifies matching exports with debugId but omits the optional map.file.
+// Complete that declaration only after checking the unmodified pair, before the
+// browser tests and retained checksums. Never repair contradictory metadata.
+async function bindExportedSourceMaps(root) {
+  const maps = [];
+  let entries = 0;
+  async function visit(directory, depth = 0) {
+    if (depth > 64) {
+      throw new Error(
+        "H5_SOURCE_MAP_BINDING_INVALID: export exceeds depth limit",
+      );
+    }
+    for await (const entry of await opendir(directory)) {
+      entries += 1;
+      if (entries > 100_000 || (!entry.isDirectory() && !entry.isFile())) {
+        throw new Error(
+          "H5_SOURCE_MAP_BINDING_INVALID: unsupported export entry or count",
+        );
+      }
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path, depth + 1);
+      else if (entry.name.endsWith(".map")) {
+        maps.push(path);
+        if (maps.length > 100) {
+          throw new Error(
+            "H5_SOURCE_MAP_BINDING_INVALID: map count exceeds 100",
+          );
+        }
+      }
+    }
+  }
+  await visit(root);
+  if (maps.length === 0 || maps.length > 100) {
+    throw new Error("H5_SOURCE_MAP_BINDING_INVALID: expected 1 to 100 maps");
+  }
+  let totalBytes = 0;
+  for (const path of maps.sort()) {
+    const fail = () => {
+      throw new Error(`H5_SOURCE_MAP_BINDING_INVALID: ${relative(root, path)}`);
+    };
+    const bundlePath = path.slice(0, -4);
+    const mapMetadata = await lstat(path).catch(fail);
+    const bundleMetadata = await lstat(bundlePath).catch(fail);
+    if (!mapMetadata.isFile() || !bundleMetadata.isFile()) fail();
+    const mapSize = mapMetadata.size;
+    const bundleSize = bundleMetadata.size;
+    totalBytes += mapSize;
+    if (
+      mapSize > 128 * 1024 * 1024 ||
+      totalBytes > 256 * 1024 * 1024 ||
+      bundleSize > 256 * 1024 * 1024
+    )
+      fail();
+    const map = JSON.parse(await readFile(path, "utf8"));
+    const bundle = await readFile(bundlePath, "utf8");
+    const mapName = relative(root, path).split(sep).join("/");
+    const bundleName = mapName.split("/").at(-1).slice(0, -4);
+    const urls = [
+      ...bundle.matchAll(/^\/\/# sourceMappingURL=([^\r\n]+)$/gm),
+    ].map((match) => match[1]);
+    if (
+      urls.length !== 1 ||
+      (urls[0] !== `/${mapName}` && urls[0] !== `${bundleName}.map`)
+    )
+      fail();
+    if (
+      map.version !== 3 ||
+      (map.file !== undefined && map.file !== bundleName)
+    )
+      fail();
+    const debugIds = [...bundle.matchAll(/^\/\/# debugId=([^\r\n]+)$/gm)].map(
+      (match) => match[1],
+    );
+    if (
+      map.file === undefined ||
+      map.debugId !== undefined ||
+      debugIds.length !== 0
+    ) {
+      if (
+        typeof map.debugId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          map.debugId,
+        ) ||
+        debugIds.length !== 1 ||
+        debugIds[0] !== map.debugId
+      )
+        fail();
+    }
+    if (map.file === undefined) {
+      map.file = bundleName;
+      await writeFile(path, `${JSON.stringify(map)}\n`);
+    }
   }
 }
 

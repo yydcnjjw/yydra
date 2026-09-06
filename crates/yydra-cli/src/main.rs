@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 
 mod api_generation;
 mod check_graph;
+mod supply_chain;
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
@@ -795,13 +796,16 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 .to_str()
                 .expect("materialized template paths are UTF-8")
                 .to_owned();
+            let third_party = path.starts_with("frontend/modules/yydra-bolts-tasks/vendor/");
             let (lifecycle, hand_editable_after_creation) =
-                if matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT") {
+                if third_party || matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT") {
                     ("exact-distribution-snapshot", false)
                 } else if matches!(
                     path.as_str(),
                     ".yydra/origin.toml"
                         | ".yydra/product-source-license.toml"
+                        | ".yydra/supply-chain-policy.json"
+                        | ".yydra/supply-chain-exceptions.json"
                         | ".yydra/api-generation.json"
                         | ".yydra/api-generation-history.json"
                         | ".yydra/api-generation.lock"
@@ -817,8 +821,12 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 lifecycle,
                 mode: "0644",
                 source_sha256: hex::encode(Sha256::digest(contents)),
-                source_authority: "yydra-distribution-template",
-                spdx: SPDX_EXPRESSION,
+                source_authority: if third_party {
+                    "BoltsFramework/Bolts-Android@5465bcc3bbea3350dbb2affb4511a5726efb321e"
+                } else {
+                    "yydra-distribution-template"
+                },
+                spdx: if third_party { "MIT" } else { SPDX_EXPRESSION },
                 hand_editable_after_creation,
             }
         })
@@ -1078,6 +1086,25 @@ fn verify_snapshot_authorities_with_origin(
         bail!(
             "committed generated provenance drift at '.yydra/product-source-license.toml'; restore the reviewed generated file from version control"
         );
+    }
+    for relative in [
+        ".yydra/supply-chain-policy.json",
+        ".yydra/supply-chain-exceptions.json",
+    ] {
+        let template = TEMPLATE
+            .get_file(relative)
+            .expect("embedded supply-chain authority");
+        let source = std::str::from_utf8(template.contents())
+            .expect("embedded supply-chain authority is UTF-8");
+        let expected = render_template(source, &render)?;
+        let actual = fs::read_to_string(root.join(relative)).with_context(|| {
+            format!("read committed generated supply-chain authority {relative:?}")
+        })?;
+        if actual != expected {
+            bail!(
+                "committed generated supply-chain authority drift at '{relative}'; restore the reviewed generated file from version control"
+            );
+        }
     }
     if origin.product_source_license != normalized.product_source_license {
         bail!("Workspace provenance license does not match its normalized Origin Record")

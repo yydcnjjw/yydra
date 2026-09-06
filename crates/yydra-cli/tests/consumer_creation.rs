@@ -199,6 +199,46 @@ fn records_one_normalized_license_choice_for_future_product_owned_source_only() 
 }
 
 #[test]
+fn generated_android_dependency_constraints_pin_reviewed_safe_versions() {
+    let sandbox = tempdir().expect("create test sandbox");
+    let destination = sandbox.path().join("safe-android-reader");
+    create_with_flags(&destination, "Safe Android Reader", "safe-android-reader");
+
+    let app: serde_json::Value = serde_json::from_slice(
+        &fs::read(destination.join("frontend/app.json")).expect("read Expo app config"),
+    )
+    .expect("parse Expo app config");
+    assert!(
+        app["expo"]["plugins"]
+            .as_array()
+            .expect("Expo plugin array")
+            .iter()
+            .any(|plugin| { plugin == "./modules/yydra-android-supply-chain/app.plugin.js" }),
+        "generated native hosts must apply the Product-owned supply-chain constraints"
+    );
+
+    let package: serde_json::Value = serde_json::from_slice(
+        &fs::read(destination.join("frontend/package.json")).expect("read frontend package"),
+    )
+    .expect("parse frontend package");
+    assert_eq!(package["devDependencies"]["@expo/config-plugins"], "57.0.9");
+
+    let plugin = fs::read_to_string(
+        destination.join("frontend/modules/yydra-android-supply-chain/app.plugin.js"),
+    )
+    .expect("read Android supply-chain config plugin");
+    assert!(plugin.contains("withAppBuildGradle"));
+    assert!(plugin.contains("com.google.code.gson:gson"));
+    assert!(plugin.contains("strictly(\"2.14.0\")"));
+    assert!(plugin.contains("commons-io:commons-io"));
+    assert!(plugin.contains("strictly(\"2.22.0\")"));
+    assert!(
+        !plugin.contains("force("),
+        "dependency safety policy must use auditable exact constraints"
+    );
+}
+
+#[test]
 fn reading_queue_named_product_keeps_product_and_section_heading_proofs_distinct() {
     let sandbox = tempdir().expect("create test sandbox");
     let destination = sandbox.path().join("reading-queue");
@@ -256,9 +296,21 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     assert!(paths.contains(&"LICENSE-MIT"));
     assert!(paths.contains(&"LICENSE-APACHE"));
     assert!(paths.contains(&".yydra/origin.toml"));
+    assert!(paths.contains(&".yydra/supply-chain-policy.json"));
+    assert!(paths.contains(&".yydra/supply-chain-exceptions.json"));
     for artifact in artifacts {
         assert_eq!(artifact["mode"], "0644");
-        assert_eq!(artifact["spdx"], "MIT OR Apache-2.0");
+        if artifact["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("frontend/modules/yydra-bolts-tasks/vendor/")
+        {
+            assert_eq!(artifact["spdx"], "MIT");
+            assert_eq!(artifact["lifecycle"], "exact-distribution-snapshot");
+            assert_eq!(artifact["hand_editable_after_creation"], false);
+        } else {
+            assert_eq!(artifact["spdx"], "MIT OR Apache-2.0");
+        }
         let digest = artifact["source_sha256"]
             .as_str()
             .expect("artifact source digest");
@@ -338,6 +390,8 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
         ".yydra/api-generation.json",
         ".yydra/api-generation-history.json",
         ".yydra/api-generation.lock",
+        ".yydra/supply-chain-policy.json",
+        ".yydra/supply-chain-exceptions.json",
         "frontend/src/generated/public-api/fetch/client.ts",
     ] {
         let artifact = artifacts
@@ -1233,6 +1287,130 @@ fn dev_backend_spawn_failure_uses_the_stable_diagnostic_contract() {
 
 #[cfg(unix)]
 #[test]
+fn production_h5_runner_binds_metro_maps_before_serving_and_rejects_conflicts() {
+    let sandbox = tempdir().expect("create H5 map sandbox");
+    let workspace = sandbox.path().join("metro-map-reader");
+    create_with_flags(&workspace, "Metro Map Reader", "metro-map-reader");
+    let frontend = workspace.join("frontend");
+    let fake_bin = sandbox.path().join("bin");
+    fs::create_dir(&fake_bin).expect("create npm adapter directory");
+    let exporter = sandbox.path().join("exporter.mjs");
+    fs::write(&exporter, r#"// SPDX-License-Identifier: MIT OR Apache-2.0
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+const root = process.env.YYDRA_H5_DIST;
+const assets = join(root, '_expo/static/js/web');
+mkdirSync(assets, { recursive: true });
+const mode = process.env.YYDRA_MAP_TEST_CASE;
+const debugId = '77f4ce06-4696-4163-82e8-8dfe93756d0f';
+const map = { version: 3, mappings: '', names: [], sources: ['node_modules/react/index.js'], sourcesContent: ['export default {};'], debugId };
+if (mode === 'wrong-file') map.file = 'unrelated.js';
+if (mode === 'wrong-debug') map.debugId = '11111111-1111-4111-8111-111111111111';
+if (mode === 'missing-debug') delete map.debugId;
+const url = mode === 'wrong-url' ? '/unrelated/entry.js.map' : '/_expo/static/js/web/entry.js.map';
+let bundle = `console.log('ok');\n//# sourceMappingURL=${url}\n//# debugId=${debugId}\n`;
+if (mode === 'duplicate-url') bundle += '//# sourceMappingURL=evil.js.map\n';
+if (mode === 'fifo-bundle') execFileSync('mkfifo', [join(assets, 'entry.js')]);
+else writeFileSync(join(assets, 'entry.js'), bundle);
+writeFileSync(join(assets, 'entry.js.map'), JSON.stringify(map));
+if (mode === 'too-many-maps') {
+  for (let index = 0; index < 100; index++) writeFileSync(join(assets, `extra-${index}.js.map`), JSON.stringify(map));
+}
+writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry.js"></script>');
+"#).expect("write external Expo export fixture");
+    write_executable(
+        &fake_bin.join("npm"),
+        "#!/bin/sh\nexec node \"$YYDRA_MAP_TEST_EXPORTER\"\n",
+    );
+    let playwright = frontend.join("node_modules/@playwright/test");
+    fs::create_dir_all(&playwright).expect("create browser adapter directory");
+    fs::write(playwright.join("cli.js"), r#"// SPDX-License-Identifier: MIT OR Apache-2.0
+(async () => {
+  const response = await fetch(`http://127.0.0.1:${process.env.YYDRA_H5_PORT}/_expo/static/js/web/entry.js.map`);
+  const map = await response.json();
+  if (map.file !== 'entry.js') throw new Error('served Metro map lacks canonical bundle declaration');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"#).expect("write external browser fixture");
+    let inherited_path = std::env::var_os("PATH").expect("PATH");
+    let path = std::env::join_paths(
+        std::iter::once(fake_bin).chain(std::env::split_paths(&inherited_path)),
+    )
+    .expect("compose npm adapter PATH");
+    for case in [
+        "valid",
+        "wrong-file",
+        "wrong-debug",
+        "missing-debug",
+        "wrong-url",
+        "duplicate-url",
+        "fifo-bundle",
+        "too-many-maps",
+    ] {
+        let distribution = sandbox.path().join(case);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve port");
+        let port = listener.local_addr().expect("local address").port();
+        drop(listener);
+        let mut child = Command::new("node")
+            .arg("scripts/run-h5-e2e.mjs")
+            .current_dir(&frontend)
+            .env("PATH", &path)
+            .env("YYDRA_H5_PORT", port.to_string())
+            .env("YYDRA_H5_DIST", &distribution)
+            .env("YYDRA_MAP_TEST_CASE", case)
+            .env("YYDRA_MAP_TEST_EXPORTER", &exporter)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run emitted production H5 runner");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while child.try_wait().expect("poll H5 runner").is_none() {
+            if std::time::Instant::now() >= deadline {
+                child.kill().expect("terminate blocked H5 runner");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().expect("read H5 runner output");
+        assert_eq!(
+            output.status.success(),
+            case == "valid",
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let map: serde_json::Value = serde_json::from_slice(
+            &fs::read(distribution.join("_expo/static/js/web/entry.js.map"))
+                .expect("read exported map"),
+        )
+        .expect("parse exported map");
+        if case == "valid" {
+            assert_eq!(map["file"], "entry.js");
+            assert_eq!(map["debugId"], "77f4ce06-4696-4163-82e8-8dfe93756d0f");
+            assert_eq!(
+                map["sourcesContent"],
+                serde_json::json!(["export default {};"])
+            );
+            assert_eq!(
+                fs::read_to_string(distribution.join("_expo/static/js/web/entry.js"))
+                    .expect("read bundle"),
+                "console.log('ok');\n//# sourceMappingURL=/_expo/static/js/web/entry.js.map\n//# debugId=77f4ce06-4696-4163-82e8-8dfe93756d0f\n"
+            );
+        } else {
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("H5_SOURCE_MAP_BINDING_INVALID"),
+                "{case}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                map.get("file").is_none() || map["file"] == "unrelated.js",
+                "invalid map was rewritten"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn production_h5_runner_signal_terminates_export_process_group() {
     if !Command::new("node")
         .arg("--version")
@@ -1284,7 +1462,7 @@ await new Promise((resolve) => worker.once('exit', resolve));
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("start production H5 runner");
+        .expect("start production H5 Application Surface runner");
     for _ in 0..100 {
         if child_pid.is_file() && worker_pid.is_file() {
             break;
@@ -1296,7 +1474,7 @@ await new Promise((resolve) => worker.once('exit', resolve));
         Command::new("kill")
             .args(["-TERM", &child.id().to_string()])
             .status()
-            .expect("signal production H5 runner")
+            .expect("signal production H5 Application Surface runner")
             .success()
     );
     let output = child.wait_with_output().expect("wait for H5 runner");
@@ -1534,6 +1712,16 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
             "provenance-drift",
             ".yydra/product-source-license.toml",
             "committed generated provenance drift",
+        ),
+        (
+            "supply-chain-policy-drift",
+            ".yydra/supply-chain-policy.json",
+            "committed generated supply-chain authority drift",
+        ),
+        (
+            "supply-chain-exceptions-drift",
+            ".yydra/supply-chain-exceptions.json",
+            "committed generated supply-chain authority drift",
         ),
     ] {
         let workspace = sandbox.path().join(name);

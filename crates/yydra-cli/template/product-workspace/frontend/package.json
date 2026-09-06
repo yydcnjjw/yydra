@@ -1,14 +1,15 @@
 {
   "name": "__PRODUCT_ID__-frontend",
   "version": "0.1.0",
+  "license": __PRODUCT_SOURCE_LICENSE_TOML__,
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
     "web": "expo start --web",
-    "export:h5": "expo export --clear --platform web --output-dir dist",
+    "export:h5": "expo export --clear --platform web --output-dir dist --source-maps",
     "generate:android": "expo prebuild --platform android --clean --no-install",
-    "format:check": "prettier --check app e2e src scripts app.json eslint.config.mjs orval.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
-    "lint": "eslint --max-warnings=0 app e2e src scripts eslint.config.mjs orval.config.mjs playwright.config.mts vitest.config.mts",
+    "format:check": "prettier --check app e2e modules src scripts app.json eslint.config.mjs orval.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
+    "lint": "eslint --max-warnings=0 app e2e modules src scripts eslint.config.mjs orval.config.mjs playwright.config.mts vitest.config.mts",
     "test": "vitest run",
     "test:e2e": "node scripts/run-h5-e2e.mjs",
     "test:product-semantics": "node scripts/run-product-semantics.mjs",
@@ -36,6 +37,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@expo/config-plugins": "57.0.9",
     "@playwright/test": "1.62.1",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.3",
