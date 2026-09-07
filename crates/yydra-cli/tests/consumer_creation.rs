@@ -374,6 +374,24 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
     let repair_routes =
         fs::read_to_string(skills_root.join("yydra-diagnose/references/repair-routes.md"))
             .expect("read safe repair routes");
+    let install_route = repair_routes
+        .split_once("- `FRONTEND_LOCK_INSTALL_FAILED`:")
+        .expect("installation failures have their own repair route")
+        .1
+        .split("\n- ")
+        .next()
+        .expect("installation repair guidance");
+    for required in [
+        "inspect the retained npm log first",
+        "configuration, tool, or infrastructure",
+        "Preserve locked URLs, versions, and integrities",
+        "unless dependency drift or an explicitly intended dependency change",
+    ] {
+        assert!(
+            install_route.contains(required),
+            "installation failure must safely route {required}"
+        );
+    }
     for required in [
         "DOCTOR_WORKSPACE_VERIFY",
         "Do not edit those",

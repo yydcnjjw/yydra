@@ -120,10 +120,14 @@ rather than guessing which authority or external condition to change.
 
 ## Frontend, H5, and accessibility
 
-- `FRONTEND_LOCK_MISSING`, `FRONTEND_LOCK_MUTATED`, and
-  `FRONTEND_LOCK_INSTALL_FAILED`: restore or deliberately regenerate the
-  committed npm lock through the supported dependency path; do not let a check
-  rewrite it.
+- `FRONTEND_LOCK_MISSING` and `FRONTEND_LOCK_MUTATED`: restore or deliberately
+  regenerate the committed npm lock through the supported dependency path; do
+  not let a check rewrite it.
+- `FRONTEND_LOCK_INSTALL_FAILED`: inspect the retained npm log first and repair
+  the reported configuration, tool, or infrastructure condition, including
+  registry configuration, network availability, or authentication. Preserve locked URLs, versions, and integrities;
+  do not regenerate the lock unless dependency drift or an explicitly intended dependency change
+  is established. An installation failure alone does not establish a bad lock.
 - `FRONTEND_TOOLCHAIN_DRIFT`: restore exact package versions from the committed
   lock. Do not change versions to hide an unrelated Product failure.
 - `FRONTEND_FORMAT_FAILED`, `FRONTEND_LINT_FAILED`,
