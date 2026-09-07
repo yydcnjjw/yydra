@@ -54,10 +54,23 @@ jobs:
       - name: Install exact npm
         run: npm install --global npm@12.0.2
       - name: Install exact Java
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '21.0.12.1+1'
+        # setup-java rejects this four-component Java version as invalid SemVer.
+        # Preserve the exact JDK, including its fourth component and build number.
+        run: |
+          jdk_root=$(mktemp -d "$RUNNER_TEMP/yydra-jdk.XXXXXX")
+          curl --fail --silent --show-error --location \
+            'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz' \
+            --output "$jdk_root/jdk.tar.gz"
+          (cd "$jdk_root" && printf '%s  jdk.tar.gz\n' \
+            'ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94' | sha256sum --check --strict)
+          mkdir "$jdk_root/extracted"
+          tar -xzf "$jdk_root/jdk.tar.gz" -C "$jdk_root/extracted" --strip-components=1
+          echo "JAVA_HOME=$jdk_root/extracted" >> "$GITHUB_ENV"
+          echo "$jdk_root/extracted/bin" >> "$GITHUB_PATH"
+      - name: Verify the exact Java runtime
+        run: |
+          java -XshowSettings:properties -version 2>&1 | tee "${{ runner.temp }}/java-runtime.txt"
+          grep -Fx '    java.runtime.version = 21.0.12.1+1-LTS' "${{ runner.temp }}/java-runtime.txt"
       - name: Install the exact Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
       - name: Create an independent Product Workspace and browser infrastructure
