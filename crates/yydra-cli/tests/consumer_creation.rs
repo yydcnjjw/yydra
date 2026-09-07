@@ -1889,8 +1889,12 @@ fn doctor_fails_closed_on_distribution_mismatch_without_mutating_the_workspace()
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("cargo install yydra-cli --version 9.8.7 --locked")
+            .contains("cargo install yydra-cli@9.8.7 --path ./yydra-cli-9.8.7 --locked")
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v9.8.7"));
+    assert!(stderr.contains("yydra-cli-9.8.7.crate.sha256"));
+    assert!(!stderr.contains("cargo install yydra-cli --version"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -1927,7 +1931,9 @@ fn doctor_fails_closed_on_template_digest_mismatch_without_mutation() {
         stderr.contains("template digest mismatch"),
         "stderr: {stderr}"
     );
-    assert!(stderr.contains("cargo install yydra-cli --version 0.1.0 --locked"));
+    assert!(stderr.contains("cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked"));
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0"));
+    assert!(stderr.contains("sha256sum --check yydra-cli-0.1.0.crate.sha256"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -2172,6 +2178,12 @@ fn doctor_rejects_origin_schema_and_template_identity_mismatch() {
             "stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0")
+        );
+        assert!(stderr.contains("cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked"));
+        assert!(stderr.contains("sha256sum --check yydra-cli-0.1.0.crate.sha256"));
         assert_eq!(before, byte_inventory(&workspace));
     }
 }

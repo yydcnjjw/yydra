@@ -978,6 +978,12 @@ struct VerifiedWorkspaceOrigin {
     expected_template: String,
 }
 
+fn distribution_install_remediation(version: &str) -> String {
+    format!(
+        "download yydra-cli-{version}.crate and yydra-cli-{version}.crate.sha256 from https://github.com/yydcnjjw/yydra/releases/tag/distribution-v{version}; verify with sha256sum --check yydra-cli-{version}.crate.sha256, extract the verified package in a fresh directory, then install exactly with: cargo install yydra-cli@{version} --path ./yydra-cli-{version} --locked"
+    )
+}
+
 fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspaceOrigin> {
     let root = find_workspace_root(workspace)?;
     let origin = read_workspace_origin_record(&root)?;
@@ -986,26 +992,29 @@ fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspace
 
     if origin.distribution_version != DISTRIBUTION_VERSION {
         bail!(
-            "distribution mismatch; install exactly with: cargo install yydra-cli --version {} --locked",
-            origin.distribution_version
+            "distribution mismatch; {}",
+            distribution_install_remediation(&origin.distribution_version)
         );
     }
     if origin.schema_version != 1 {
         bail!(
-            "origin schema mismatch: expected 1, found {}; install exactly with: cargo install yydra-cli --version {DISTRIBUTION_VERSION} --locked",
-            origin.schema_version
+            "origin schema mismatch: expected 1, found {}; {}",
+            origin.schema_version,
+            distribution_install_remediation(DISTRIBUTION_VERSION)
         );
     }
     if origin.template_identity != TEMPLATE_IDENTITY {
         bail!(
-            "template identity mismatch: expected {TEMPLATE_IDENTITY}, found {}; install exactly with: cargo install yydra-cli --version {DISTRIBUTION_VERSION} --locked",
-            origin.template_identity
+            "template identity mismatch: expected {TEMPLATE_IDENTITY}, found {}; {}",
+            origin.template_identity,
+            distribution_install_remediation(DISTRIBUTION_VERSION)
         );
     }
     let expected_template = template_digest();
     if origin.template_sha256 != expected_template {
         bail!(
-            "template digest mismatch for Distribution {DISTRIBUTION_VERSION}; install exactly with: cargo install yydra-cli --version {DISTRIBUTION_VERSION} --locked"
+            "template digest mismatch for Distribution {DISTRIBUTION_VERSION}; {}",
+            distribution_install_remediation(DISTRIBUTION_VERSION)
         );
     }
     let normalized = NormalizedInput::new(
