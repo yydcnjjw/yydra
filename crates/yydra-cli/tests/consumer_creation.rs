@@ -412,6 +412,43 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     }
 }
 
+#[test]
+fn fresh_workspace_selects_its_locked_npm_registry_without_user_configuration() {
+    let sandbox = tempdir().expect("create registry sandbox");
+    let workspace = sandbox.path().join("registry-reader");
+    create_with_flags(&workspace, "Registry Reader", "registry-reader");
+    let user_config = sandbox.path().join("user.npmrc");
+    let global_config = sandbox.path().join("global.npmrc");
+    fs::write(&user_config, "").expect("empty user configuration");
+    fs::write(&global_config, "").expect("empty global configuration");
+    let lock_path = workspace.join("frontend/package-lock.json");
+    let lock_before = fs::read(&lock_path).expect("read committed npm lock");
+    for (setting, expected) in [
+        ("registry", "https://mirrors.cloud.tencent.com/npm/"),
+        ("allow-remote", "none"),
+    ] {
+        let output = Command::new("npm")
+            .args(["config", "get", setting, "--userconfig"])
+            .arg(&user_config)
+            .arg("--globalconfig")
+            .arg(&global_config)
+            .env_remove("npm_config_registry")
+            .env_remove("NPM_CONFIG_REGISTRY")
+            .env_remove("npm_config_allow_remote")
+            .env_remove("NPM_CONFIG_ALLOW_REMOTE")
+            .current_dir(workspace.join("frontend"))
+            .output()
+            .expect("query actual consumer npm configuration");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    }
+    assert_eq!(fs::read(&lock_path).expect("reread npm lock"), lock_before);
+}
+
 #[cfg(unix)]
 #[test]
 fn setup_uses_both_committed_locks_and_emits_versioned_json_lines() {

@@ -854,6 +854,7 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                     "Cargo.lock",
                     "migrations/**",
                     "crates/**",
+                    "frontend/.npmrc",
                     "frontend/package.json",
                     "frontend/package-lock.json",
                     "frontend/app/**",

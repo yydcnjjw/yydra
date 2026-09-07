@@ -18,6 +18,11 @@ no upgrade, no compatibility-range selection, and no Distribution-version overri
 
 ## Supported local path
 
+`frontend/.npmrc` selects the same registry used by the committed npm lock, so
+setup does not depend on a developer's user-level registry setting. It does not
+enable arbitrary remote URL dependencies or change locked versions/integrities.
+Treat this file as Product-owned configuration alongside the frontend manifests.
+
 Install exact dependency graphs and start the pinned PostgreSQL service:
 
 ```console

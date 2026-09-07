@@ -113,6 +113,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         "crates/server/src/main.rs",
         "crates/transport-http/Cargo.toml",
         "frontend/app/index.tsx",
+        "frontend/.npmrc",
         "frontend/package-lock.json",
         "migrations/0001_baseline.sql",
         "migrations/0005_reading_progress.sql",
