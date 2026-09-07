@@ -5,11 +5,34 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
-Install an exact release while preserving its packaged lockfile:
+Distribution `0.1.0` is delivered through the
+[exact GitHub Release](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0),
+not published to crates.io. Download the Cargo package and its checksum into a
+fresh directory, verify the package **before extraction**, and install that
+independent package while preserving its lockfile (Linux shell):
 
-```console
-cargo install yydra-cli --version 0.1.0 --locked
+```sh
+set -eu
+package_dir="$(mktemp -d)"
+cd "$package_dir"
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --output yydra-cli-0.1.0.crate \
+  https://github.com/yydcnjjw/yydra/releases/download/distribution-v0.1.0/yydra-cli-0.1.0.crate
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --output yydra-cli-0.1.0.crate.sha256 \
+  https://github.com/yydcnjjw/yydra/releases/download/distribution-v0.1.0/yydra-cli-0.1.0.crate.sha256
+sha256sum --check yydra-cli-0.1.0.crate.sha256
+tar -xzf yydra-cli-0.1.0.crate
+cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked
+yydra --version
 ```
+
+Use the attached `.crate`, not GitHub's automatically generated repository
+source archive, a mutable branch, or a monorepo checkout. The release records
+the package digest and the exact source commit separately. Its checksum binds
+the downloaded bytes; it is not an upstream-source or license-review claim.
+Cargo may still download the package's locked dependencies from crates.io;
+publishing Yydra itself there is not required. No registry login is needed.
 
 Create once with one normalized product-source license choice:
 
