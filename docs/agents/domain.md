@@ -3,34 +3,43 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-**Selected layout: single-context.**
+**Selected layout: multi-context.**
 
-## Before exploring, read these
+## Before exploring
 
-- **`CONTEXT.md`** at the repo root.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
+- Read `CONTEXT-MAP.md` at the repository root.
+- Follow it to every context-local `CONTEXT.md` relevant to the work.
+- Read relevant system-wide ADRs under `docs/adr/`.
+- Read context-local ADRs identified by `CONTEXT-MAP.md`.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+If these files do not exist yet, proceed silently. `/domain-modeling` creates them lazily as terms and decisions are resolved.
+
+When consulting `docs/research/`, start with its [research index](../research/README.md).
+These dated notes preserve earlier facts, alternatives, and recommendations.
+Use the index's subsequent decision and implementation pointers to establish the
+applicable contract; a research recommendation alone does not establish one.
 
 ## File structure
 
 ```text
 /
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
-└── src/
+├── CONTEXT-MAP.md
+├── docs/
+│   └── adr/                 # System-wide decisions
+└── <context-root>/
+    ├── CONTEXT.md
+    └── docs/
+        └── adr/             # Context-specific decisions
 ```
+
+`CONTEXT-MAP.md` is the authoritative directory of context names and locations. Do not infer context boundaries solely from package or directory boundaries.
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When output names a domain concept—in an issue title, design, hypothesis, test, or implementation—use the term defined by the relevant `CONTEXT.md`.
 
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+If a necessary concept is absent, reconsider whether it belongs to the project or record the gap for `/domain-modeling`.
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
-
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+If proposed work contradicts an existing ADR, surface the conflict explicitly instead of silently overriding it.
