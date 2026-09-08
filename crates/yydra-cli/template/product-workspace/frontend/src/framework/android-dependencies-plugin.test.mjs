@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
-  addAndroidSupplyChainConstraints,
+  addAndroidDependencyConstraints,
   addBoltsProject,
   addBoltsSubstitution,
-} = require("../../modules/yydra-android-supply-chain/app.plugin.js");
+} = require("../../modules/yydra-android-dependencies/app.plugin.js");
 
-describe("Android supply-chain config plugin", () => {
+describe("Android dependency config plugin", () => {
   it("replaces only the reviewed old Bolts request with a source-built project", () => {
     const settings = addBoltsProject("");
     const root = addBoltsSubstitution("");
@@ -32,22 +32,22 @@ describe("Android supply-chain config plugin", () => {
   });
   it("adds exact reviewed dependency constraints once", () => {
     const initial = "dependencies {\n}\n";
-    const once = addAndroidSupplyChainConstraints(initial);
-    const twice = addAndroidSupplyChainConstraints(once);
+    const once = addAndroidDependencyConstraints(initial);
+    const twice = addAndroidDependencyConstraints(once);
 
     expect(once).toContain('strictly("2.14.0")');
     expect(once).toContain('strictly("2.22.0")');
     expect(twice).toBe(once);
     expect(
-      once.match(/yydra-android-supply-chain-constraints:begin/g),
+      once.match(/yydra-android-dependencies-constraints:begin/g),
     ).toHaveLength(1);
   });
 
   it("fails closed when only one generated marker remains", () => {
     expect(() =>
-      addAndroidSupplyChainConstraints(
-        "// yydra-android-supply-chain-constraints:begin\n",
+      addAndroidDependencyConstraints(
+        "// yydra-android-dependencies-constraints:begin\n",
       ),
-    ).toThrow("incomplete Yydra Android supply-chain constraint markers");
+    ).toThrow("incomplete Yydra Android dependency constraint markers");
   });
 });
