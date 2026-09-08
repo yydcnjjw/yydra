@@ -14,7 +14,8 @@ The old Maven JAR is neither reused nor relabeled. The later upstream source als
 fixes cancellation-registration cleanup; it is not asserted byte-equivalent to 1.4.0.
 Generated native projects remain disposable; Gradle outputs go under their build tree.
 
-`yydra check` verifies the embedded path/mode/SHA-256 import manifest, full MIT
-grant, exact-commit OSV query, selected Gradle project/variant/artifacts, and the
-Android SBOM/notice linkage. Source checks alone do not prove a successful build,
-class retention, Android runtime behavior, or blanket legal compatibility.
+The Distribution retains the original LICENSE and file-level attribution record.
+`yydra check` verifies the exact Distribution snapshot and performs the normal
+Android generation and release build. It does not query advisories, collect
+Gradle dependency materials, or produce SBOMs. A successful build does not prove
+Android runtime behavior or blanket legal compatibility.

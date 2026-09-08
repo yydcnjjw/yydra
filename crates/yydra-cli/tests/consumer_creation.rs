@@ -14,6 +14,29 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[test]
+fn new_workspace_needs_no_supply_chain_configuration() {
+    let sandbox = tempdir().expect("create sandbox");
+    let workspace = sandbox.path().join("without-scanning");
+    create_with_flags(&workspace, "Without Scanning", "without-scanning");
+    for relative in [
+        ".yydra/supply-chain-policy.json",
+        ".yydra/supply-chain-exceptions.json",
+    ] {
+        assert!(!workspace.join(relative).exists(), "unexpected {relative}");
+    }
+    let doctor = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .arg("doctor")
+        .arg(&workspace)
+        .output()
+        .expect("diagnose workspace without scanning configuration");
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+}
+
+#[test]
 fn creates_workspace_from_the_normalized_flag_model() {
     let sandbox = tempdir().expect("create test sandbox");
     let destination = sandbox.path().join("acme-reader");
@@ -43,7 +66,7 @@ fn creates_workspace_from_the_normalized_flag_model() {
 
     let origin = fs::read_to_string(destination.join(".yydra/origin.toml"))
         .expect("read Workspace Origin Record");
-    assert!(origin.contains("distribution_version = \"0.1.0\""));
+    assert!(origin.contains("distribution_version = \"0.2.0\""));
     assert!(origin.contains("template_identity = \"yydra-v0-product-workspace\""));
     assert!(origin.contains("product_name = \"Acme Reader\""));
     assert!(origin.contains("product_id = \"acme-reader\""));
@@ -214,8 +237,8 @@ fn generated_android_dependency_constraints_pin_reviewed_safe_versions() {
             .as_array()
             .expect("Expo plugin array")
             .iter()
-            .any(|plugin| { plugin == "./modules/yydra-android-supply-chain/app.plugin.js" }),
-        "generated native hosts must apply the Product-owned supply-chain constraints"
+            .any(|plugin| { plugin == "./modules/yydra-android-dependencies/app.plugin.js" }),
+        "generated native hosts must apply the Product-owned dependency constraints"
     );
 
     let package: serde_json::Value = serde_json::from_slice(
@@ -225,9 +248,9 @@ fn generated_android_dependency_constraints_pin_reviewed_safe_versions() {
     assert_eq!(package["devDependencies"]["@expo/config-plugins"], "57.0.9");
 
     let plugin = fs::read_to_string(
-        destination.join("frontend/modules/yydra-android-supply-chain/app.plugin.js"),
+        destination.join("frontend/modules/yydra-android-dependencies/app.plugin.js"),
     )
-    .expect("read Android supply-chain config plugin");
+    .expect("read Android dependency config plugin");
     assert!(plugin.contains("withAppBuildGradle"));
     assert!(plugin.contains("com.google.code.gson:gson"));
     assert!(plugin.contains("strictly(\"2.14.0\")"));
@@ -460,7 +483,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     )
     .expect("parse Distribution inventory");
     assert_eq!(inventory["schema_version"], 1);
-    assert_eq!(inventory["distribution_version"], "0.1.0");
+    assert_eq!(inventory["distribution_version"], "0.2.0");
     assert_eq!(
         inventory["lifecycles"],
         serde_json::json!([
@@ -490,8 +513,8 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     assert!(paths.contains(&"LICENSE-MIT"));
     assert!(paths.contains(&"LICENSE-APACHE"));
     assert!(paths.contains(&".yydra/origin.toml"));
-    assert!(paths.contains(&".yydra/supply-chain-policy.json"));
-    assert!(paths.contains(&".yydra/supply-chain-exceptions.json"));
+    assert!(!paths.contains(&".yydra/supply-chain-policy.json"));
+    assert!(!paths.contains(&".yydra/supply-chain-exceptions.json"));
     for artifact in artifacts {
         assert_eq!(artifact["mode"], "0644");
         if artifact["path"]
@@ -584,8 +607,6 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
         ".yydra/api-generation.json",
         ".yydra/api-generation-history.json",
         ".yydra/api-generation.lock",
-        ".yydra/supply-chain-policy.json",
-        ".yydra/supply-chain-exceptions.json",
         "frontend/src/generated/public-api/fetch/client.ts",
     ] {
         let artifact = artifacts
@@ -700,7 +721,10 @@ printf '%s:%s\n' "$PWD" "$*" >> "$YYDRA_TOOL_LOG"
         "calls: {calls}"
     );
     assert!(
-        calls.contains(&format!("{}:ci", workspace.join("frontend").display())),
+        calls.contains(&format!(
+            "{}:ci --no-audit",
+            workspace.join("frontend").display()
+        )),
         "calls: {calls}"
     );
 
@@ -1518,49 +1542,39 @@ fn dev_backend_spawn_failure_uses_the_stable_diagnostic_contract() {
 
 #[cfg(unix)]
 #[test]
-fn production_h5_runner_binds_metro_maps_before_serving_and_rejects_conflicts() {
-    let sandbox = tempdir().expect("create H5 map sandbox");
-    let workspace = sandbox.path().join("metro-map-reader");
-    create_with_flags(&workspace, "Metro Map Reader", "metro-map-reader");
+fn production_h5_runner_serves_real_exports_without_source_maps_and_preserves_failures() {
+    let sandbox = tempdir().expect("create H5 export sandbox");
+    let workspace = sandbox.path().join("h5-export-reader");
+    create_with_flags(&workspace, "H5 Export Reader", "h5-export-reader");
     let frontend = workspace.join("frontend");
     let fake_bin = sandbox.path().join("bin");
     fs::create_dir(&fake_bin).expect("create npm adapter directory");
     let exporter = sandbox.path().join("exporter.mjs");
-    fs::write(&exporter, r#"// SPDX-License-Identifier: MIT OR Apache-2.0
+    fs::write(
+        &exporter,
+        r#"// SPDX-License-Identifier: MIT OR Apache-2.0
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+if (process.argv.includes('--source-maps')) throw new Error('unexpected analysis material');
 const root = process.env.YYDRA_H5_DIST;
 const assets = join(root, '_expo/static/js/web');
 mkdirSync(assets, { recursive: true });
-const mode = process.env.YYDRA_MAP_TEST_CASE;
-const debugId = '77f4ce06-4696-4163-82e8-8dfe93756d0f';
-const map = { version: 3, mappings: '', names: [], sources: ['node_modules/react/index.js'], sourcesContent: ['export default {};'], debugId };
-if (mode === 'wrong-file') map.file = 'unrelated.js';
-if (mode === 'wrong-debug') map.debugId = '11111111-1111-4111-8111-111111111111';
-if (mode === 'missing-debug') delete map.debugId;
-const url = mode === 'wrong-url' ? '/unrelated/entry.js.map' : '/_expo/static/js/web/entry.js.map';
-let bundle = `console.log('ok');\n//# sourceMappingURL=${url}\n//# debugId=${debugId}\n`;
-if (mode === 'duplicate-url') bundle += '//# sourceMappingURL=evil.js.map\n';
-if (mode === 'fifo-bundle') execFileSync('mkfifo', [join(assets, 'entry.js')]);
-else writeFileSync(join(assets, 'entry.js'), bundle);
-writeFileSync(join(assets, 'entry.js.map'), JSON.stringify(map));
-if (mode === 'too-many-maps') {
-  for (let index = 0; index < 100; index++) writeFileSync(join(assets, `extra-${index}.js.map`), JSON.stringify(map));
-}
+writeFileSync(join(assets, 'entry.js'), "console.log('ok');\n");
 writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry.js"></script>');
-"#).expect("write external Expo export fixture");
+"#,
+    )
+    .expect("write external Expo export fixture");
     write_executable(
         &fake_bin.join("npm"),
-        "#!/bin/sh\nexec node \"$YYDRA_MAP_TEST_EXPORTER\"\n",
+        "#!/bin/sh\nexec node \"$YYDRA_H5_TEST_EXPORTER\" \"$@\"\n",
     );
     let playwright = frontend.join("node_modules/@playwright/test");
     fs::create_dir_all(&playwright).expect("create browser adapter directory");
     fs::write(playwright.join("cli.js"), r#"// SPDX-License-Identifier: MIT OR Apache-2.0
 (async () => {
-  const response = await fetch(`http://127.0.0.1:${process.env.YYDRA_H5_PORT}/_expo/static/js/web/entry.js.map`);
-  const map = await response.json();
-  if (map.file !== 'entry.js') throw new Error('served Metro map lacks canonical bundle declaration');
+  const response = await fetch(`http://127.0.0.1:${process.env.YYDRA_H5_PORT}/_expo/static/js/web/entry.js`);
+  if (!response.ok || await response.text() !== "console.log('ok');\n") throw new Error('wrong production output');
+  if (process.env.YYDRA_H5_TEST_CASE === 'browser-failure') throw new Error('real browser failure');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 "#).expect("write external browser fixture");
     let inherited_path = std::env::var_os("PATH").expect("PATH");
@@ -1568,16 +1582,7 @@ writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry
         std::iter::once(fake_bin).chain(std::env::split_paths(&inherited_path)),
     )
     .expect("compose npm adapter PATH");
-    for case in [
-        "valid",
-        "wrong-file",
-        "wrong-debug",
-        "missing-debug",
-        "wrong-url",
-        "duplicate-url",
-        "fifo-bundle",
-        "too-many-maps",
-    ] {
+    for case in ["valid", "browser-failure"] {
         let distribution = sandbox.path().join(case);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve port");
         let port = listener.local_addr().expect("local address").port();
@@ -1588,8 +1593,8 @@ writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry
             .env("PATH", &path)
             .env("YYDRA_H5_PORT", port.to_string())
             .env("YYDRA_H5_DIST", &distribution)
-            .env("YYDRA_MAP_TEST_CASE", case)
-            .env("YYDRA_MAP_TEST_EXPORTER", &exporter)
+            .env("YYDRA_H5_TEST_CASE", case)
+            .env("YYDRA_H5_TEST_EXPORTER", &exporter)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1609,33 +1614,13 @@ writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry
             "{case}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let map: serde_json::Value = serde_json::from_slice(
-            &fs::read(distribution.join("_expo/static/js/web/entry.js.map"))
-                .expect("read exported map"),
-        )
-        .expect("parse exported map");
-        if case == "valid" {
-            assert_eq!(map["file"], "entry.js");
-            assert_eq!(map["debugId"], "77f4ce06-4696-4163-82e8-8dfe93756d0f");
-            assert_eq!(
-                map["sourcesContent"],
-                serde_json::json!(["export default {};"])
-            );
-            assert_eq!(
-                fs::read_to_string(distribution.join("_expo/static/js/web/entry.js"))
-                    .expect("read bundle"),
-                "console.log('ok');\n//# sourceMappingURL=/_expo/static/js/web/entry.js.map\n//# debugId=77f4ce06-4696-4163-82e8-8dfe93756d0f\n"
-            );
-        } else {
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains("H5_SOURCE_MAP_BINDING_INVALID"),
-                "{case}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                map.get("file").is_none() || map["file"] == "unrelated.js",
-                "invalid map was rewritten"
-            );
+        assert!(
+            !distribution
+                .join("_expo/static/js/web/entry.js.map")
+                .exists()
+        );
+        if case == "browser-failure" {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("real browser failure"));
         }
     }
 }
@@ -1944,16 +1929,6 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
             ".yydra/product-source-license.toml",
             "committed generated provenance drift",
         ),
-        (
-            "supply-chain-policy-drift",
-            ".yydra/supply-chain-policy.json",
-            "committed generated supply-chain authority drift",
-        ),
-        (
-            "supply-chain-exceptions-drift",
-            ".yydra/supply-chain-exceptions.json",
-            "committed generated supply-chain authority drift",
-        ),
     ] {
         let workspace = sandbox.path().join(name);
         create_with_flags(&workspace, "Authority Reader", "authority-reader");
@@ -2105,7 +2080,7 @@ fn doctor_fails_closed_on_distribution_mismatch_without_mutating_the_workspace()
     fs::write(
         &origin_path,
         origin.replace(
-            "distribution_version = \"0.1.0\"",
+            "distribution_version = \"0.2.0\"",
             "distribution_version = \"9.8.7\"",
         ),
     )
@@ -2162,9 +2137,9 @@ fn doctor_fails_closed_on_template_digest_mismatch_without_mutation() {
         stderr.contains("template digest mismatch"),
         "stderr: {stderr}"
     );
-    assert!(stderr.contains("cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked"));
-    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0"));
-    assert!(stderr.contains("sha256sum --check yydra-cli-0.1.0.crate.sha256"));
+    assert!(stderr.contains("cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked"));
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.2.0"));
+    assert!(stderr.contains("sha256sum --check yydra-cli-0.2.0.crate.sha256"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -2411,10 +2386,10 @@ fn doctor_rejects_origin_schema_and_template_identity_mismatch() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0")
+            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.2.0")
         );
-        assert!(stderr.contains("cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked"));
-        assert!(stderr.contains("sha256sum --check yydra-cli-0.1.0.crate.sha256"));
+        assert!(stderr.contains("cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked"));
+        assert!(stderr.contains("sha256sum --check yydra-cli-0.2.0.crate.sha256"));
         assert_eq!(before, byte_inventory(&workspace));
     }
 }
@@ -3348,7 +3323,7 @@ fn fn_append_malformed_table(mut origin: String) -> String {
 
 fn fn_replace_with_non_semver(origin: String) -> String {
     origin.replace(
-        "distribution_version = \"0.1.0\"",
+        "distribution_version = \"0.2.0\"",
         "distribution_version = \"not-semver\"",
     )
 }
