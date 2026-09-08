@@ -11,4 +11,4 @@ Use the five default canonical triage labels. See `docs/agents/triage-labels.md`
 
 ### Domain docs
 
-Use a single-context layout with `CONTEXT.md` and `docs/adr/` at the repository root. See `docs/agents/domain.md`.
+Use a multi-context layout with a root `CONTEXT-MAP.md` pointing to context-local `CONTEXT.md` files and ADRs. See `docs/agents/domain.md`.
