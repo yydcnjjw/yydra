@@ -6,7 +6,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "web": "expo start --web",
-    "export:h5": "expo export --clear --platform web --output-dir dist --source-maps",
+    "export:h5": "expo export --clear --platform web --output-dir dist",
     "generate:android": "expo prebuild --platform android --clean --no-install",
     "format:check": "prettier --check app e2e modules src scripts app.json eslint.config.mjs orval.config.mjs package.json playwright.config.mts tsconfig.json vitest.config.mts",
     "lint": "eslint --max-warnings=0 app e2e modules src scripts eslint.config.mjs orval.config.mjs playwright.config.mts vitest.config.mts",

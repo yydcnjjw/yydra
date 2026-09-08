@@ -29,7 +29,7 @@ use crate::{
 #[cfg(windows)]
 use crate::{WindowsJob, create_kill_on_close_job};
 
-const RESULT_SCHEMA_VERSION: u64 = 1;
+const RESULT_SCHEMA_VERSION: u64 = 2;
 const INPUTS_UNCHANGED_NODE: &str = "ownership.authored-inputs-unchanged";
 
 pub(crate) struct CheckRequest {
@@ -62,13 +62,6 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "remove .yydra/check-exceptions.toml; this exact Distribution has a deny-all exception policy and required failures must be fixed",
         proves: "the Workspace does not attempt to waive a required Mechanical Quality Contract node",
         does_not_prove: "that future Distributions will never admit a narrowly reviewed exception mechanism",
-    },
-    NodeSpec {
-        id: "supply-chain.policy",
-        prerequisites: &[],
-        remediation: "restore the exact Distribution advisory policy and remove stale, duplicate, incomplete, or overly broad vulnerability exception records",
-        proves: "the policy uses this exact Distribution schema and OSV authority, and every vulnerability exception has complete exact identity, ownership, approval, evidence, expiry, and re-review fields",
-        does_not_prove: "license review, source trust, upstream provenance, notice completeness, a match against current advisory results, or dependency and artifact conformance",
     },
     NodeSpec {
         id: "origin.exact-distribution",
@@ -146,20 +139,6 @@ const NODE_SPECS: &[NodeSpec] = &[
         remediation: "restore frontend/package.json and package-lock.json, then run yydra setup from the exact Distribution",
         proves: "npm can install the exact committed frontend resolution without rewriting its lock",
         does_not_prove: "advisory, provenance, or artifact license policy",
-    },
-    NodeSpec {
-        id: "supply-chain.dependencies",
-        prerequisites: &["supply-chain.policy", "rust.architecture", "frontend.lock"],
-        remediation: "restore consistent exact dependency identities and lock-preserving installations; license and source review are outside this Goal's scope",
-        proves: "the resolved CLI/server Cargo and frontend npm graphs identify versions, enabled features, transitives, dependency kinds, targets and build-tool exposure, with conservative target-specific CycloneDX inventories",
-        does_not_prove: "license approval, legal compatibility, source trust, upstream provenance, notice completeness, absence of malicious code, a current known-vulnerability result, or that every runtime candidate is present in a built artifact",
-    },
-    NodeSpec {
-        id: "supply-chain.advisories",
-        prerequisites: &["supply-chain.dependencies"],
-        remediation: "restore the exact advisory policy and dependency inventory, make OSV querybatch available, remove or upgrade affected material, or record a complete exact-version, exact-target, approved, expiring exception",
-        proves: "OSV querybatch returned complete results for every reported Cargo/npm query identity and Distribution-declared Bolts commit; every advisory was expanded from the same OSV authority and applicable vulnerabilities are absent or covered for each target by a current exact exception",
-        does_not_prove: "that local source matches a declared upstream commit, source authenticity, absence of vulnerabilities in unqueried or locally modified material, or absence of unknown, unpublished, malicious, ecosystem-misclassified, or later-disclosed vulnerabilities",
     },
     NodeSpec {
         id: "api.generated-contract",
@@ -288,18 +267,6 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "cross-request snapshot consistency, universal totals or pagination, a full Identity system, Android runtime, physical-device behavior, native accessibility, or complete WCAG conformance",
     },
     NodeSpec {
-        id: "supply-chain.release-artifacts",
-        prerequisites: &[
-            "supply-chain.advisories",
-            "server.release",
-            "android.release",
-            "h5.real-runtime",
-        ],
-        remediation: "restore every prerequisite artifact, exact dependency inventory, artifact hash and applicable advisory response, then regenerate the single-run target bundles; license and upstream source review are outside this Goal's scope",
-        proves: "the exact invoked CLI and same-run server, production H5 Application Surface and Android outputs are retained with target-specific CycloneDX SBOMs, checksums, artifact entries, source-map-linked npm inputs, a separate selected Gradle build-input graph, reported Maven OSV query results, and build/test evidence references",
-        does_not_prove: "license approval, notice completeness, source trust, upstream source-to-binary attribution, vulnerability absence outside reported query coverage, cross-host bit-for-bit reproducibility, store signing, deployment compatibility, absence of malicious code, or absence of unknown or later-disclosed vulnerabilities",
-    },
-    NodeSpec {
         id: INPUTS_UNCHANGED_NODE,
         prerequisites: &[],
         remediation: "restore every changed authored, snapshot, generated, lock, migration, and configuration input; check mode must remain read-only",
@@ -369,6 +336,7 @@ struct CheckManifest {
     scope: String,
     catalog_digest: String,
     diagnostic_vocabulary: Vec<String>,
+    not_evaluated: Vec<String>,
     exception_policy: ExceptionPolicy,
     retry_policy: RetryPolicy,
     catalog_nodes: Vec<String>,
@@ -421,6 +389,7 @@ struct CatalogDefinition {
     fixture_definitions: &'static [FixtureSpec],
     nodes: &'static [NodeSpec],
     diagnostic_vocabulary: Vec<String>,
+    not_evaluated: Vec<String>,
     exception_policy: ExceptionPolicy,
     retry_policy: RetryPolicy,
 }
@@ -461,6 +430,7 @@ struct AggregateManifest {
     scope: &'static str,
     catalog_digest: String,
     diagnostic_vocabulary: Vec<String>,
+    not_evaluated: Vec<String>,
     exception_policy: ExceptionPolicy,
     retry_policy: RetryPolicy,
     required_fixtures: &'static [&'static str],
@@ -546,7 +516,6 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "AGGREGATE_NODE_SET_INVALID",
     "ANDROID_RELEASE_BUILD_FAILED",
     "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-    "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
     "ANDROID_RELEASE_OUTPUT_MISSING",
     "ANDROID_RELEASE_OUTPUT_UNREADABLE",
     "API_BREAKING_CHANGE_UNACKNOWLEDGED",
@@ -675,37 +644,6 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "SERVER_RELEASE_BUILD_FAILED",
     "SERVER_RELEASE_OUTPUT_MISSING",
     "SERVER_RELEASE_OUTPUT_UNREADABLE",
-    "SUPPLY_CHAIN_ADVISORY_INPUT_INVALID",
-    "SUPPLY_CHAIN_ADVISORY_RESPONSE_INCOMPLETE",
-    "SUPPLY_CHAIN_ADVISORY_RESPONSE_INVALID",
-    "SUPPLY_CHAIN_ADVISORY_SERVICE_UNAVAILABLE",
-    "SUPPLY_CHAIN_ARTIFACT_INVENTORY_FAILED",
-    "SUPPLY_CHAIN_BUILD_TOOL_SHIPPED",
-    "SUPPLY_CHAIN_CARGO_METADATA_FAILED",
-    "SUPPLY_CHAIN_CARGO_METADATA_INVALID",
-    "SUPPLY_CHAIN_CLI_GRAPH_INVALID",
-    "SUPPLY_CHAIN_CLOCK_UNAVAILABLE",
-    "SUPPLY_CHAIN_COMPONENT_COLLISION",
-    "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
-    "SUPPLY_CHAIN_EXCEPTION_INVALID",
-    "SUPPLY_CHAIN_EXCEPTION_OVERBROAD",
-    "SUPPLY_CHAIN_EXCEPTION_STALE",
-    "SUPPLY_CHAIN_EXCEPTION_UNMATCHED",
-    "SUPPLY_CHAIN_LICENSE_MISMATCH",
-    "SUPPLY_CHAIN_LICENSE_MISSING",
-    "SUPPLY_CHAIN_LICENSE_PROHIBITED",
-    "SUPPLY_CHAIN_LICENSE_REVIEW_REQUIRED",
-    "SUPPLY_CHAIN_LICENSE_UNKNOWN",
-    "SUPPLY_CHAIN_NATIVE_COMPONENT_MISSING",
-    "SUPPLY_CHAIN_NOTICE_INVALID",
-    "SUPPLY_CHAIN_NOTICE_MISSING",
-    "SUPPLY_CHAIN_NOTICE_UNMATCHED",
-    "SUPPLY_CHAIN_POLICY_INVALID",
-    "SUPPLY_CHAIN_PROVENANCE_MISMATCH",
-    "SUPPLY_CHAIN_PROVENANCE_MISSING",
-    "SUPPLY_CHAIN_PROVENANCE_UNKNOWN",
-    "SUPPLY_CHAIN_RELEASE_INPUT_INVALID",
-    "SUPPLY_CHAIN_VULNERABILITY_FOUND",
 ];
 
 fn retry_policy() -> RetryPolicy {
@@ -733,6 +671,19 @@ fn diagnostic_vocabulary() -> Vec<String> {
         .collect()
 }
 
+fn not_evaluated() -> Vec<String> {
+    [
+        "dependency-inventory",
+        "vulnerability-scanning",
+        "vulnerability-exceptions",
+        "sbom",
+        "dependency-material-attribution",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
 fn catalog_bytes() -> Result<Vec<u8>> {
     let catalog = CatalogDefinition {
         schema_version: RESULT_SCHEMA_VERSION,
@@ -742,6 +693,7 @@ fn catalog_bytes() -> Result<Vec<u8>> {
         fixture_definitions: FIXTURE_SPECS,
         nodes: NODE_SPECS,
         diagnostic_vocabulary: diagnostic_vocabulary(),
+        not_evaluated: not_evaluated(),
         exception_policy: exception_policy(),
         retry_policy: retry_policy(),
     };
@@ -1127,6 +1079,7 @@ pub(crate) fn check(request: CheckRequest, format: MessageFormat) -> Result<()> 
         scope: "clean-core-local".to_owned(),
         catalog_digest,
         diagnostic_vocabulary: diagnostic_vocabulary(),
+        not_evaluated: not_evaluated(),
         exception_policy: exception_policy(),
         retry_policy: retry_policy(),
         catalog_nodes: NODE_SPECS.iter().map(|spec| spec.id.to_owned()).collect(),
@@ -1212,7 +1165,7 @@ pub(crate) fn aggregate(request: AggregateRequest, format: MessageFormat) -> Res
             "rerun both complete fixture checks with the exact Distribution, upload every evidence file unchanged, and aggregate those two manifests"
         }),
         proves: "exact complete clean and Reading Queue evidence from this Distribution is present, internally consistent, and passed every required node",
-        does_not_prove: "claims excluded by individual nodes, macOS/iOS, native runtime, physical-device behavior, native accessibility, Agent performance, or Baseline Skill effect",
+        does_not_prove: "supply-chain evaluation, claims excluded by individual nodes, macOS/iOS, native runtime, physical-device behavior, native accessibility, Agent performance, or Baseline Skill effect",
         sources: &sources,
     };
     serde_json::to_writer(&mut diagnostics, &result)?;
@@ -1243,6 +1196,7 @@ pub(crate) fn aggregate(request: AggregateRequest, format: MessageFormat) -> Res
         scope: "clean-and-reading-queue",
         catalog_digest,
         diagnostic_vocabulary: diagnostic_vocabulary(),
+        not_evaluated: not_evaluated(),
         exception_policy: exception_policy(),
         retry_policy: retry_policy(),
         required_fixtures: AGGREGATE_FIXTURES,
@@ -1397,6 +1351,7 @@ fn verify_aggregate_source(
     }
     if manifest.catalog_digest != catalog_digest
         || manifest.diagnostic_vocabulary != diagnostic_vocabulary()
+        || manifest.not_evaluated != not_evaluated()
         || manifest.retry_policy != retry_policy()
         || manifest.required_tool_versions != required_tool_versions()
     {
@@ -2027,6 +1982,7 @@ fn finish_preflight_failure(
         scope: "clean-core-local".to_owned(),
         catalog_digest: catalog_digest.to_owned(),
         diagnostic_vocabulary: diagnostic_vocabulary(),
+        not_evaluated: not_evaluated(),
         exception_policy: exception_policy(),
         retry_policy: retry_policy(),
         catalog_nodes: NODE_SPECS.iter().map(|spec| spec.id.to_owned()).collect(),
@@ -2308,8 +2264,6 @@ fn execute_node_attempt(
     let root = context.root;
     match spec.id {
         "policy.exceptions" => check_exception_policy(root),
-        "supply-chain.policy" => crate::supply_chain::validate_policy_authorities(root)
-            .map_err(supply_chain_failure),
         "origin.exact-distribution" => verify_origin_authority(root)
             .map_err(|error| NodeFailure::fail("ORIGIN_AUTHORITY_DRIFT", format!("{error:#}")))
             .and_then(|()| check_fixture_identity(root, fixture)),
@@ -2366,8 +2320,6 @@ fn execute_node_attempt(
             "RUST_DOCTEST_FAILED",
         ),
         "frontend.lock" => check_frontend_lock(context),
-        "supply-chain.dependencies" => check_supply_chain_dependencies(context),
-        "supply-chain.advisories" => check_supply_chain_advisories(context),
         "api.generated-contract" => check_api_generated_contract(context),
         "api.runtime-conformance" => check_api_runtime_conformance(context),
         "frontend.format" => check_frontend_format(context),
@@ -2395,7 +2347,6 @@ fn execute_node_attempt(
             check_product_presentation_accessibility(context)
         }
         "h5.real-runtime" => check_h5_runtime(context),
-        "supply-chain.release-artifacts" => check_supply_chain_release_artifacts(context),
         INPUTS_UNCHANGED_NODE => check_and_remove_scratch(root, baselines),
         _ => unreachable!("all node specs have an implementation"),
     }
@@ -3346,7 +3297,7 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
     let result = context.command(
         &context.root.join("frontend"),
         npm_program(),
-        &["ci", "--ignore-scripts"],
+        &["ci", "--ignore-scripts", "--no-audit"],
         &[],
         "FRONTEND_LOCK_INSTALL_FAILED",
     );
@@ -3388,122 +3339,6 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
         )?;
     }
     Ok(())
-}
-
-fn check_supply_chain_dependencies(
-    context: &mut NodeContext<'_>,
-) -> std::result::Result<(), NodeFailure> {
-    let output = context.capture(
-        context.root,
-        "cargo",
-        &[
-            "metadata",
-            "--locked",
-            "--format-version",
-            "1",
-            "--filter-platform",
-            env!("YYDRA_BUILD_TARGET"),
-            "--all-features",
-        ],
-        &[],
-    )?;
-    if !output.status.success() {
-        return Err(NodeFailure::fail(
-            "SUPPLY_CHAIN_CARGO_METADATA_FAILED",
-            format!("cargo metadata exited with {}", output.status),
-        ));
-    }
-    crate::supply_chain::dependency_evidence(context.root, context.evidence_root, &output.stdout)
-        .map_err(|failure| {
-            if failure.code == "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED" {
-                NodeFailure::infrastructure(failure.code, failure.message)
-            } else {
-                NodeFailure::fail(failure.code, failure.message)
-            }
-        })
-}
-
-fn check_supply_chain_advisories(
-    context: &mut NodeContext<'_>,
-) -> std::result::Result<(), NodeFailure> {
-    let invocation =
-        crate::supply_chain::prepare_advisory_query(context.root, context.evidence_root)
-            .map_err(supply_chain_failure)?;
-    run_supply_chain_advisory_query(context, invocation)?;
-    crate::supply_chain::advisory_evidence(context.root, context.evidence_root)
-        .map_err(supply_chain_failure)
-}
-
-fn run_supply_chain_advisory_query(
-    context: &mut NodeContext<'_>,
-    invocation: crate::supply_chain::AdvisoryInvocation,
-) -> std::result::Result<(), NodeFailure> {
-    let script = invocation.script.to_str().ok_or_else(|| {
-        NodeFailure::infrastructure(
-            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
-            "OSV query script path is not valid UTF-8",
-        )
-    })?;
-    let request = invocation.request.to_str().ok_or_else(|| {
-        NodeFailure::infrastructure(
-            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
-            "OSV query request path is not valid UTF-8",
-        )
-    })?;
-    let response = invocation.response.to_str().ok_or_else(|| {
-        NodeFailure::infrastructure(
-            "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED",
-            "OSV query response path is not valid UTF-8",
-        )
-    })?;
-    let output = context.capture(
-        context.evidence_root,
-        "node",
-        &[script, request, response, &invocation.endpoint],
-        &[],
-    )?;
-    if !output.status.success() {
-        return Err(NodeFailure::infrastructure(
-            "SUPPLY_CHAIN_ADVISORY_SERVICE_UNAVAILABLE",
-            format!(
-                "the single fail-fast OSV evidence invocation exited with {}; no advisory request was waived or retried",
-                output.status
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn check_supply_chain_release_artifacts(
-    context: &mut NodeContext<'_>,
-) -> std::result::Result<(), NodeFailure> {
-    let invocation =
-        crate::supply_chain::prepare_android_advisory_query(context.root, context.evidence_root)
-            .map_err(supply_chain_failure)?;
-    run_supply_chain_advisory_query(context, invocation)?;
-    crate::supply_chain::android_advisory_evidence(context.root, context.evidence_root)
-        .map_err(supply_chain_failure)?;
-    let executable = std::env::current_exe().map_err(|error| {
-        NodeFailure::infrastructure(
-            "SUPPLY_CHAIN_RELEASE_INPUT_INVALID",
-            format!("resolve the exact invoked CLI executable: {error}"),
-        )
-    })?;
-    crate::supply_chain::release_artifacts(context.root, context.evidence_root, &executable)
-        .map_err(supply_chain_failure)
-}
-
-fn supply_chain_failure(failure: crate::supply_chain::SupplyChainFailure) -> NodeFailure {
-    if matches!(
-        failure.code,
-        "SUPPLY_CHAIN_EVIDENCE_WRITE_FAILED"
-            | "SUPPLY_CHAIN_ADVISORY_RESPONSE_INVALID"
-            | "SUPPLY_CHAIN_ADVISORY_RESPONSE_INCOMPLETE"
-    ) {
-        NodeFailure::infrastructure(failure.code, failure.message)
-    } else {
-        NodeFailure::fail(failure.code, failure.message)
-    }
 }
 
 fn check_api_generated_contract(
@@ -5013,15 +4848,7 @@ struct AndroidArtifactIdentity {
     path: &'static str,
     bytes: u64,
     sha256: String,
-    bundle_path: &'static str,
-    bundle_bytes: u64,
-    bundle_sha256: String,
-    source_map_path: &'static str,
-    source_map_bytes: u64,
-    source_map_sha256: String,
     native_inventory_sha256: String,
-    resolved_dependency_graph_sha256: String,
-    gradle_material_inventory_sha256: String,
     runner_os: &'static str,
     runner_arch: &'static str,
     gradle_wrapper: String,
@@ -5047,42 +4874,24 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
         let concurrency_init_path = artifact_root.join("gradle-concurrency.init.gradle");
         write_gradle_concurrency_init_script(&concurrency_init_path)?;
         let concurrency_init_path_text = concurrency_init_path.display().to_string();
-        let material_init_path = artifact_root.join("gradle-materials.init.gradle");
-        write_gradle_material_init_script(&material_init_path)?;
-        let raw_material_path = context
-            .evidence_root
-            .join("scratch/android-account-free/gradle-materials.raw.json");
-        let raw_material_path_text = raw_material_path.display().to_string();
-        let mut material_environment = environment.to_vec();
-        material_environment.push((
-            "YYDRA_GRADLE_MATERIALS_RAW",
-            raw_material_path_text.as_str(),
-        ));
-        let material_init_path_text = material_init_path.display().to_string();
         let resolved = context.capture(
             &android,
             "./gradlew",
             &[
                 "--no-daemon",
                 "assembleRelease",
-                ":app:dependencies",
-                "--configuration",
-                "releaseRuntimeClasspath",
-                ":app:yydraReleaseRuntimeMaterials",
                 "-I",
                 concurrency_init_path_text.as_str(),
-                "-I",
-                material_init_path_text.as_str(),
                 "-Pkotlin.compiler.execution.strategy=in-process",
                 "--max-workers=1",
             ],
-            &material_environment,
+            &environment,
         )?;
         if !resolved.status.success() {
             return Err(NodeFailure::fail(
                 "ANDROID_RELEASE_BUILD_FAILED",
                 format!(
-                    "the single bounded Gradle release and material-capture invocation exited with {}: {}",
+                    "the bounded Gradle release invocation exited with {}: {}",
                     resolved.status,
                     String::from_utf8_lossy(&resolved.stderr).trim()
                 ),
@@ -5098,54 +4907,6 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
                 ),
             ));
         }
-        let source_map =
-            android.join("app/build/generated/sourcemaps/react/release/index.android.bundle.map");
-        if !source_map.is_file() {
-            return Err(NodeFailure::fail(
-                "ANDROID_RELEASE_OUTPUT_MISSING",
-                format!(
-                    "Gradle succeeded without producing the required release source map at '{}'",
-                    source_map.display()
-                ),
-            ));
-        }
-        let bundle = android.join("app/build/generated/assets/react/release/index.android.bundle");
-        if !bundle.is_file() {
-            return Err(NodeFailure::fail(
-                "ANDROID_RELEASE_OUTPUT_MISSING",
-                format!(
-                    "Gradle succeeded without producing the required release JavaScript bundle at '{}'",
-                    bundle.display()
-                ),
-            ));
-        }
-        let resolved_text = std::str::from_utf8(&resolved.stdout).map_err(|error| {
-            NodeFailure::fail(
-                "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
-                format!("Gradle dependency graph is not UTF-8: {error}"),
-            )
-        })?;
-        if !resolved_text.contains("releaseRuntimeClasspath") {
-            return Err(NodeFailure::fail(
-                "ANDROID_RELEASE_DEPENDENCY_GRAPH_FAILED",
-                "Gradle dependency output does not identify releaseRuntimeClasspath",
-            ));
-        }
-        let resolved_path = artifact_root.join("release-runtime-classpath.txt");
-        let mut resolved_file =
-            create_private_file(&resolved_path).map_err(evidence_write_failure)?;
-        resolved_file
-            .write_all(&resolved.stdout)
-            .map_err(evidence_write_failure)?;
-        resolved_file.flush().map_err(evidence_write_failure)?;
-        let gradle_material_path = artifact_root.join("gradle-materials.json");
-        crate::supply_chain::record_android_gradle_materials(
-            &android,
-            Path::new(&account_free.gradle_user_home),
-            &raw_material_path,
-            &gradle_material_path,
-        )
-        .map_err(supply_chain_failure)?;
         let apk_path = artifact_root.join("app-release.apk");
         let (apk_bytes, apk_sha256) = retain_bounded_artifact(
             &source,
@@ -5153,48 +4914,16 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
             512 * 1024 * 1024,
             "ANDROID_RELEASE_OUTPUT_UNREADABLE",
         )?;
-        let retained_source_map = artifact_root.join("index.android.bundle.map");
-        let (source_map_bytes, source_map_sha256) = retain_bounded_artifact(
-            &source_map,
-            &retained_source_map,
-            128 * 1024 * 1024,
-            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-        )?;
-        let retained_bundle = artifact_root.join("index.android.bundle");
-        let (bundle_bytes, bundle_sha256) = retain_bounded_artifact(
-            &bundle,
-            &retained_bundle,
-            256 * 1024 * 1024,
-            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-        )?;
         let native_inventory_sha256 = hash_bounded_artifact(
             &native_inventory_path,
             128 * 1024 * 1024,
-            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-        )?;
-        let resolved_dependency_graph_sha256 = hash_bounded_artifact(
-            &resolved_path,
-            128 * 1024 * 1024,
-            "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-        )?;
-        let gradle_material_inventory_sha256 = hash_bounded_artifact(
-            &gradle_material_path,
-            512 * 1024 * 1024,
             "ANDROID_RELEASE_OUTPUT_UNREADABLE",
         )?;
         let identity = AndroidArtifactIdentity {
             path: "app-release.apk",
             bytes: apk_bytes,
             sha256: apk_sha256,
-            bundle_path: "index.android.bundle",
-            bundle_bytes,
-            bundle_sha256,
-            source_map_path: "index.android.bundle.map",
-            source_map_bytes,
-            source_map_sha256,
             native_inventory_sha256,
-            resolved_dependency_graph_sha256,
-            gradle_material_inventory_sha256,
             runner_os: std::env::consts::OS,
             runner_arch: std::env::consts::ARCH,
             gradle_wrapper,
@@ -5232,170 +4961,6 @@ gradle.afterProject { candidate, state ->
       '-DCMAKE_JOB_POOL_COMPILE=yydra_compile',
       '-DCMAKE_JOB_POOL_LINK=yydra_link'
     )
-  }
-}
-"#,
-    )
-    .map_err(evidence_write_failure)?;
-    file.flush().map_err(evidence_write_failure)
-}
-
-fn write_gradle_material_init_script(path: &Path) -> std::result::Result<(), NodeFailure> {
-    let mut file = create_private_file(path).map_err(evidence_write_failure)?;
-    file.write_all(
-        br#"import groovy.json.JsonOutput
-import org.gradle.api.artifacts.component.ModuleComponentIdentifier
-import org.gradle.api.artifacts.component.ProjectComponentIdentifier
-import org.gradle.api.artifacts.result.ResolvedDependencyResult
-
-// AGP project runtime variants expose classes/resources, not the final AAR.
-// Retain the public artifact provider for each producer variant, then bind it
-// to the variant actually selected by releaseRuntimeClasspath (never a path guess).
-def projectAarProviders = [:].withDefault { [:] }
-gradle.beforeProject { producer ->
-  producer.pluginManager.withPlugin('com.android.library') {
-    def plugin = producer.plugins.findPlugin('com.android.library')
-    def aarType = plugin.class.classLoader
-      .loadClass('com.android.build.api.artifact.SingleArtifact$AAR')
-      .getField('INSTANCE').get(null)
-    def components = producer.extensions.getByName('androidComponents')
-    components.onVariants(components.selector().all()) { variant ->
-      projectAarProviders[producer.path][variant.name] = variant.artifacts.get(aarType)
-    }
-  }
-}
-
-gradle.afterProject { candidate, state ->
-  if (candidate.path == ':app') {
-    candidate.tasks.register('yydraReleaseRuntimeMaterials') {
-      doLast {
-        def configuration = candidate.configurations.getByName('releaseRuntimeClasspath')
-        def resolution = configuration.incoming.resolutionResult
-        def componentRef = { id ->
-          if (id instanceof ModuleComponentIdentifier) {
-            return "pkg:maven/${id.group}/${id.module}@${id.version}"
-          }
-          if (id instanceof ProjectComponentIdentifier) {
-            return "urn:yydra:gradle-project:${id.projectPath}"
-          }
-          throw new GradleException("unsupported releaseRuntimeClasspath component identifier ${id.displayName}")
-        }
-        def dependencies = resolution.allDependencies.collect { dependency ->
-          if (!(dependency instanceof ResolvedDependencyResult)) {
-            throw new GradleException("unresolved releaseRuntimeClasspath dependency ${dependency.requested.displayName}")
-          }
-          def variant = dependency.resolvedVariant
-          def attributes = variant.attributes.keySet().sort { left, right -> left.name <=> right.name }.collectEntries { attribute ->
-            [(attribute.name): variant.attributes.getAttribute(attribute)?.toString() ?: 'unavailable']
-          }
-          return [
-            from: componentRef(dependency.from.id),
-            to: componentRef(dependency.selected.id),
-            selectedVariant: variant.displayName,
-            selectedVariantAttributes: attributes,
-            requested: dependency.requested.displayName
-          ]
-        }.unique { dependency ->
-          [dependency.from, dependency.to, dependency.selectedVariant, JsonOutput.toJson(dependency.selectedVariantAttributes), dependency.requested].join('\u0000')
-        }.sort { left, right ->
-          [left.from, left.to, left.selectedVariant, JsonOutput.toJson(left.selectedVariantAttributes), left.requested].join('\u0000') <=>
-            [right.from, right.to, right.selectedVariant, JsonOutput.toJson(right.selectedVariantAttributes), right.requested].join('\u0000')
-        }
-        def artifactsByComponent = [:].withDefault { [] }
-        def recordArtifacts = { collection ->
-          collection.artifacts.each { artifact ->
-            def key = artifact.id.componentIdentifier.displayName
-            def filename = artifact.file.name
-            def extensionAt = filename.lastIndexOf('.')
-            artifactsByComponent[key] << [
-              file: artifact.file.absolutePath,
-              extension: extensionAt < 0 ? 'unknown' : filename.substring(extensionAt + 1),
-              classifier: ''
-            ]
-          }
-        }
-        def externalArtifacts = configuration.incoming.artifactView {
-          componentFilter { id -> id instanceof ModuleComponentIdentifier }
-        }
-        recordArtifacts(externalArtifacts)
-        resolution.allComponents.each { result ->
-          def id = result.id
-          if (id instanceof ProjectComponentIdentifier && id.projectPath != ':app') {
-            if (result.variants.size() != 1 || candidate.rootProject.findProject(id.projectPath) == null) {
-              throw new GradleException("ambiguous or foreign Android project variant ${id.displayName}")
-            }
-            def variant = result.variants.first()
-            def variantKey = variant.attributes.keySet().find {
-              it.name == 'com.android.build.gradle.internal.attributes.VariantAttr'
-            }
-            def variantName = variantKey == null ? null : variant.attributes.getAttribute(variantKey)?.toString()
-            def provider = variantName == null ? null : projectAarProviders[id.projectPath][variantName]
-            if (provider == null) {
-              throw new GradleException("no AGP AAR producer for selected ${id.displayName}/${variant.displayName}")
-            }
-            def aar = provider.get().asFile
-            if (!aar.isFile() || !aar.name.endsWith('.aar')) {
-              throw new GradleException("selected AAR producer output is missing after assembleRelease: ${aar}")
-            }
-            artifactsByComponent[id.displayName] << [file: aar.absolutePath, extension: 'aar', classifier: '']
-          }
-        }
-        def components = resolution.allComponents.collect { result ->
-          def id = result.id
-          if (id instanceof ModuleComponentIdentifier) {
-            return [
-              componentType: 'module',
-              group: id.group,
-              name: id.module,
-              version: id.version,
-              projectPath: null,
-              sourceDirectory: null,
-              artifacts: artifactsByComponent[id.displayName].sort { left, right -> left.file <=> right.file }
-            ]
-          }
-          if (id instanceof ProjectComponentIdentifier && id.projectPath != ':app') {
-            def moduleVersion = result.moduleVersion
-            return [
-              componentType: 'project',
-              group: moduleVersion?.group ?: 'workspace-project',
-              name: moduleVersion?.name ?: id.projectName,
-              version: moduleVersion?.version == null || moduleVersion.version == 'unspecified' ? 'workspace' : moduleVersion.version,
-              projectPath: id.projectPath,
-              sourceDirectory: candidate.rootProject.findProject(id.projectPath)?.projectDir?.absolutePath,
-              artifacts: artifactsByComponent[id.displayName].sort { left, right -> left.file <=> right.file }
-            ]
-          }
-          return null
-        }.findAll { it != null }.sort { left, right ->
-          [left.componentType, left.group, left.name, left.version, left.projectPath ?: ''].join('\u0000') <=>
-            [right.componentType, right.group, right.name, right.version, right.projectPath ?: ''].join('\u0000')
-        }
-        def bundleTask = candidate.tasks.findByName('createBundleReleaseJsAndAssets')
-        if (bundleTask == null) {
-          throw new GradleException('createBundleReleaseJsAndAssets is required')
-        }
-        def bundleAssetName = bundleTask.bundleAssetName.get()
-        def bundleBinding = [
-          taskPath: bundleTask.path,
-          bundleFile: new File(bundleTask.jsBundleDir.get().asFile, bundleAssetName).absolutePath,
-          sourceMapFile: new File(bundleTask.jsSourceMapsDir.get().asFile, "${bundleAssetName}.map").absolutePath
-        ]
-        def output = System.getenv('YYDRA_GRADLE_MATERIALS_RAW')
-        if (output == null || output.isEmpty()) {
-          throw new GradleException('YYDRA_GRADLE_MATERIALS_RAW is required')
-        }
-        new File(output).withWriter('UTF-8') { writer ->
-          writer.write(JsonOutput.prettyPrint(JsonOutput.toJson([
-            schemaVersion: 3,
-            configuration: 'releaseRuntimeClasspath',
-            bundleBinding: bundleBinding,
-            components: components,
-            dependencies: dependencies
-          ])))
-          writer.write('\n')
-        }
-      }
-    }
   }
 }
 "#,
@@ -7298,22 +6863,8 @@ mod tests {
     }
 
     #[test]
-    fn gradle_material_capture_selects_external_artifacts_and_project_aars_separately() {
+    fn gradle_concurrency_script_sets_an_isolated_user_home() {
         let sandbox = tempfile::tempdir().expect("create Gradle script sandbox");
-        let script = sandbox.path().join("materials.init.gradle");
-        write_gradle_material_init_script(&script).expect("write Gradle material script");
-        let source = fs::read_to_string(script).expect("read Gradle material script");
-        assert!(
-            source.contains("componentFilter { id -> id instanceof ModuleComponentIdentifier }")
-        );
-        assert!(
-            source.contains("id instanceof ProjectComponentIdentifier && id.projectPath != ':app'")
-        );
-        assert!(source.contains("com.android.build.api.artifact.SingleArtifact$AAR"));
-        assert!(source.contains("projectAarProviders[id.projectPath][variantName]"));
-        assert!(source.contains("if (!aar.isFile() || !aar.name.endsWith('.aar'))"));
-        assert!(!source.contains("configuration.incoming.artifacts.artifacts"));
-
         let concurrency_script = sandbox.path().join("concurrency.init.gradle");
         write_gradle_concurrency_init_script(&concurrency_script)
             .expect("write Gradle concurrency script");

@@ -52,7 +52,7 @@ jobs:
         with:
           node-version: 26.8.1
       - name: Install exact npm
-        run: npm install --global npm@12.0.2
+        run: npm install --global npm@12.0.2 --no-audit
       - name: Install exact Java
         # setup-java rejects this four-component Java version as invalid SemVer.
         # Preserve the exact JDK, including its fourth component and build number.
@@ -88,7 +88,7 @@ jobs:
             --product-name "$product_name" \
             --product-id "$product_id" \
             --product-source-license Apache-2.0
-          npm --prefix "$WORKSPACE_ROOT/frontend" ci --ignore-scripts
+          npm --prefix "$WORKSPACE_ROOT/frontend" ci --ignore-scripts --no-audit
           npm --prefix "$WORKSPACE_ROOT/frontend" exec -- playwright install --with-deps chromium
       - name: Run the Distribution-owned complete graph
         env:
