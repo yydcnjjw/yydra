@@ -5,34 +5,23 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
-Distribution `0.1.0` is delivered through the
-[exact GitHub Release](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0),
-not published to crates.io. Download the Cargo package and its checksum into a
-fresh directory, verify the package **before extraction**, and install that
-independent package while preserving its lockfile (Linux shell):
+Distribution `0.2.0` is a local development candidate; it has not been published.
+Use the candidate's independently packaged `yydra-cli-0.2.0.crate` and its recorded
+checksum, then extract and install with the packaged lockfile in a fresh directory:
 
 ```sh
-set -eu
-package_dir="$(mktemp -d)"
-cd "$package_dir"
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  --output yydra-cli-0.1.0.crate \
-  https://github.com/yydcnjjw/yydra/releases/download/distribution-v0.1.0/yydra-cli-0.1.0.crate
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  --output yydra-cli-0.1.0.crate.sha256 \
-  https://github.com/yydcnjjw/yydra/releases/download/distribution-v0.1.0/yydra-cli-0.1.0.crate.sha256
-sha256sum --check yydra-cli-0.1.0.crate.sha256
-tar -xzf yydra-cli-0.1.0.crate
-cargo install yydra-cli@0.1.0 --path ./yydra-cli-0.1.0 --locked
+sha256sum --check yydra-cli-0.2.0.crate.sha256
+tar -xzf yydra-cli-0.2.0.crate
+cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked
 yydra --version
 ```
 
-Use the attached `.crate`, not GitHub's automatically generated repository
-source archive, a mutable branch, or a monorepo checkout. The release records
-the package digest and the exact source commit separately. Its checksum binds
-the downloaded bytes; it is not an upstream-source or license-review claim.
-Cargo may still download the package's locked dependencies from crates.io;
-publishing Yydra itself there is not required. No registry login is needed.
+The package and installed executor must be the same bytes used for acceptance.
+A source-checkout binary does not establish packaged-consumer conformance.
+Cargo may download locked dependencies. No registry publication or login is
+required. The historical [Distribution 0.1.0 release](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0)
+and its recorded supply-chain contract remain unchanged; use its exact CLI for
+Workspaces it created.
 
 Create once with one normalized product-source license choice:
 
@@ -143,69 +132,30 @@ evidence fails closed. Neither local nor aggregate evidence proves macOS/iOS,
 native runtime, physical-device behavior, native accessibility, Agent
 performance, Baseline Skill effect, or any narrower per-node non-claim.
 
-The Distribution owns the dependency inventory and known-advisory policy.
-`supply-chain.dependencies` records the exact CLI/server Cargo and frontend npm
-versions, features, transitives, dependency kinds, targets, and build-tool
-exposure. Lock-preserving installation, version consistency and artifact
-identity checks remain required.
+This Distribution does not evaluate dependency inventories, vulnerabilities or
+vulnerability exceptions, SBOMs, or dependency-material attribution. These are
+outside the Mechanical Quality Contract and are not reported as passing checks.
+The catalog and local/aggregate manifests record this boundary in `notEvaluated`.
+Selecting a removed `supply-chain.*` node fails as an unknown node.
 
-Under the maintainer-approved scope of Issues #26/#39, dependency-license
-admission, source/repository trust review, upstream provenance attestation, and
-third-party notice completeness certification are not evaluated. They must not
-be represented as passing checks or require individual license approvals.
-Existing LICENSE/NOTICE files and attribution are retained; repository licensing,
-DCO, Product Workspace ownership and the Workspace Origin Record are unchanged.
-Optional declaration metadata is not an independently verified license or source
-identity. A declared third-party source commit used for an advisory query does
-not prove that locally modified source equals that upstream commit.
-If the same locked component has different installed declaration metadata, the
-inventory retains per-installation `metadataObservations`; those differences
-do not invalidate the component's version and lock-integrity identity.
+Locked installs, exact dependency/tool versions, existing dependency upgrades,
+LICENSE/NOTICE and source attribution, Workspace Origin Record, generated
+snapshot integrity, and the remaining quality checks stay required. Yydra-owned
+npm installations disable automatic audit while still downloading dependencies.
+The general deny-all `policy.exceptions` check continues to reject waivers of
+remaining quality nodes.
 
-`supply-chain.advisories` makes one OSV querybatch request for the reported
-component identities and requires complete responses and applicable advisory
-details. Service failure remains an infrastructure error, not a waiver. A
-vulnerability exception must match the advisory, exact component version and
-each affected target, with analysis, owner, evidence, approval, expiry and a
-re-review trigger. Results cover only the reported query identities at check
-time, not unqueried material or unknown/future vulnerabilities.
+The `yydra-android-dependencies` config plugin retains Gson `2.14.0`, commons-io
+`2.22.0`, and the pinned local Bolts Tasks source replacement. Ordinary Android
+assembly performs its normal dependency resolution without extra dependency-report
+or material-capture tasks. No separate JS bundle/source map analysis material is
+required. Server binaries, actual tested production H5 output, APKs, logs, and
+hashes remain in their build nodes' evidence and are verified by aggregation.
 
-Created Product Workspaces declare a local Expo config plugin that applies
-exact Android runtime constraints for `gson@2.14.0` and
-`commons-io@2.22.0`, replacing the vulnerable transitives covered by
-GHSA-4jrv-ppp4-jm57 and GHSA-gwrp-pvrq-jmwv. These are reviewed dependency
-upgrades, not vulnerability exceptions; the resolved release graph and OSV
-result remain authoritative on every check.
-
-After the same check invocation builds and exercises the supported CLI, server,
-production H5 Application Surface and Android outputs, the release inventory
-retains target-specific CycloneDX SBOMs, artifact paths, checksums and build/test
-evidence under `artifacts/supply-chain.release-artifacts/<target>/`.
-Dependency graph membership and actual artifact entries are distinct facts;
-neither is a claim of independently verified upstream provenance.
-
-Android evidence records resolved release-runtime dependencies, selected
-variants and artifact hashes, APK entries including each native library's
-decompressed hash, and a separate one-attempt OSV result for reported Maven
-identities. Native entries without upstream producer attribution remain
-unattributed; no arbitrary matching AAR is promoted to a verified producer.
-License/source reviews and notice-completeness checks are outside the current
-scope, including the earlier exact native-runtime review requests.
-Android material inventory schema 4 distinguishes `runtime-build-input` from
-`dependency-graph-only`; neither label asserts that the component was shipped.
-APK native entries carry their own paths and hashes without invented producer
-edges or entry-level advisory results. Hermes maps may omit `file`: the captured
-Gradle task/output paths and bundle/map hashes still bind the retained outputs,
-and the bundle hash must match the APK entry. A contradictory `file` fails.
-
-Retained H5 bundles and source maps identify the same build outputs.
-Export preparation validates Metro's unique map URL and matching debug ID before
-filling an omitted `file` declaration, before browser tests and hashing;
-contradictory declarations fail and bundle bytes remain unchanged.
-Available build metadata can relate npm inputs to exported bundles without
-implying source authenticity or license approval. Reports must explicitly state
-what was inventoried, queried, and not evaluated. Full clean and Reading Queue
-packaged-consumer acceptance is still required; focused nodes are diagnostic.
+Check evidence schema 2 and this exact Distribution/catalog/executor identity are
+required. Older Workspaces still require their original CLI; no migration or
+version override is provided. Historical supply-chain results retain their old
+scope and cannot establish conformance to this Distribution.
 
 Run the focused Android evidence path through the supported quality entrypoint:
 
@@ -221,11 +171,10 @@ config plugin, or a local Expo Module, then delete and regenerate the host;
 never patch generated Java, Kotlin, Gradle, manifest, or resource files as an
 authority.
 
-The Android release gate uses one Gradle invocation for assembly, dependency
-resolution, and material capture. It limits Gradle to one worker, compiles
+The Android release gate uses one Gradle invocation for release assembly. It limits Gradle to one worker, compiles
 Kotlin in the same bounded process, and applies one-slot CMake compile and link
 pools to every generated Android module. Its cache seed, retained files,
-archives, and source maps have explicit file/count/byte limits. Do not run
+and artifacts have explicit file/count/byte limits. Do not run
 multiple Android release checks in parallel on a memory-constrained host.
 
 An ephemeral runner may set `YYDRA_GRADLE_DEPENDENCY_CACHE_SEED` to an absolute

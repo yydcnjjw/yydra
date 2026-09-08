@@ -175,71 +175,30 @@ or not-run evidence returns non-zero and cannot produce aggregate conformance.
 The repository CI is only an executor of this graph; its complete fixture and
 aggregate evidence directories are retained as artifacts.
 
-The Distribution owns the dependency inventory and known-advisory policy.
-`supply-chain.dependencies` records the exact CLI/server Cargo and frontend npm
-versions, features, transitives, dependency kinds, targets, and build-tool
-exposure. Lock-preserving installation, version consistency and artifact
-identity checks remain required.
+This Distribution does not evaluate dependency inventories, vulnerabilities or
+vulnerability exceptions, SBOMs, or dependency-material attribution. These are
+outside the Mechanical Quality Contract and are not reported as passing checks.
+The catalog and local/aggregate manifests record this boundary in `notEvaluated`.
+Selecting a removed `supply-chain.*` node fails as an unknown node.
 
-Under the maintainer-approved scope of Issues #26/#39, dependency-license
-admission, source/repository trust review, upstream provenance attestation, and
-third-party notice completeness certification are not evaluated. They must not
-be represented as passing checks or require individual license approvals.
-Existing LICENSE/NOTICE files and attribution are retained; repository licensing,
-DCO, Product Workspace ownership and the Workspace Origin Record are unchanged.
-Optional declaration metadata is not an independently verified license or source
-identity. A declared third-party source commit used for an advisory query does
-not prove that locally modified source equals that upstream commit.
-If the same locked component has different installed declaration metadata, the
-inventory retains per-installation `metadataObservations`; those differences
-do not invalidate the component's version and lock-integrity identity.
+Locked installs, exact dependency/tool versions, existing dependency upgrades,
+LICENSE/NOTICE and source attribution, Workspace Origin Record, generated
+snapshot integrity, and the remaining quality checks stay required. Yydra-owned
+npm installations disable automatic audit while still downloading dependencies.
+The general deny-all `policy.exceptions` check continues to reject waivers of
+remaining quality nodes.
 
-`supply-chain.advisories` makes one OSV querybatch request for the reported
-component identities and requires complete responses and applicable advisory
-details. Service failure remains an infrastructure error, not a waiver. A
-vulnerability exception must match the advisory, exact component version and
-each affected target, with analysis, owner, evidence, approval, expiry and a
-re-review trigger. Results cover only the reported query identities at check
-time, not unqueried material or unknown/future vulnerabilities.
+The `yydra-android-dependencies` config plugin retains Gson `2.14.0`, commons-io
+`2.22.0`, and the pinned local Bolts Tasks source replacement. Ordinary Android
+assembly performs its normal dependency resolution without extra dependency-report
+or material-capture tasks. No separate JS bundle/source map analysis material is
+required. Server binaries, actual tested production H5 output, APKs, logs, and
+hashes remain in their build nodes' evidence and are verified by aggregation.
 
-The declared `frontend/modules/yydra-android-supply-chain/app.plugin.js`
-config plugin adds exact Gradle constraints for
-`com.google.code.gson:gson@2.14.0` and
-`commons-io:commons-io@2.22.0`. Those constraints replace vulnerable Android
-runtime transitives affected by GHSA-4jrv-ppp4-jm57 and
-GHSA-gwrp-pvrq-jmwv; they are Product-owned generated-host input, not an
-exception or a claim about future advisories. Change them only with a fresh
-release-runtime resolution, artifact inventory, and advisory query.
-
-After the same check invocation builds and exercises the supported CLI, server,
-production H5 Application Surface and Android outputs, the release inventory
-retains target-specific CycloneDX SBOMs, artifact paths, checksums and build/test
-evidence under `artifacts/supply-chain.release-artifacts/<target>/`.
-Dependency graph membership and actual artifact entries are distinct facts;
-neither is a claim of independently verified upstream provenance.
-
-Android evidence records resolved release-runtime dependencies, selected
-variants and artifact hashes, APK entries including each native library's
-decompressed hash, and a separate one-attempt OSV result for reported Maven
-identities. Native entries without upstream producer attribution remain
-unattributed; no arbitrary matching AAR is promoted to a verified producer.
-License/source reviews and notice-completeness checks are outside the current
-scope, including the earlier exact native-runtime review requests.
-Android material inventory schema 4 distinguishes `runtime-build-input` from
-`dependency-graph-only`; neither label asserts that the component was shipped.
-APK native entries carry their own paths and hashes without invented producer
-edges or entry-level advisory results. Hermes maps may omit `file`: the captured
-Gradle task/output paths and bundle/map hashes still bind the retained outputs,
-and the bundle hash must match the APK entry. A contradictory `file` fails.
-
-Retained H5 bundles and source maps identify the same build outputs.
-Export preparation validates Metro's unique map URL and matching debug ID before
-filling an omitted `file` declaration, before browser tests and hashing;
-contradictory declarations fail and bundle bytes remain unchanged.
-Available build metadata can relate npm inputs to exported bundles without
-implying source authenticity or license approval. Reports must explicitly state
-what was inventoried, queried, and not evaluated. Full clean and Reading Queue
-packaged-consumer acceptance is still required; focused nodes are diagnostic.
+Check evidence schema 2 and this exact Distribution/catalog/executor identity are
+required. Older Workspaces still require their original CLI; no migration or
+version override is provided. Historical supply-chain results retain their old
+scope and cannot establish conformance to this Distribution.
 
 `database.migration-history` rejects edits or deletions to exact-Distribution
 migrations and, when `--comparison-base <git-revision>` is supplied, migrations
@@ -270,17 +229,12 @@ Gradle, manifest, or resource files as source. A pass proves deterministic
 generation on the current host and an Android release build only—not Android
 runtime, installability on a physical device, native accessibility, store
 signing, or bit-for-bit cross-host reproducibility. The release gate uses one
-Gradle invocation for assembly, dependency resolution, and material capture.
+Gradle invocation for release assembly.
 It limits Gradle to one worker, compiles Kotlin in the same bounded process,
 and applies one-slot CMake compile and link pools to every generated Android
-module. Cache seeds, retained files, archives, and source maps have explicit
+module. Cache seeds and retained artifacts have explicit
 file/count/byte limits; do not run multiple Android release checks concurrently
 on a memory-constrained host.
-The material inventory covers project, buildscript, dependency-resolution,
-and plugin-management repositories and accepts only the exact policy
-authorities, including `gradlePluginPortal()`. It hashes the canonical React
-Native release task's bundle and source map; final evidence rejects an APK
-that does not contain that exact bundle.
 Ephemeral runners may provide an absolute public dependency-cache seed through
 `YYDRA_GRADLE_DEPENDENCY_CACHE_SEED`. It must contain only a prepared
 `modules-2` tree without symlinks, lock files, or `gc.properties`; the gate

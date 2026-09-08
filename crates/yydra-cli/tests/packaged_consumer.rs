@@ -35,8 +35,15 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&package.stderr)
     );
 
-    let extracted = package_target.join("package/yydra-cli-0.1.0");
+    let extracted = package_target.join("package/yydra-cli-0.2.0");
     assert!(extracted.join("Cargo.lock").is_file());
+    assert!(extracted.join("third-party/bolts-source.json").is_file());
+    for removed in ["supply-chain", "src/supply_chain.rs", "build.rs"] {
+        assert!(
+            !extracted.join(removed).exists(),
+            "packaged obsolete input {removed}"
+        );
+    }
     for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
         assert_eq!(
             fs::read(extracted.join(license)).expect("read packaged license"),
@@ -72,7 +79,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     let install = Command::new(&cargo)
         .args([
             "install",
-            "yydra-cli@0.1.0",
+            "yydra-cli@0.2.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",
@@ -117,6 +124,25 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&create.stderr)
     );
     assert!(workspace.join(".yydra/origin.toml").is_file());
+    for removed in [
+        ".yydra/supply-chain-policy.json",
+        ".yydra/supply-chain-exceptions.json",
+    ] {
+        assert!(
+            !workspace.join(removed).exists(),
+            "generated obsolete input {removed}"
+        );
+    }
+    let doctor = Command::new(&executable)
+        .arg("doctor")
+        .arg(&workspace)
+        .output()
+        .expect("diagnose independently packaged Workspace");
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
     for materialized in [
         "Cargo.toml",
         "Cargo.lock",

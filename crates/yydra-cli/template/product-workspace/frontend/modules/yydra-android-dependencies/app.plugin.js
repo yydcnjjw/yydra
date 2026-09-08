@@ -7,8 +7,8 @@ const configPlugins = require("@expo/config-plugins");
 const { withAppBuildGradle, withProjectBuildGradle, withSettingsGradle } =
   configPlugins;
 
-const BEGIN_MARKER = "// yydra-android-supply-chain-constraints:begin";
-const END_MARKER = "// yydra-android-supply-chain-constraints:end";
+const BEGIN_MARKER = "// yydra-android-dependencies-constraints:begin";
+const END_MARKER = "// yydra-android-dependencies-constraints:end";
 
 const CONSTRAINTS = `${BEGIN_MARKER}
 dependencies {
@@ -26,12 +26,10 @@ dependencies {
 ${END_MARKER}
 `;
 
-function addAndroidSupplyChainConstraints(contents) {
+function addAndroidDependencyConstraints(contents) {
   if (contents.includes(BEGIN_MARKER) || contents.includes(END_MARKER)) {
     if (!(contents.includes(BEGIN_MARKER) && contents.includes(END_MARKER))) {
-      throw new Error(
-        "incomplete Yydra Android supply-chain constraint markers",
-      );
+      throw new Error("incomplete Yydra Android dependency constraint markers");
     }
     return contents;
   }
@@ -39,7 +37,7 @@ function addAndroidSupplyChainConstraints(contents) {
   return `${contents.trimEnd()}\n\n${CONSTRAINTS}`;
 }
 
-function withAndroidSupplyChain(config) {
+function withAndroidDependencies(config) {
   config = withSettingsGradle(config, (configured) => {
     configured.modResults.contents = addBoltsProject(
       configured.modResults.contents,
@@ -55,19 +53,19 @@ function withAndroidSupplyChain(config) {
   return withAppBuildGradle(config, (configured) => {
     if (configured.modResults.language !== "groovy") {
       throw new Error(
-        "Yydra Android supply-chain constraints require Groovy Gradle output",
+        "Yydra Android dependency constraints require Groovy Gradle output",
       );
     }
-    configured.modResults.contents = addAndroidSupplyChainConstraints(
+    configured.modResults.contents = addAndroidDependencyConstraints(
       configured.modResults.contents,
     );
     return configured;
   });
 }
 
-module.exports = withAndroidSupplyChain;
-module.exports.addAndroidSupplyChainConstraints =
-  addAndroidSupplyChainConstraints;
+module.exports = withAndroidDependencies;
+module.exports.addAndroidDependencyConstraints =
+  addAndroidDependencyConstraints;
 
 function pinnedBlock(contents, name, body) {
   const begin = `// ${name}:begin`;

@@ -9,7 +9,7 @@
     "newArchEnabled": true,
     "plugins": [
       "expo-router",
-      "./modules/yydra-android-supply-chain/app.plugin.js"
+      "./modules/yydra-android-dependencies/app.plugin.js"
     ],
     "android": {
       "package": "__ANDROID_PACKAGE__"
