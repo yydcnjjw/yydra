@@ -6,7 +6,7 @@ import {
   getFrameworkContractProfile,
   getFrameworkProtectedContract,
   listReadingQueueEntries,
-} from "../../generated/public-api/fetch/client";
+} from "@yydra/generated-api/fetch/client";
 import {
   ChangeReadingEntryStateRequest,
   CreateReadingEntryRequest,
@@ -16,13 +16,13 @@ import {
   ProblemDetails,
   ReadingQueueEntryResponse,
   ReadingQueueResponse,
-} from "../../generated/public-api/fetch/schemas";
-import { CreateReadingEntryRequest as StrictCreateReadingEntryRequest } from "../../generated/public-api/request/schemas/createReadingEntryRequest.zod";
+} from "@yydra/generated-api/fetch/schemas/index";
+import { CreateReadingEntryRequest as StrictCreateReadingEntryRequest } from "@yydra/generated-api/request/schemas/createReadingEntryRequest.zod";
 import {
   ChangeReadingQueueEntryStateParams,
   ListReadingQueueEntriesQueryParams,
-} from "../../generated/public-api/request/contracts";
-import { ChangeReadingEntryStateRequest as StrictChangeReadingEntryStateRequest } from "../../generated/public-api/request/schemas/changeReadingEntryStateRequest.zod";
+} from "@yydra/generated-api/request/contracts";
+import { ChangeReadingEntryStateRequest as StrictChangeReadingEntryStateRequest } from "@yydra/generated-api/request/schemas/changeReadingEntryStateRequest.zod";
 
 export type {
   ChangeReadingEntryStateRequest,

@@ -5,14 +5,14 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
-Distribution `0.2.0` is a local development candidate; it has not been published.
-Use the candidate's independently packaged `yydra-cli-0.2.0.crate` and its recorded
+Distribution `0.3.0` is a local development candidate; it has not been published.
+Use the candidate's independently packaged `yydra-cli-0.3.0.crate` and its recorded
 checksum, then extract and install with the packaged lockfile in a fresh directory:
 
 ```sh
-sha256sum --check yydra-cli-0.2.0.crate.sha256
-tar -xzf yydra-cli-0.2.0.crate
-cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked
+sha256sum --check yydra-cli-0.3.0.crate.sha256
+tar -xzf yydra-cli-0.3.0.crate
+cargo install yydra-cli@0.3.0 --path ./yydra-cli-0.3.0 --locked
 yydra --version
 ```
 
@@ -90,11 +90,14 @@ migrations are append-only; passing `--comparison-base <git-revision>` to the
 focused `database.migration-history` check also rejects edits and deletions
 relative to the requested Git base. Focused `database.runtime-invariants` and
 `runtime.post-commit-executor` nodes retain discriminating failure fixtures.
-`generate api` is the only supported
-write path for normalized OpenAPI and the Orval Fetch/TypeScript/Zod outputs;
-it validates every isolated stage before a Workspace-locked, journaled,
-rollback-safe replacement, and records a replayable compatibility history.
-Its read-only form is `yydra generate api ./reader --check`. The default check
+`generate api` exports normalized OpenAPI and the pinned Orval
+Fetch/TypeScript/Zod client as disposable outputs under Cargo's configured target
+directory. It validates the current contract and client, type-checks the result,
+and links the generated package into frontend dependencies. Frontend entrypoints
+run generation before consuming it. Failure stops the pipeline; the next run
+cleans only its owned outputs and rebuilds. Full identity checks remain in
+`doctor` and dedicated `check` nodes. `yydra check` uses the same generation
+pipeline. The default check
 evidence directory is a private, unique system-temporary
 directory outside the Product Workspace; an explicit `--evidence-dir` must
 also be outside the Workspace and have no symlink ancestor. Diagnostic

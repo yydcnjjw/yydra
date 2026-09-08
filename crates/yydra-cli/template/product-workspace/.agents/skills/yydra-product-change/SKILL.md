@@ -33,9 +33,9 @@ only supported orchestration path.
 5. Define the Public API in the Rust Axum and utoipa source authority, including
    stable RFC 9457 Problem behavior. Do not hand-edit OpenAPI or Generated Client
    output.
-6. Run `yydra generate api .` for the atomic generation path. A failure must
-   leave the previous complete outputs intact. Review the Public API and client
-   diff before continuing.
+6. Run `yydra generate api .` to build and validate the current OpenAPI and
+   Generated Client. Failure stops downstream work; rerun after fixing the
+   reported input or tool issue. Generated build outputs are disposable.
 7. Implement the Product Presentation through the handwritten Framework client
    facade. Keep server state, URL state, and local component state in their
    declared owners.

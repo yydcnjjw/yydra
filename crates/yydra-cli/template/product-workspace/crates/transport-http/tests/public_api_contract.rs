@@ -15,7 +15,6 @@ use product_application::{
 use serde_json::Value;
 use tower::ServiceExt;
 
-const COMMITTED_OPENAPI: &str = include_str!("../../../contracts/openapi.json");
 const HTTP_METHODS: &[&str] = &[
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
 ];
@@ -80,7 +79,7 @@ struct DocumentedOperation<'a> {
 }
 
 #[tokio::test]
-async fn public_router_executes_every_committed_operation_against_its_contract() {
+async fn public_router_executes_every_current_operation_against_its_contract() {
     let (router, collected) = product_transport_http::public_routes()
         .with_state(product_transport_http::ReadingQueueHttpState::new(
             FixtureReadingQueue,
@@ -92,11 +91,14 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
         ))
         .split_for_parts();
     let collected: Value = serde_json::to_value(collected).expect("serialize collected OpenAPI");
-    let committed: Value =
-        serde_json::from_str(COMMITTED_OPENAPI).expect("parse committed OpenAPI");
-    assert_eq!(collected, committed, "runtime route collection drifted");
+    let current: Value = serde_json::from_str(
+        &product_transport_http::normalized_openapi_json()
+            .expect("derive current Public API Contract"),
+    )
+    .expect("parse current OpenAPI");
+    assert_eq!(collected, current, "runtime route collection drifted");
 
-    let operations = documented_operations(&committed).expect("enumerate documented operations");
+    let operations = documented_operations(&current).expect("enumerate documented operations");
     let documented_ids = operations.keys().copied().collect::<BTreeSet<_>>();
     let fixture_ids = OPERATION_FIXTURES
         .iter()
@@ -134,7 +136,7 @@ async fn public_router_executes_every_committed_operation_against_its_contract()
             )
             .await
             .expect("call public router");
-        assert_response_contract(&committed, operation.contract, response)
+        assert_response_contract(&current, operation.contract, response)
             .await
             .unwrap_or_else(|error| panic!("{}: {error}", fixture.operation_id));
     }
@@ -384,7 +386,11 @@ async fn assert_problem_type(response: Response<Body>, expected: &str) {
 
 #[tokio::test]
 async fn conformance_fixture_rejects_undocumented_status_content_type_and_body() {
-    let document: Value = serde_json::from_str(COMMITTED_OPENAPI).expect("parse OpenAPI");
+    let document: Value = serde_json::from_str(
+        &product_transport_http::normalized_openapi_json()
+            .expect("derive current Public API Contract"),
+    )
+    .expect("parse OpenAPI");
     let operations = documented_operations(&document).expect("enumerate operations");
     let operation = operations["getFrameworkContractProfile"].contract;
 

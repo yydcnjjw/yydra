@@ -24,8 +24,7 @@ the Product Workspace. For a failing node, retain:
 Interpret outcomes literally:
 
 - `fail` is a required non-pass, but its exact cause may be semantic, policy,
-  configuration, authority drift, or a coordination state such as
-  `API_GENERATION_BUSY`. Inspect `cause.code` and remediation before deciding
+  configuration, or authority drift. Inspect `cause.code` and remediation before deciding
   whether to edit source. Never retry it without an identified state change.
 - `infrastructure-error` means required infrastructure or a tool could not
   establish the result; it is not a product pass or failure.

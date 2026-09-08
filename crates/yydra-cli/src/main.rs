@@ -90,7 +90,7 @@ enum Command {
         #[arg(long = "aggregate-evidence", value_name = "MANIFEST")]
         aggregate_evidence: Vec<PathBuf>,
     },
-    /// Regenerate committed derived outputs from Product Workspace authorities.
+    /// Generate build outputs from Product Workspace authorities.
     Generate {
         #[command(subcommand)]
         command: GenerateCommand,
@@ -104,16 +104,10 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum GenerateCommand {
-    /// Generate normalized OpenAPI and the Orval Fetch/TypeScript/Zod client atomically.
+    /// Generate and validate OpenAPI and the Orval client in the Cargo build directory.
     Api {
         #[arg(default_value = ".")]
         workspace: PathBuf,
-        /// Generate only into isolated roots and compare without modifying the Workspace.
-        #[arg(long)]
-        check: bool,
-        /// Record a reviewed lockstep breaking-change reference; repeat for multiple references.
-        #[arg(long = "acknowledge-breaking-change")]
-        acknowledgements: Vec<String>,
     },
 }
 
@@ -208,18 +202,9 @@ fn main() -> Result<()> {
             }
         }
         Command::Generate { command } => match command {
-            GenerateCommand::Api {
-                workspace,
-                check,
-                acknowledgements,
-            } => api_generation::generate_api(
-                api_generation::ApiGenerationRequest {
-                    workspace: &workspace,
-                    check,
-                    acknowledgements: &acknowledgements,
-                },
-                &reporter,
-            ),
+            GenerateCommand::Api { workspace } => {
+                api_generation::generate_api(&workspace, &reporter)
+            }
         },
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
@@ -803,14 +788,8 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 ("exact-distribution-snapshot", false)
             } else if matches!(
                 path.as_str(),
-                ".yydra/origin.toml"
-                    | ".yydra/product-source-license.toml"
-                    | ".yydra/api-generation.json"
-                    | ".yydra/api-generation-history.json"
-                    | ".yydra/api-generation.lock"
-                    | "contracts/openapi.json"
-            ) || path.starts_with("frontend/src/generated/public-api/")
-            {
+                ".yydra/origin.toml" | ".yydra/product-source-license.toml"
+            ) {
                 ("committed-generated-output", false)
             } else {
                 ("product-owned-source", true)
@@ -881,11 +860,7 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 new_bytes_license_authority: None,
             },
             LifecyclePathRule {
-                path_patterns: &[
-                    ".yydra/**",
-                    "contracts/openapi.json",
-                    "frontend/src/generated/public-api/**",
-                ],
+                path_patterns: &[".yydra/**"],
                 lifecycle: "committed-generated-output",
                 priority: 300,
                 hand_editable: false,

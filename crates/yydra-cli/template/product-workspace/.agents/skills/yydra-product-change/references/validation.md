@@ -5,7 +5,7 @@ Use the cheapest discriminating check first, then widen only after it passes.
 
 1. Run the new or changed unit test at its owning Rust or frontend surface.
 2. Run the affected integration or Public API contract test.
-3. Run `yydra generate api . --check` when the Public API or Generated Client is
+3. Run `yydra generate api .` when the Public API or Generated Client is
    involved.
 4. Use `yydra --message-format=json check . --node <stable-id>` to diagnose the
    smallest affected Mechanical Quality node.

@@ -37,12 +37,11 @@ constraints, rollback, locking, concurrency, or query behavior are material.
   authorization classification, status codes, and RFC 9457 Problem types.
 - Exercise both success and invalid input, state, authorization, and not-found
   behavior in the runtime contract tests.
-- Run `yydra generate api .` only after source tests are coherent. The command
-  stages OpenAPI and Orval/Zod output, validates the complete candidate, and
-  replaces committed generated authorities atomically.
-- Never directly edit `contracts/openapi.json`,
-  `frontend/src/generated/public-api`, or generation records. In check mode,
-  `yydra generate api . --check` compares without rewriting them.
+- Run `yydra generate api .` to export, validate and type-check current API build
+  outputs. Generate before frontend consumption, including after build cleanup.
+- Keep the contract and `@yydra/generated-api` client in the configured Cargo
+  build directory. Do not hand-edit or commit them. No history or breaking-change
+  acknowledgment is required; this validates the current version only.
 
 ## Product Presentation
 
