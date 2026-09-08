@@ -82,7 +82,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         prerequisites: &["origin.exact-distribution"],
         remediation: "restore committed generated and exact snapshot authorities from reviewed version control; do not regenerate them inside check mode",
         proves: "the current Distribution-owned origin, inventory, provenance, and license snapshot authorities retain their exact bytes",
-        does_not_prove: "future generated Public API or native-host drift owned by later graph nodes",
+        does_not_prove: "current API generation correctness or native-host reproducibility owned by later graph nodes",
     },
     NodeSpec {
         id: "database.migration-history",
@@ -143,14 +143,14 @@ const NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         id: "api.generated-contract",
         prerequisites: &["rust.compile", "frontend.lock"],
-        remediation: "run `yydra generate api`, review every contract and Generated Client change, and commit the complete atomic output set",
-        proves: "Rust route collection reproduces the normalized OpenAPI, Orval Fetch/TypeScript/Zod outputs, wire profile, and generation record without modifying the Workspace",
+        remediation: "fix the Rust contract or generator configuration and rerun `yydra generate api`",
+        proves: "Rust route collection generates and validates the current OpenAPI and Orval Fetch/TypeScript/Zod build outputs without changing authored inputs",
         does_not_prove: "that the running service returns every documented response or that Product Domain behavior is correct",
     },
     NodeSpec {
         id: "api.runtime-conformance",
         prerequisites: &["api.generated-contract"],
-        remediation: "align the public-route handler status, content type, headers, and response body with the committed Public API Contract",
+        remediation: "align the public-route handler status, content type, headers, and response body with the current Public API Contract",
         proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject invalid JSON, unknown request or query fields, malformed pagination responses, invalid cursors, undocumented status or content type, prohibited transitions, and incorrect 401/403 authentication meanings",
         does_not_prove: "exhaustive generated-input coverage, a full Identity system, or database-backed Product Domain behavior",
     },
@@ -170,21 +170,21 @@ const NODE_SPECS: &[NodeSpec] = &[
     },
     NodeSpec {
         id: "frontend.typecheck",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "fix the strict no-emit TypeScript errors",
         proves: "the complete frontend TypeScript project passes strict type checking without emit",
         does_not_prove: "browser behavior or server contract conformance",
     },
     NodeSpec {
         id: "frontend.test",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "restore non-empty canonical Vitest coverage and fix the reported failure",
         proves: "the canonical frontend test runner discovered tests and all selected tests passed",
         does_not_prove: "production H5 Application Surface behavior against the real service",
     },
     NodeSpec {
         id: "native.android-generation",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "fix committed Expo app configuration, exact dependencies, standard config plugins, or local Expo Modules; do not patch frontend/android generated source",
         proves: "two clean Android generations from the same authored inputs reproduce the complete path, mode, and byte inventory without changing Workspace inputs",
         does_not_prove: "an Android release build, Android runtime behavior, physical-device behavior, or native accessibility",
@@ -518,24 +518,16 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
     "ANDROID_RELEASE_OUTPUT_MISSING",
     "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-    "API_BREAKING_CHANGE_UNACKNOWLEDGED",
     "API_CHECK_EXECUTABLE_UNAVAILABLE",
     "API_CLIENT_CONTRACT_FAILED",
-    "API_CLIENT_DRIFT",
     "API_CLIENT_GENERATION_FAILED",
     "API_CLIENT_IMPORT_BOUNDARY_VIOLATION",
     "API_CLIENT_IMPORT_SCAN_FAILED",
-    "API_CLIENT_STAGE_INVALID",
+    "API_CLIENT_LINK_FAILED",
+    "API_CLIENT_OUTPUT_INVALID",
     "API_CLIENT_TOOL_VERSION_INVALID",
     "API_CLIENT_TYPECHECK_FAILED",
     "API_GENERATED_CONTRACT_FAILED",
-    "API_GENERATED_DRIFT",
-    "API_GENERATION_BASELINE_INVALID",
-    "API_GENERATION_BUSY",
-    "API_GENERATION_LOCK_INVALID",
-    "API_GENERATION_RECORD_DRIFT",
-    "API_GENERATION_RECOVERY_FAILED",
-    "API_GENERATION_RECOVERY_REQUIRED",
     "API_OPENAPI_CONTENT_TYPE_INVALID",
     "API_OPENAPI_DECIMAL_INVALID",
     "API_OPENAPI_EXPORT_FAILED",
@@ -549,7 +541,9 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "API_OPENAPI_TIMESTAMP_INVALID",
     "API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID",
     "API_OPENAPI_WIRE_TYPE_INVALID",
+    "API_OUTPUT_PREPARE_FAILED",
     "API_RUNTIME_CONFORMANCE_FAILED",
+    "API_WORKSPACE_INVALID",
     "ARCH_DEPENDENCY_CYCLE",
     "ARCH_FORBIDDEN_DEPENDENCY",
     "ARCH_FORBIDDEN_LAYER_EDGE",
@@ -564,6 +558,7 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "CHECK_CLOCK_UNAVAILABLE",
     "CHECK_EVIDENCE_WRITE_FAILED",
     "CHECK_EXCEPTION_POLICY_VIOLATION",
+    "CHECK_EXECUTABLE_UNAVAILABLE",
     "CHECK_INPUT_INVENTORY_FAILED",
     "CHECK_MUTATED_ORIGINAL_INPUTS",
     "CHECK_MUTATED_WORKSPACE_INPUTS",
@@ -2559,9 +2554,18 @@ impl NodeContext<'_> {
         let stderr = create_private_file(&stderr_path).map_err(evidence_write_failure)?;
 
         let mut command = sanitized_command(program);
+        command.env(
+            "YYDRA_EXECUTABLE",
+            std::env::current_exe().map_err(|error| {
+                NodeFailure::infrastructure("CHECK_EXECUTABLE_UNAVAILABLE", error.to_string())
+            })?,
+        );
         command
             .args(arguments)
             .envs(environment.iter().copied())
+            // Every check subprocess, including API generation and npm hooks,
+            // builds inside the isolated scratch Workspace.
+            .env("CARGO_TARGET_DIR", self.root.join("target"))
             .current_dir(directory)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
@@ -3353,12 +3357,7 @@ fn check_api_generated_contract(
             "the exact yydra executable path is not valid UTF-8",
         )
     })?;
-    let output = context.capture(
-        context.root,
-        executable,
-        &["generate", "api", ".", "--check"],
-        &[],
-    )?;
+    let output = context.capture(context.root, executable, &["generate", "api", "."], &[])?;
     if output.status.success() {
         return Ok(());
     }
@@ -3368,10 +3367,6 @@ fn check_api_generated_contract(
         String::from_utf8_lossy(&output.stderr)
     );
     let code = [
-        "API_BREAKING_CHANGE_UNACKNOWLEDGED",
-        "API_GENERATED_DRIFT",
-        "API_CLIENT_DRIFT",
-        "API_GENERATION_RECORD_DRIFT",
         "API_OPENAPI_PROFILE_INVALID",
         "API_OPENAPI_OPERATION_ID_INVALID",
         "API_OPENAPI_CONTENT_TYPE_INVALID",
@@ -3384,23 +3379,21 @@ fn check_api_generated_contract(
         "API_OPENAPI_WIRE_TYPE_INVALID",
         "API_OPENAPI_NULLABILITY_INVALID",
         "API_OPENAPI_SHAPE_REUSE_INVALID",
-        "API_CLIENT_STAGE_INVALID",
+        "API_CLIENT_OUTPUT_INVALID",
         "API_CLIENT_TYPECHECK_FAILED",
         "API_CLIENT_GENERATION_FAILED",
         "API_CLIENT_TOOL_VERSION_INVALID",
+        "API_CLIENT_LINK_FAILED",
+        "API_OUTPUT_PREPARE_FAILED",
+        "API_WORKSPACE_INVALID",
         "API_OPENAPI_EXPORT_FAILED",
-        "API_GENERATION_BASELINE_INVALID",
-        "API_GENERATION_LOCK_INVALID",
-        "API_GENERATION_BUSY",
-        "API_GENERATION_RECOVERY_REQUIRED",
-        "API_GENERATION_RECOVERY_FAILED",
     ]
     .into_iter()
     .find(|code| detail.contains(code))
     .unwrap_or("API_GENERATED_CONTRACT_FAILED");
     Err(NodeFailure::fail(
         code,
-        "isolated `yydra generate api --check` rejected the committed authority chain",
+        "`yydra generate api` rejected the current contract or generated client",
     ))
 }
 
@@ -3451,9 +3444,7 @@ fn check_generated_client_import_boundary(root: &Path) -> std::result::Result<()
         let relative = path.strip_prefix(&frontend).map_err(|error| {
             NodeFailure::infrastructure("API_CLIENT_IMPORT_SCAN_FAILED", error.to_string())
         })?;
-        if relative.starts_with("src/generated/public-api")
-            || relative.starts_with("src/framework/api")
-        {
+        if relative.starts_with("src/framework/api") {
             continue;
         }
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
@@ -3532,7 +3523,9 @@ fn imports_generated_public_api(source: &str) -> std::result::Result<bool, &'sta
         let JavaScriptToken::String(specifier) = token else {
             continue;
         };
-        if !specifier.contains("generated/public-api") {
+        if !specifier.contains("generated/public-api")
+            && !specifier.contains("@yydra/generated-api")
+        {
             continue;
         }
         let previous = index.checked_sub(1).and_then(|index| tokens.get(index));
@@ -3771,6 +3764,7 @@ const FRONTEND_SOURCES: &[&str] = &[
     "scripts",
     "app.json",
     "eslint.config.mjs",
+    "metro.config.mjs",
     "orval.config.mjs",
     "package.json",
     "playwright.config.mts",
@@ -3785,6 +3779,7 @@ const FRONTEND_LINT_SOURCES: &[&str] = &[
     "src",
     "scripts",
     "eslint.config.mjs",
+    "metro.config.mjs",
     "orval.config.mjs",
     "playwright.config.mts",
     "vitest.config.mts",
@@ -3908,6 +3903,7 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 export default defineConfig({
   root,
   resolve: {
+    preserveSymlinks: true,
     alias: {
       "@": fileURLToPath(new URL("../../src", import.meta.url)),
       "@react-native-community/netinfo": fileURLToPath(
@@ -6022,6 +6018,7 @@ fn spawn_server(
     let mut command = sanitized_command("cargo");
     command
         .args(["run", "--locked", "--bin", "server"])
+        .env("CARGO_TARGET_DIR", context.root.join("target"))
         .env("DATABASE_URL", database_url)
         .env("YYDRA_BIND_ADDRESS", server_address)
         .env(

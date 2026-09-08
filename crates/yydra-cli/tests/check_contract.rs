@@ -132,7 +132,29 @@ fn write_executable(path: &Path, contents: &str) {
 #[cfg(unix)]
 fn write_fake_native_toolchain(directory: &Path, npm_body: &str) {
     fs::create_dir(directory).expect("create fake native tool directory");
-    write_executable(&directory.join("npm"), npm_body);
+    // Only native generation is faked. Its API prerequisites use the real tools.
+    let tool_path = |name: &str| {
+        std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+            .map(|path| path.join(name))
+            .find(|path| path.is_file())
+            .expect("installed tool")
+    };
+    let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"));
+    write_executable(&directory.join("npm-native"), npm_body);
+    write_executable(
+        &directory.join("npm"),
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = ci ]; then
+  {npm} "$@" || exit $?
+fi
+if [ "$1" = exec ]; then exec {npm} "$@"; fi
+exec {native} "$@"
+"#,
+            npm = quote(&tool_path("npm")),
+            native = quote(&directory.join("npm-native"))
+        ),
+    );
     write_executable(
         &directory.join("node"),
         r#"#!/bin/sh
@@ -155,9 +177,11 @@ case "$2" in
   *node_modules/typescript/package.json*) printf '%s\n' '6.0.3' ;;
   *node_modules/typescript-eslint/package.json*) printf '%s\n' '8.69.0' ;;
   *node_modules/vitest/package.json*) printf '%s\n' '4.1.11' ;;
-  *) exit 2 ;;
+  *) exec REAL_NODE "$@" ;;
 esac
-"#,
+"#
+        .replace("REAL_NODE", &quote(&tool_path("node")))
+        .as_str(),
     );
 }
 
@@ -1944,14 +1968,17 @@ fn generated_snapshot_drift_is_reported_by_its_own_node() {
 }
 
 #[test]
-fn api_generated_contract_node_detects_client_drift_and_remains_read_only() {
+fn api_generated_contract_node_rejects_invalid_client_without_changing_authored_inputs() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("api-drift-reader");
     create_workspace(&workspace, "api-drift-reader");
-    let client = workspace.join("frontend/src/generated/public-api/fetch/client.ts");
-    let mut source = fs::read(&client).expect("read Generated Client fixture");
-    source.extend_from_slice(b"\n// forbidden hand edit\n");
-    fs::write(&client, source).expect("drift Generated Client fixture");
+    let config = workspace.join("frontend/orval.config.mjs");
+    let source = fs::read_to_string(&config).expect("read generator config");
+    fs::write(
+        &config,
+        source.replace("Do not edit manually.", "Wrong header fixture."),
+    )
+    .expect("write invalid generator header");
     let before = workspace_files(&workspace);
 
     let output = check(
@@ -1972,13 +1999,45 @@ fn api_generated_contract_node_detects_client_drift_and_remains_read_only() {
     }
     let failure = node(&parsed, "api.generated-contract");
     assert_eq!(failure["outcome"], "fail");
-    assert_eq!(failure["cause"]["code"], "API_CLIENT_DRIFT");
+    assert_eq!(failure["cause"]["code"], "API_CLIENT_OUTPUT_INVALID");
     assert!(failure["remediation"].is_string());
     assert_eq!(workspace_files(&workspace), before);
     assert_eq!(
         node(&parsed, "ownership.authored-inputs-unchanged")["outcome"],
         "pass"
     );
+}
+
+#[test]
+fn check_isolates_cargo_outputs_from_custom_project_target_directories() {
+    for target in ["build", "."] {
+        let sandbox = tempdir().expect("create sandbox");
+        let workspace = sandbox.path().join("custom-target-reader");
+        create_workspace(&workspace, "custom-target-reader");
+        fs::create_dir(workspace.join(".cargo")).unwrap();
+        fs::write(
+            workspace.join(".cargo/config.toml"),
+            format!("[build]\ntarget-dir = \"{target}\"\n"),
+        )
+        .unwrap();
+        let before = workspace_files(&workspace);
+        let evidence = sandbox.path().join("evidence");
+        let output = check(&workspace, &evidence, &["api.generated-contract"]);
+        assert!(
+            output.status.success(),
+            "target={target}, {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            node(&events(&output), "api.generated-contract")["outcome"],
+            "pass"
+        );
+        assert_eq!(
+            node(&events(&output), "ownership.authored-inputs-unchanged")["outcome"],
+            "pass"
+        );
+        assert_eq!(workspace_files(&workspace), before);
+    }
 }
 
 #[test]
@@ -2020,7 +2079,7 @@ fn api_client_contract_rejects_a_multiline_direct_generated_import_read_only() {
     let runtime = workspace.join("frontend/src/framework/runtime.tsx");
     let mut source = fs::read_to_string(&runtime).expect("read Runtime fixture");
     source.push_str(
-        "\nimport type {\n  FrameworkContractProfile as ForbiddenGeneratedProfile,\n} from \"../generated/public-api/fetch/schemas\";\nexport type BoundaryFixture = ForbiddenGeneratedProfile;\n",
+        "\nimport type {\n  FrameworkContractProfile as ForbiddenGeneratedProfile,\n} from \"@yydra/generated-api/fetch/schemas/index\";\nexport type BoundaryFixture = ForbiddenGeneratedProfile;\n",
     );
     fs::write(&runtime, source).expect("write direct Generated Client import fixture");
     let before = workspace_files(&workspace);
@@ -2160,7 +2219,7 @@ fn failed_prerequisites_skip_dependents_while_independent_nodes_continue() {
     let contents = fs::read_to_string(&origin)
         .expect("read Origin Record")
         .replace(
-            "distribution_version = \"0.2.0\"",
+            "distribution_version = \"0.3.0\"",
             "distribution_version = \"9.9.9\"",
         );
     fs::write(origin, contents).expect("write mismatched Origin Record");
@@ -3176,6 +3235,13 @@ exit 2
         std::env::var("PATH").expect("PATH")
     );
     let evidence = sandbox.path().join("evidence");
+    let user_home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| user_home.join(".cargo"));
+    let rustup_home = std::env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| user_home.join(".rustup"));
     let run = |evidence: &Path| {
         Command::new(env!("CARGO_BIN_EXE_yydra"))
             .args([
@@ -3191,6 +3257,8 @@ exit 2
             .env("EXPO_TOKEN", "must-not-reach-build")
             .env("EAS_TOKEN", "must-not-reach-build")
             .env("YYDRA_GRADLE_DEPENDENCY_CACHE_SEED", &dependency_seed)
+            .env("CARGO_HOME", &cargo_home)
+            .env("RUSTUP_HOME", &rustup_home)
             .env("HOME", &poisoned_home)
             .env("XDG_CONFIG_HOME", &poisoned_config)
             .output()

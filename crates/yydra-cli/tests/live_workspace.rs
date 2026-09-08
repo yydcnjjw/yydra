@@ -48,7 +48,7 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
             "--extract",
             "--file",
             package_target
-                .join("package/yydra-cli-0.2.0.crate")
+                .join("package/yydra-cli-0.3.0.crate")
                 .to_str()
                 .expect("UTF-8 package archive"),
             "--directory",
@@ -60,12 +60,12 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         "unpack exact CLI package",
     );
     assert_success(&unpack, "unpack exact CLI package");
-    let extracted = package_target.join("package/yydra-cli-0.2.0");
+    let extracted = package_target.join("package/yydra-cli-0.3.0");
     let install_root = sandbox.path().join("install");
     let install = command_output(
         Command::new(&cargo).args([
             "install",
-            "yydra-cli@0.2.0",
+            "yydra-cli@0.3.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",
@@ -240,7 +240,10 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         ("unit test generated frontend", &["test"][..]),
     ] {
         let output = command_output(
-            Command::new("npm").args(arguments).current_dir(&frontend),
+            Command::new("npm")
+                .args(arguments)
+                .current_dir(&frontend)
+                .env("YYDRA_EXECUTABLE", &yydra),
             label,
         );
         assert_success(&output, label);
@@ -249,6 +252,7 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
     let h5 = command_output(
         Command::new("npm")
             .args(["run", "test:e2e"])
+            .env("YYDRA_EXECUTABLE", &yydra)
             .current_dir(&frontend)
             .env(
                 "EXPO_PUBLIC_API_URL",

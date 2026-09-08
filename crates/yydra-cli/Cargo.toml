@@ -13,6 +13,7 @@ include = [
   "LICENSE-MIT",
   "src/**",
   "tests/consumer_creation.rs",
+  "tests/api_generation.rs",
   "tests/check_contract.rs",
   "tests/live_workspace.rs",
   "tests/packaged_consumer.rs",

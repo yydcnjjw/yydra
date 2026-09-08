@@ -257,27 +257,37 @@ device validation, or unregistered Product behavior.
 
 Public routes consumed by Generated Client code must be registered through
 `product_transport_http::public_routes`. Rust handlers and `utoipa`
-declarations are the authored authority; `contracts/openapi.json`,
-`frontend/src/generated/public-api/`, and the `.yydra/api-generation*.json`
-records are committed outputs and must not be hand-edited. Regenerate the
-complete output set through the exact CLI:
+declarations are the authored authority. Run:
 
 ```console
 yydra generate api .
 ```
 
-The command exports and lints normalized OpenAPI, runs the pinned Orval
-Fetch/TypeScript/Zod stages, and type-checks them in isolated temporary roots.
-Only then does it replace the contract, client directory, compatibility
-history, and generation record under one Workspace lock and a persisted,
-rollback-safe transaction. A read-only check refuses an interrupted
-transaction; the next write invocation restores the last complete set before
-starting. Use
-`yydra generate api . --check` for a read-only comparison. An intentional
-lockstep breaking change requires a reviewed, narrow
-`--acknowledge-breaking-change <reference>`; the acknowledgment does not make
-the change non-breaking. Product code calls the handwritten facade in
-`frontend/src/framework/api/`, never the generated directory directly.
+The command exports and validates OpenAPI, generates the pinned Orval
+Fetch/TypeScript/Zod client, and type-checks it in Cargo's configured target
+directory, under `yydra/api/<workspace-key>/`. The workspace key keeps outputs
+separate when projects reuse one Cargo cache sequentially. These are disposable
+build outputs, never authored or committed
+source. The generated package is linked into frontend `node_modules` as
+`@yydra/generated-api`; only the handwritten facade in `frontend/src/framework/api/`
+may import it. Frontend development, tests, type checking, H5 exports and native
+generation prepare the client automatically before consuming it. Install the
+CLI on PATH, or set `YYDRA_EXECUTABLE` to its absolute path.
+
+Generation is sequential. Failure stops the pipeline; rerunning cleans only the
+API build outputs and rebuilds them. There is no generation lock, staging
+transaction, recovery journal, compatibility history, or breaking-change
+acknowledgment. Checks validate the current version; they do not prove older
+client compatibility. `yydra check` uses the same generation pipeline; the old
+`generate api --check` comparison mode has been removed. Within `check`, Cargo
+uses the isolated scratch Workspace's `target/` directory. This explicit check
+configuration also applies to API generation and frontend subprocesses; it keeps
+build outputs away from the original project even if its Cargo configuration
+selects a different target directory.
+
+The generation entrypoint validates required inputs and tool compatibility.
+Complete Workspace identity and provenance checks belong to `doctor` and the
+appropriate `check` nodes.
 
 The focused production H5 Application Surface acceptance command exports static web assets, serves
 them locally, creates, completes, reopens, filters, paginates, refreshes, and
