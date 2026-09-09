@@ -948,8 +948,13 @@ struct VerifiedWorkspaceOrigin {
 }
 
 fn distribution_install_remediation(version: &str) -> String {
+    let cargo = if version == DISTRIBUTION_VERSION {
+        "cargo +nightly"
+    } else {
+        "cargo"
+    };
     format!(
-        "download yydra-cli-{version}.crate and yydra-cli-{version}.crate.sha256 from https://github.com/yydcnjjw/yydra/releases/tag/distribution-v{version}; verify with sha256sum --check yydra-cli-{version}.crate.sha256, extract the verified package in a fresh directory, then install exactly with: cargo install yydra-cli@{version} --path ./yydra-cli-{version} --locked"
+        "download yydra-cli-{version}.crate and yydra-cli-{version}.crate.sha256 from https://github.com/yydcnjjw/yydra/releases/tag/distribution-v{version}; verify with sha256sum --check yydra-cli-{version}.crate.sha256, extract the verified package in a fresh directory, then install exactly with: {cargo} install yydra-cli@{version} --path ./yydra-cli-{version} --locked"
     )
 }
 

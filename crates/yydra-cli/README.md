@@ -5,14 +5,15 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
-Distribution `0.4.0` is a local development candidate; it has not been published.
-Use the candidate's independently packaged `yydra-cli-0.4.0.crate` and its recorded
+Distribution `0.5.0` is a local development candidate; it has not been published.
+Use the candidate's independently packaged `yydra-cli-0.5.0.crate` and its recorded
 checksum, then extract and install with the packaged lockfile in a fresh directory:
 
 ```sh
-sha256sum --check yydra-cli-0.4.0.crate.sha256
-tar -xzf yydra-cli-0.4.0.crate
-cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked
+rustup toolchain install nightly --profile minimal --component rustfmt,clippy
+sha256sum --check yydra-cli-0.5.0.crate.sha256
+tar -xzf yydra-cli-0.5.0.crate
+cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked
 yydra --version
 ```
 
@@ -22,6 +23,14 @@ Cargo may download locked dependencies. No registry publication or login is
 required. The historical [Distribution 0.1.0 release](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0)
 and its recorded supply-chain contract remain unchanged; use its exact CLI for
 Workspaces it created.
+
+Rust uses the rolling `nightly` channel with rustfmt and Clippy. Refresh a local
+installation explicitly with `rustup update nightly`; builds and checks use the
+installed channel without adding an update step. This Distribution maintains
+nightly-only support and declares no stable MSRV. Checks preserve actual Rust
+tool versions, including build identities, and successful runs from different
+nightly dates may be aggregated. Evidence applies to the versions actually
+validated, while the remaining exact Distribution and tool constraints still apply.
 
 Create once with one normalized product-source license choice:
 

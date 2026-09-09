@@ -32,6 +32,14 @@ setup does not depend on a developer's user-level registry setting. It does not
 enable arbitrary remote URL dependencies or change locked versions/integrities.
 Treat this file as Product-owned configuration alongside the frontend manifests.
 
+Rust uses the rolling `nightly` channel with rustfmt and Clippy. Refresh a local
+installation explicitly with `rustup update nightly`; builds and checks use the
+installed channel without adding an update step. This Distribution maintains
+nightly-only support and declares no stable MSRV. Checks preserve actual Rust
+tool versions, including build identities, and successful runs from different
+nightly dates may be aggregated. Evidence applies to the versions actually
+validated, while the remaining exact Distribution and tool constraints still apply.
+
 Install exact dependency graphs and start the pinned PostgreSQL service:
 
 ```console

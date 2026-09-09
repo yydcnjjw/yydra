@@ -66,7 +66,7 @@ fn creates_workspace_from_the_normalized_flag_model() {
 
     let origin = fs::read_to_string(destination.join(".yydra/origin.toml"))
         .expect("read Workspace Origin Record");
-    assert!(origin.contains("distribution_version = \"0.4.0\""));
+    assert!(origin.contains("distribution_version = \"0.5.0\""));
     assert!(origin.contains("template_identity = \"yydra-v0-product-workspace\""));
     assert!(origin.contains("product_name = \"Acme Reader\""));
     assert!(origin.contains("product_id = \"acme-reader\""));
@@ -455,7 +455,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     )
     .expect("parse Distribution inventory");
     assert_eq!(inventory["schema_version"], 1);
-    assert_eq!(inventory["distribution_version"], "0.4.0");
+    assert_eq!(inventory["distribution_version"], "0.5.0");
     assert_eq!(
         inventory["lifecycles"],
         serde_json::json!([
@@ -2061,7 +2061,7 @@ fn doctor_fails_closed_on_distribution_mismatch_without_mutating_the_workspace()
     fs::write(
         &origin_path,
         origin.replace(
-            "distribution_version = \"0.4.0\"",
+            "distribution_version = \"0.5.0\"",
             "distribution_version = \"9.8.7\"",
         ),
     )
@@ -2118,9 +2118,11 @@ fn doctor_fails_closed_on_template_digest_mismatch_without_mutation() {
         stderr.contains("template digest mismatch"),
         "stderr: {stderr}"
     );
-    assert!(stderr.contains("cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked"));
-    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.4.0"));
-    assert!(stderr.contains("sha256sum --check yydra-cli-0.4.0.crate.sha256"));
+    assert!(
+        stderr.contains("cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked")
+    );
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.5.0"));
+    assert!(stderr.contains("sha256sum --check yydra-cli-0.5.0.crate.sha256"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -2367,10 +2369,14 @@ fn doctor_rejects_origin_schema_and_template_identity_mismatch() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.4.0")
+            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.5.0")
         );
-        assert!(stderr.contains("cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked"));
-        assert!(stderr.contains("sha256sum --check yydra-cli-0.4.0.crate.sha256"));
+        assert!(
+            stderr.contains(
+                "cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked"
+            )
+        );
+        assert!(stderr.contains("sha256sum --check yydra-cli-0.5.0.crate.sha256"));
         assert_eq!(before, byte_inventory(&workspace));
     }
 }
@@ -2428,7 +2434,7 @@ fn fn_append_malformed_table(mut origin: String) -> String {
 
 fn fn_replace_with_non_semver(origin: String) -> String {
     origin.replace(
-        "distribution_version = \"0.4.0\"",
+        "distribution_version = \"0.5.0\"",
         "distribution_version = \"not-semver\"",
     )
 }
