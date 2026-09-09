@@ -4,7 +4,6 @@ name = "yydra-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
 description = "Exact-version CLI for the Yydra application framework"
 repository = "https://github.com/yydcnjjw/yydra"
 readme = "README.md"

@@ -102,7 +102,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         id: "rust.format",
         prerequisites: &[],
         remediation: "run cargo fmt --all, review the diff, and rerun yydra check",
-        proves: "Rust source is in the pinned formatter's canonical form",
+        proves: "Rust source is in the observed nightly formatter's canonical form",
         does_not_prove: "correctness, architecture, or runtime behavior",
     },
     NodeSpec {
@@ -1404,11 +1404,12 @@ fn verify_aggregate_source(
     if required_tool_versions()
         .iter()
         .any(|(name, version)| manifest.observed_tool_versions.get(name) != Some(version))
+        || !valid_rust_tool_versions(&manifest.observed_tool_versions)
     {
         return Err(AggregateFailure::new(
             "AGGREGATE_IDENTITY_MISMATCH",
             format!(
-                "source manifest '{}' did not observe every exact required tool identity",
+                "source manifest '{}' did not observe the required tool identities and nightly Rust tools",
                 manifest_path.display()
             ),
         ));
@@ -2958,29 +2959,17 @@ fn check_rust_architecture(context: &mut NodeContext<'_>) -> std::result::Result
         context.observe_tool_version(context.root, "rustfmt", "rustfmt", &["--version"])?;
     let clippy =
         context.observe_tool_version(context.root, "clippy", "cargo", &["clippy", "--version"])?;
-    if !rustc.starts_with("rustc 1.97.1 ")
-        || !cargo.starts_with("cargo 1.97.1 ")
-        || !rustfmt.starts_with("rustfmt 1.9.0-stable ")
-        || !clippy.starts_with("clippy 0.1.97 ")
-    {
+    if !valid_rust_tool_versions(&context.tool_versions) {
         return Err(NodeFailure::fail(
             "RUST_TOOLCHAIN_AUTHORITY_DRIFT",
             format!(
-                "expected rustc/cargo 1.97.1, rustfmt 1.9.0-stable, and clippy 0.1.97; observed {rustc:?}, {cargo:?}, {rustfmt:?}, and {clippy:?}"
+                "expected nightly rustc, Cargo and rustfmt, plus Clippy with complete build identities; observed {rustc:?}, {cargo:?}, {rustfmt:?}, and {clippy:?}"
             ),
         ));
     }
-    for (name, version) in [
-        ("rust-toolchain", "1.97.1"),
-        ("rustc", "1.97.1"),
-        ("cargo", "1.97.1"),
-        ("rustfmt", "1.9.0-stable"),
-        ("clippy", "0.1.97"),
-    ] {
-        context
-            .tool_versions
-            .insert(name.to_owned(), version.to_owned());
-    }
+    context
+        .tool_versions
+        .insert("rust-toolchain".to_owned(), "nightly".to_owned());
     let lock_path = context.root.join("Cargo.lock");
     let before_lock = fs::read(&lock_path).map_err(|error| {
         NodeFailure::fail(
@@ -6620,11 +6609,7 @@ fn collect_artifact_entries(root: &Path, path: &Path, entries: &mut InputInvento
 
 fn required_tool_versions() -> BTreeMap<String, String> {
     [
-        ("rust-toolchain", "1.97.1"),
-        ("rustc", "1.97.1"),
-        ("cargo", "1.97.1"),
-        ("rustfmt", "1.9.0-stable"),
-        ("clippy", "0.1.97"),
+        ("rust-toolchain", "nightly"),
         ("expo", "57.0.19"),
         ("@react-native-community/netinfo", "12.0.1"),
         ("@playwright/test", "1.62.1"),
@@ -6647,6 +6632,46 @@ fn required_tool_versions() -> BTreeMap<String, String> {
     .into_iter()
     .map(|(name, version)| (name.to_owned(), version.to_owned()))
     .collect()
+}
+
+fn valid_rust_tool_versions(observed: &BTreeMap<String, String>) -> bool {
+    ["rustc", "cargo", "rustfmt", "clippy"]
+        .into_iter()
+        .all(|tool| {
+            let Some(output) = observed.get(tool) else {
+                return false;
+            };
+            let mut fields = output.split_whitespace();
+            if fields.next() != Some(tool) {
+                return false;
+            }
+            let Some(version) = fields
+                .next()
+                .and_then(|value| semver::Version::parse(value).ok())
+            else {
+                return false;
+            };
+            if tool != "clippy" && version.pre.as_str() != "nightly" {
+                return false;
+            }
+            let Some(commit) = fields.next().and_then(|value| value.strip_prefix('(')) else {
+                return false;
+            };
+            let Some(date) = fields.next().and_then(|value| value.strip_suffix(')')) else {
+                return false;
+            };
+            (7..=40).contains(&commit.len())
+                && commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && date.len() == 10
+                && date.bytes().enumerate().all(|(index, byte)| {
+                    if index == 4 || index == 7 {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit()
+                    }
+                })
+                && fields.next().is_none()
+        })
 }
 
 fn observed_tool_versions(results: &[NodeResult]) -> BTreeMap<String, String> {

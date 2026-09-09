@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 [package]
 name = "yydra-build"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
-rust-version = "1.97.1"
 license = "MIT OR Apache-2.0"
 description = "Public API and generated-client build support for Yydra Product Workspaces"
 repository = "https://github.com/yydcnjjw/yydra"

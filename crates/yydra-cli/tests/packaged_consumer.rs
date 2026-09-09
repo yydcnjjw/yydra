@@ -35,7 +35,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&package.stderr)
     );
 
-    let extracted = package_target.join("package/yydra-cli-0.4.0");
+    let extracted = package_target.join("package/yydra-cli-0.5.0");
     assert!(extracted.join("Cargo.lock").is_file());
     assert!(extracted.join("third-party/bolts-source.json").is_file());
     for removed in ["supply-chain", "src/supply_chain.rs", "build.rs"] {
@@ -95,7 +95,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     let install = Command::new(&cargo)
         .args([
             "install",
-            "yydra-cli@0.4.0",
+            "yydra-cli@0.5.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",

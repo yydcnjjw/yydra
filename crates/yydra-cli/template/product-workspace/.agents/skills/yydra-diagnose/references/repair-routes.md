@@ -33,11 +33,13 @@ rather than guessing which authority or external condition to change.
 ## Rust and database
 
 - `RUST_TOOLCHAIN_AUTHORITY_DRIFT`: restore the exact Distribution-owned
-  `rust-toolchain.toml`; do not select a different toolchain to bypass a failure.
+  `rust-toolchain.toml` declaring rolling nightly; ensure nightly rustc/Cargo/rustfmt
+  and Clippy are available. Use `rustup update nightly` to refresh explicitly.
+  Keep actual version records; a stable override cannot satisfy this contract.
 - `CARGO_LOCK_DRIFT`: repair the Product-owned manifest choice when it is wrong,
   then deliberately update and review the committed lock. Do not let a check or
   metadata probe rewrite it.
-- `RUST_FORMAT_FAILED`: format the reported Rust source with the pinned toolchain.
+- `RUST_FORMAT_FAILED`: format the reported Rust source with the Workspace's nightly toolchain.
 - `RUST_COMPILE_FAILED`, `RUST_CLIPPY_FAILED`, `RUST_TEST_FAILED`, and
   `RUST_DOCTEST_FAILED`: inspect the exact retained Cargo output and repair its
   Product-owned source or test owner.

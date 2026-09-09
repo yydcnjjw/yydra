@@ -48,7 +48,7 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
             "--extract",
             "--file",
             package_target
-                .join("package/yydra-cli-0.4.0.crate")
+                .join("package/yydra-cli-0.5.0.crate")
                 .to_str()
                 .expect("UTF-8 package archive"),
             "--directory",
@@ -60,12 +60,12 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         "unpack exact CLI package",
     );
     assert_success(&unpack, "unpack exact CLI package");
-    let extracted = package_target.join("package/yydra-cli-0.4.0");
+    let extracted = package_target.join("package/yydra-cli-0.5.0");
     let install_root = sandbox.path().join("install");
     let install = command_output(
         Command::new(&cargo).args([
             "install",
-            "yydra-cli@0.4.0",
+            "yydra-cli@0.5.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",
