@@ -122,12 +122,30 @@ annotations do not determine or publish the next Distribution version.
 For a revert, use `revert: <description>` and identify the reverted commit SHA
 and the reason in the body. Preserve the DCO sign-off on the revert commit.
 
+## Verified commit signatures
+
+Every commit submitted for review or intended to land on `main` must have a
+cryptographic signature that GitHub verifies, including new merge commits.
+Use `git commit -S --signoff` with a configured signing identity. After an
+authorized push, check GitHub's verification status for every commit in the
+submitted range; a passing DCO check alone does not establish signature validity.
+
+Rebase, amend, and squash create new commit objects. Sign those objects and
+verify their status again before treating them as ready to merge. Preserve the
+task's authorization boundary when rewriting an already shared branch.
+GitHub-signed commits created through its supported authenticated interfaces
+also qualify when GitHub reports them as verified. Confirm the resulting author
+identity and keep its matching DCO sign-off. See GitHub's
+[signature verification documentation](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+and [signed commit API](https://docs.github.com/en/graphql/reference/commits#createcommitonbranch).
+
 ## Existing DCO requirement
 
 Every submitted commit must contain a `Signed-off-by:` line matching its
 author's name and email, including merge commits in the submitted range.
-Use `git commit --signoff` with the correct author identity. A different
-committer's sign-off alone does not satisfy the author-matching requirement.
+The trailer is a contribution certification, separate from a cryptographic
+signature. Use `git commit -S --signoff` with the correct author identity.
+A different committer's sign-off alone does not satisfy the author-matching requirement.
 See [CONTRIBUTING.md](../../CONTRIBUTING.md) for the certification itself.
 
 ## Examples
