@@ -10,6 +10,10 @@ Mechanical Quality Contract keep their existing requirements. An explicitly
 agreed task-specific acceptance condition still applies; this default does not
 silently amend an existing task or ADR requiring full validation.
 
+Use the [worktree development workflow](worktree-workflow.md) for task
+isolation, creation, synchronization, local commits, handoff, and authorized
+cleanup. Run the checks selected here against that task's candidate.
+
 ## Select validation from the change
 
 Inspect the task, relevant domain documents, and current diff before selecting
@@ -84,9 +88,10 @@ existing supported cache and resource limits.
 ## Finish a development task and validate a release
 
 A local task can finish when its agreed change is implemented and reviewed,
-and the checks required for that change have passed. Report what ran, its
-result, and material coverage limits. When Android was not triggered, say
-that it was not run under the change scope. A selected check result remains
+the checks required for that change have passed, and its local cryptographically
+signed commits carry author-matching DCO sign-offs under the worktree workflow.
+Report what ran, its result, and material coverage limits. When Android was not
+triggered, say that it was not run under the change scope. A selected check result remains
 `pass-selected`, `complete: false`; do not describe it as full or aggregate
 Conformance Evidence or relabel an unrun node as passing.
 
