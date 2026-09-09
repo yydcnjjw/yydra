@@ -12,3 +12,7 @@ Use the five default canonical triage labels. See `docs/agents/triage-labels.md`
 ### Domain docs
 
 Use a multi-context layout with a root `CONTEXT-MAP.md` pointing to context-local `CONTEXT.md` files and ADRs. See `docs/agents/domain.md`.
+
+### Local development workflow
+
+Follow `docs/agents/development-workflow.md` when selecting local validation and reporting task completion. Select checks by changed behavior; require Android builds for native or Android build-chain changes and full validation before release. Honor explicit task-specific acceptance conditions.
