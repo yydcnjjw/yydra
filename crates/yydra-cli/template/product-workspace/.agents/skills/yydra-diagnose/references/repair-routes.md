@@ -73,26 +73,20 @@ rather than guessing which authority or external condition to change.
 
 ## Public API and generation
 
-- `API_GENERATION_BUSY`: another invocation owns the Workspace generation lock.
-  Do not edit API source or remove a live lock. Let the owning invocation finish
-  or stop the duplicate invocation, verify that ownership has ended, then rerun
-  once because the coordination state changed.
-- `API_GENERATION_RECOVERY_REQUIRED` and `API_GENERATION_RECOVERY_FAILED`: first
-  verify that no live invocation owns the lock, then follow the generator's
-  recovery remediation. Preserve the journal and previous complete outputs for
-  diagnosis; do not reconstruct committed generated files by hand.
-- `API_GENERATION_LOCK_INVALID`, `API_GENERATION_BASELINE_INVALID`, and
-  `API_GENERATION_RECORD_DRIFT`: restore the committed lock or complete reviewed
-  generation authority chain from version control. Do not delete the lock or
-  edit records, history, OpenAPI, or client digests into agreement.
+- `API_WORKSPACE_INVALID`: restore the required project structure and generation
+  configuration identified by the error. Full origin and license verification
+  belongs to `doctor` and the dedicated quality nodes.
+- `API_OUTPUT_PREPARE_FAILED` and `API_CLIENT_LINK_FAILED`: inspect the named
+  build-output or generated-package link path and its permissions. Preserve
+  unrelated build caches. After repair, regenerate; no transaction recovery or
+  historical authority reconstruction is needed.
 - `API_CLIENT_TOOL_VERSION_INVALID`: run `yydra setup .` to restore the exact
   project-local Orval dependency from the committed npm lock. Do not change
   Public API source to disguise a missing or wrong tool.
-- `API_CHECK_EXECUTABLE_UNAVAILABLE`: restore or invoke the exact Yydra CLI named
-  by the Workspace Origin Record; this is not an API source failure.
-- `API_GENERATED_DRIFT` and `API_CLIENT_DRIFT`: after the Public API source and
-  generator inputs are coherent, use `yydra generate api .` atomically. Do not
-  hand-edit the compared output.
+- `API_BUILD_FAILED`: inspect the Cargo/build-script diagnostics and repair the
+  reported Rust input or frontend tool failure before rerunning the consumer.
+- `API_OUTPUT_MISSING`: preparation could not restore complete outputs after
+  its one package-scoped rebuild; inspect the output path and generator failure.
 - `API_OPENAPI_PROFILE_INVALID`, `API_OPENAPI_OPERATION_ID_INVALID`,
   `API_OPENAPI_CONTENT_TYPE_INVALID`, `API_OPENAPI_FIELD_NAME_INVALID`,
   `API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID`, `API_OPENAPI_REQUIREDNESS_INVALID`,
@@ -101,10 +95,7 @@ rather than guessing which authority or external condition to change.
   `API_OPENAPI_NULLABILITY_INVALID`, and `API_OPENAPI_SHAPE_REUSE_INVALID`:
   repair the exact reported wire-profile rule in the Axum/utoipa Public API
   source and its positive and negative contract tests, then generate.
-- `API_BREAKING_CHANGE_UNACKNOWLEDGED`: review the reported compatibility change.
-  Change the source if it is accidental; if it is intended, record only a real
-  review reference through the supported acknowledgement option.
-- `API_CLIENT_STAGE_INVALID`, `API_CLIENT_GENERATION_FAILED`, and
+- `API_CLIENT_OUTPUT_INVALID`, `API_CLIENT_GENERATION_FAILED`, and
   `API_CLIENT_TYPECHECK_FAILED`: inspect the retained generator log and repair the
   named Product-owned generator input, configuration, or Public API source. Do
   not assume the source is wrong before the log identifies it.

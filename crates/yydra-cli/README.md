@@ -5,14 +5,14 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
-Distribution `0.2.0` is a local development candidate; it has not been published.
-Use the candidate's independently packaged `yydra-cli-0.2.0.crate` and its recorded
+Distribution `0.4.0` is a local development candidate; it has not been published.
+Use the candidate's independently packaged `yydra-cli-0.4.0.crate` and its recorded
 checksum, then extract and install with the packaged lockfile in a fresh directory:
 
 ```sh
-sha256sum --check yydra-cli-0.2.0.crate.sha256
-tar -xzf yydra-cli-0.2.0.crate
-cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked
+sha256sum --check yydra-cli-0.4.0.crate.sha256
+tar -xzf yydra-cli-0.4.0.crate
+cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked
 yydra --version
 ```
 
@@ -56,7 +56,8 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
 YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=<at-least-32-byte-secret> \
   yydra dev ./reader
-yydra generate api ./reader
+yydra build ./reader
+yydra build ./reader --target android
 yydra check ./reader
 ```
 
@@ -90,11 +91,22 @@ migrations are append-only; passing `--comparison-base <git-revision>` to the
 focused `database.migration-history` check also rejects edits and deletions
 relative to the requested Git base. Focused `database.runtime-invariants` and
 `runtime.post-commit-executor` nodes retain discriminating failure fixtures.
-`generate api` is the only supported
-write path for normalized OpenAPI and the Orval Fetch/TypeScript/Zod outputs;
-it validates every isolated stage before a Workspace-locked, journaled,
-rollback-safe replacement, and records a replayable compatibility history.
-Its read-only form is `yydra generate api ./reader --check`. The default check
+`yydra build` produces the release backend executable and type-checked H5 static
+artifacts by default. `--target server`, `--target h5`, or `--target android`
+selects one artifact; Android uses the same account-free release builder as
+`check`. Artifact paths are reported on success. Build does not start services
+or apply migrations.
+
+The public `yydra-build` library owns OpenAPI validation, pinned Orval generation,
+and generated-client TypeScript validation. The product's dedicated `api-build`
+package calls it from `build.rs`. The CLI bundles the exact helper source into
+`.yydra/build-support` so the new Workspace builds without registry publication;
+this source snapshot has the same version as the separately packaged helper.
+Frontend entrypoints privately build that package and link its output from
+Cargo's `OUT_DIR`. Unchanged inputs reuse Cargo's result, a missing frontend link
+is restored directly, and missing generated files trigger one package-scoped
+clean and rebuild. Generation failure stops the consumer. Full identity and
+snapshot checks remain in `doctor` and `check`. The default check
 evidence directory is a private, unique system-temporary
 directory outside the Product Workspace; an explicit `--evidence-dir` must
 also be outside the Workspace and have no symlink ancestor. Diagnostic

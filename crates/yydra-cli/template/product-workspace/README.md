@@ -257,27 +257,48 @@ device validation, or unregistered Product behavior.
 
 Public routes consumed by Generated Client code must be registered through
 `product_transport_http::public_routes`. Rust handlers and `utoipa`
-declarations are the authored authority; `contracts/openapi.json`,
-`frontend/src/generated/public-api/`, and the `.yydra/api-generation*.json`
-records are committed outputs and must not be hand-edited. Regenerate the
-complete output set through the exact CLI:
+declarations are the authored authority. Build application artifacts with:
 
 ```console
-yydra generate api .
+yydra build .
+yydra build . --target server
+yydra build . --target h5
+yydra build . --target android
 ```
 
-The command exports and lints normalized OpenAPI, runs the pinned Orval
-Fetch/TypeScript/Zod stages, and type-checks them in isolated temporary roots.
-Only then does it replace the contract, client directory, compatibility
-history, and generation record under one Workspace lock and a persisted,
-rollback-safe transaction. A read-only check refuses an interrupted
-transaction; the next write invocation restores the last complete set before
-starting. Use
-`yydra generate api . --check` for a read-only comparison. An intentional
-lockstep breaking change requires a reviewed, narrow
-`--acknowledge-breaking-change <reference>`; the acknowledgment does not make
-the change non-breaking. Product code calls the handwritten facade in
-`frontend/src/framework/api/`, never the generated directory directly.
+The default builds the release backend executable, type-checks the frontend, and
+exports H5 static assets. An explicit target selects just that artifact. Android
+requires the Android SDK, JDK, and Gradle and produces an account-free release APK
+under `frontend/android/app/build/outputs/apk/release/`. Build reports the actual
+artifact paths. It does not run migrations, start services, or publish artifacts.
+
+The dedicated `crates/api-build/build.rs` obtains the derived OpenAPI from
+`transport-http` and calls the public `yydra-build` helper. The helper owns OpenAPI
+validation, pinned Orval Fetch/TypeScript/Zod generation, and generated-client
+TypeScript validation. Its exact Distribution source ships in
+`.yydra/build-support`; `doctor` and `check` verify that snapshot. Targeted backend
+and migration builds do not compile `api-build` or require frontend tools.
+Whole-Workspace Cargo builds include it and require installed frontend tools.
+
+Outputs live under the generator package's Cargo `OUT_DIR`, in
+`yydra-api/<workspace-key>/`. The key keeps outputs separate when projects share
+one Cargo cache sequentially. These are disposable build outputs. Only the
+handwritten facade in `frontend/src/framework/api/` may import the generated
+`@yydra/generated-api` package. Frontend dev, tests, type checking, H5 export, and
+native generation run `scripts/prepare-api.mjs` automatically. It builds
+`api-build`, reads Cargo's reported output directory, and restores the package
+link in `node_modules`; no CLI lookup is required.
+
+Cargo tracks Rust build dependencies, generator configuration, frontend tool
+metadata, and PATH. Unchanged inputs reuse the previous generation. If required
+outputs are missing, preparation cleans only `api-build` and rebuilds once;
+other dependency caches remain. A missing frontend link is repaired directly.
+Generation failure stops the consumer. There is no API generation lock, staging
+transaction, or compatibility history. Checks validate the current version.
+`yydra check` reuses the preparation script after installing frontend tools and
+sets an isolated scratch Cargo target directory for all child processes.
+Complete Workspace identity and provenance checks belong to `doctor` and the
+appropriate `check` nodes.
 
 The focused production H5 Application Surface acceptance command exports static web assets, serves
 them locally, creates, completes, reopens, filters, paginates, refreshes, and
