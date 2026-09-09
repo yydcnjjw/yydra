@@ -912,6 +912,28 @@ fn artifact_digest(path: &Path) -> String {
 }
 
 fn complete_aggregate_fixture(sandbox: &Path, fixture: &str) -> PathBuf {
+    let (hash, date) = if fixture == "clean" {
+        ("cea272fa3", "2026-09-07")
+    } else {
+        ("abcd12345", "2026-09-08")
+    };
+    complete_aggregate_fixture_with_rust(
+        sandbox,
+        fixture,
+        serde_json::json!({
+            "rustc": format!("rustc 1.100.0-nightly ({hash} {date})"),
+            "cargo": format!("cargo 1.100.0-nightly ({hash} {date})"),
+            "rustfmt": format!("rustfmt 1.10.0-nightly ({hash} {date})"),
+            "clippy": format!("clippy 0.1.100 ({hash} {date})"),
+        }),
+    )
+}
+
+fn complete_aggregate_fixture_with_rust(
+    sandbox: &Path,
+    fixture: &str,
+    rust_versions: serde_json::Value,
+) -> PathBuf {
     let workspace = sandbox.join(format!("{fixture}-workspace"));
     let (product_name, product_id) = match fixture {
         "clean" => ("Clean Product", "clean-product"),
@@ -964,9 +986,13 @@ fn complete_aggregate_fixture(sandbox: &Path, fixture: &str) -> PathBuf {
         node["commands"] = serde_json::json!([]);
         node["toolVersions"] = serde_json::json!({});
     }
-    let required_tool_versions = manifest["requiredToolVersions"].clone();
-    manifest["nodes"][0]["toolVersions"] = required_tool_versions.clone();
-    manifest["observedToolVersions"] = required_tool_versions;
+    let mut observed = manifest["requiredToolVersions"].clone();
+    observed
+        .as_object_mut()
+        .unwrap()
+        .extend(rust_versions.as_object().unwrap().clone());
+    manifest["nodes"][0]["toolVersions"] = observed.clone();
+    manifest["observedToolVersions"] = observed;
     let mut diagnostics = String::new();
     for node in manifest["nodes"]
         .as_array()
@@ -1152,10 +1178,18 @@ fn assert_aggregate_failure(output: &Output, code: &str) {
 }
 
 #[test]
-fn exact_complete_clean_and_reading_queue_evidence_produces_aggregate_conformance() {
+fn complete_clean_and_reading_queue_evidence_with_different_nightlies_aggregates() {
     let sandbox = tempdir().expect("create sandbox");
     let clean = complete_aggregate_fixture(sandbox.path(), "clean");
     let reading = complete_aggregate_fixture(sandbox.path(), "reading-queue");
+    let clean_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&clean).unwrap()).unwrap();
+    let reading_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&reading).unwrap()).unwrap();
+    assert_ne!(
+        clean_manifest["observedToolVersions"]["rustc"],
+        reading_manifest["observedToolVersions"]["rustc"]
+    );
     let evidence = sandbox.path().join("aggregate-evidence");
     let output = aggregate(&evidence, &[&clean, &reading]);
     assert!(
@@ -1684,6 +1718,106 @@ fn evidence_and_workspace_symlinks_cannot_escape_their_authority_roots() {
     assert_eq!(
         fs::read_to_string(outside).expect("read outside fixture"),
         "outside\n"
+    );
+}
+
+#[test]
+fn aggregate_rejects_stable_missing_and_incomplete_rust_observations() {
+    for invalid in [
+        "stable-rustc",
+        "stable-cargo",
+        "stable-rustfmt",
+        "missing-clippy",
+        "short-version",
+    ] {
+        let sandbox = tempdir().unwrap();
+        let mut versions = serde_json::json!({
+            "rustc": "rustc 1.100.0-nightly (cea272fa3 2026-09-07)",
+            "cargo": "cargo 1.100.0-nightly (3c0b53475 2026-09-04)",
+            "rustfmt": "rustfmt 1.10.0-nightly (cea272fa35 2026-09-07)",
+            "clippy": "clippy 0.1.100 (cea272fa35 2026-09-07)",
+        });
+        match invalid {
+            "stable-rustc" => versions["rustc"] = "rustc 1.97.1 (cea272fa3 2026-09-07)".into(),
+            "stable-cargo" => versions["cargo"] = "cargo 1.97.1 (3c0b53475 2026-09-04)".into(),
+            "stable-rustfmt" => {
+                versions["rustfmt"] = "rustfmt 1.9.0-stable (cea272fa35 2026-09-07)".into()
+            }
+            "missing-clippy" => {
+                versions.as_object_mut().unwrap().remove("clippy");
+            }
+            "short-version" => versions["rustc"] = "rustc 1.100.0-nightly".into(),
+            _ => unreachable!(),
+        }
+        let clean = complete_aggregate_fixture_with_rust(sandbox.path(), "clean", versions);
+        let reading = complete_aggregate_fixture(sandbox.path(), "reading-queue");
+        let output = aggregate(&sandbox.path().join("aggregate"), &[&clean, &reading]);
+        assert_aggregate_failure(&output, "AGGREGATE_IDENTITY_MISMATCH");
+    }
+}
+
+#[test]
+fn rust_architecture_retains_actual_nightly_build_identities() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("nightly-observation");
+    create_workspace(&workspace, "nightly-observation");
+    let output = check(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["rust.architecture"],
+    );
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed = events(&output);
+    let observed = &node(&parsed, "rust.architecture")["toolVersions"];
+    assert_eq!(observed["rust-toolchain"], "nightly");
+    for (name, command, args) in [
+        ("rustc", "rustc", vec!["--version"]),
+        ("cargo", "cargo", vec!["--version"]),
+        ("rustfmt", "rustfmt", vec!["--version"]),
+        ("clippy", "cargo", vec!["clippy", "--version"]),
+    ] {
+        let actual = Command::new(command)
+            .args(args)
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        assert!(actual.status.success());
+        assert_eq!(
+            observed[name],
+            String::from_utf8_lossy(&actual.stdout).trim()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn rust_architecture_rejects_an_effective_stable_compiler_override() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("stable-override");
+    create_workspace(&workspace, "stable-override");
+    let tools = sandbox.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    write_executable(
+        &tools.join("rustc"),
+        "#!/bin/sh\nprintf '%s\\n' 'rustc 1.97.1 (cea272fa3 2026-09-07)'\n",
+    );
+    let path = format!("{}:{}", tools.display(), std::env::var("PATH").unwrap());
+    let output = check_with_path(
+        &workspace,
+        &sandbox.path().join("evidence"),
+        &["rust.architecture"],
+        Some(&path),
+    );
+    assert!(!output.status.success());
+    let parsed = events(&output);
+    assert_eq!(
+        node(&parsed, "rust.architecture")["cause"]["code"],
+        "RUST_TOOLCHAIN_AUTHORITY_DRIFT"
     );
 }
 
@@ -2229,7 +2363,7 @@ fn failed_prerequisites_skip_dependents_while_independent_nodes_continue() {
     let contents = fs::read_to_string(&origin)
         .expect("read Origin Record")
         .replace(
-            "distribution_version = \"0.4.0\"",
+            "distribution_version = \"0.5.0\"",
             "distribution_version = \"9.9.9\"",
         );
     fs::write(origin, contents).expect("write mismatched Origin Record");

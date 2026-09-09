@@ -18,8 +18,8 @@ jobs:
     steps:
       - name: Check out the exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install the exact Rust toolchain
-        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Install rolling Rust nightly
+        run: rustup toolchain install nightly --profile minimal --component rustfmt,clippy
       - name: Build this Distribution executor
         run: cargo build --locked --release --package yydra-cli
       - name: Upload the one exact executor
@@ -71,8 +71,8 @@ jobs:
         run: |
           java -XshowSettings:properties -version 2>&1 | tee "${{ runner.temp }}/java-runtime.txt"
           grep -Fx '    java.runtime.version = 21.0.12.1+1-LTS' "${{ runner.temp }}/java-runtime.txt"
-      - name: Install the exact Rust toolchain
-        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+      - name: Install rolling Rust nightly
+        run: rustup toolchain install nightly --profile minimal --component rustfmt,clippy
       - name: Create an independent Product Workspace and browser infrastructure
         env:
           FIXTURE: ${{ matrix.fixture }}
