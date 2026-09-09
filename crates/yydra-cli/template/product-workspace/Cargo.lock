@@ -18,6 +18,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -169,6 +175,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,6 +273,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
+ "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
 ]
@@ -759,6 +772,71 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
+name = "__PRODUCT_ID__-api-build"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-transport-http",
+ "yydra-build",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-application"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hmac",
+ "__PRODUCT_ID__-domain",
+ "__PRODUCT_ID__-persistence-postgres",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-domain"
+version = "0.1.0"
+
+[[package]]
+name = "__PRODUCT_ID__-persistence-postgres"
+version = "0.1.0"
+dependencies = [
+ "__PRODUCT_ID__-domain",
+ "sqlx",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "__PRODUCT_ID__-persistence-postgres",
+ "__PRODUCT_ID__-transport-http",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "__PRODUCT_ID__-transport-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "__PRODUCT_ID__-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "utoipa",
+ "utoipa-axum",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -949,63 +1027,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
-name = "__PRODUCT_ID__-application"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "__PRODUCT_ID__-persistence-postgres",
- "base64",
- "hmac",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-domain"
-version = "0.1.0"
-
-[[package]]
-name = "__PRODUCT_ID__-persistence-postgres"
-version = "0.1.0"
-dependencies = [
- "__PRODUCT_ID__-domain",
- "sqlx",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "__PRODUCT_ID__-persistence-postgres",
- "__PRODUCT_ID__-transport-http",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "__PRODUCT_ID__-transport-http"
-version = "0.1.0"
-dependencies = [
- "axum",
- "__PRODUCT_ID__-application",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "utoipa",
- "utoipa-axum",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1123,9 +1144,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.149"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
  "itoa",
  "memchr",
@@ -1928,6 +1949,16 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
+]
+
+[[package]]
+name = "yydra-build"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

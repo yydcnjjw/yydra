@@ -82,7 +82,7 @@ const NODE_SPECS: &[NodeSpec] = &[
         prerequisites: &["origin.exact-distribution"],
         remediation: "restore committed generated and exact snapshot authorities from reviewed version control; do not regenerate them inside check mode",
         proves: "the current Distribution-owned origin, inventory, provenance, and license snapshot authorities retain their exact bytes",
-        does_not_prove: "future generated Public API or native-host drift owned by later graph nodes",
+        does_not_prove: "current API generation correctness or native-host reproducibility owned by later graph nodes",
     },
     NodeSpec {
         id: "database.migration-history",
@@ -106,8 +106,22 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "correctness, architecture, or runtime behavior",
     },
     NodeSpec {
+        id: "frontend.lock",
+        prerequisites: &[],
+        remediation: "restore frontend/package.json and package-lock.json, then run yydra setup from the exact Distribution",
+        proves: "npm can install the exact committed frontend resolution without rewriting its lock",
+        does_not_prove: "advisory, provenance, or artifact license policy",
+    },
+    NodeSpec {
+        id: "api.generated-contract",
+        prerequisites: &["rust.architecture", "frontend.lock"],
+        remediation: "fix the Rust contract or generator configuration and rerun `yydra build`",
+        proves: "Rust route collection generates and validates the current OpenAPI and Orval Fetch/TypeScript/Zod build outputs without changing authored inputs",
+        does_not_prove: "that the running service returns every documented response or that Product Domain behavior is correct",
+    },
+    NodeSpec {
         id: "rust.compile",
-        prerequisites: &["rust.architecture"],
+        prerequisites: &["api.generated-contract"],
         remediation: "fix the reported locked all-target/all-feature Rust compilation error",
         proves: "the complete selected Rust workspace targets and features compile from Cargo.lock",
         does_not_prove: "test behavior, database availability, or H5 behavior",
@@ -134,23 +148,9 @@ const NODE_SPECS: &[NodeSpec] = &[
         does_not_prove: "that every public item has a documentation example",
     },
     NodeSpec {
-        id: "frontend.lock",
-        prerequisites: &[],
-        remediation: "restore frontend/package.json and package-lock.json, then run yydra setup from the exact Distribution",
-        proves: "npm can install the exact committed frontend resolution without rewriting its lock",
-        does_not_prove: "advisory, provenance, or artifact license policy",
-    },
-    NodeSpec {
-        id: "api.generated-contract",
-        prerequisites: &["rust.compile", "frontend.lock"],
-        remediation: "run `yydra generate api`, review every contract and Generated Client change, and commit the complete atomic output set",
-        proves: "Rust route collection reproduces the normalized OpenAPI, Orval Fetch/TypeScript/Zod outputs, wire profile, and generation record without modifying the Workspace",
-        does_not_prove: "that the running service returns every documented response or that Product Domain behavior is correct",
-    },
-    NodeSpec {
         id: "api.runtime-conformance",
         prerequisites: &["api.generated-contract"],
-        remediation: "align the public-route handler status, content type, headers, and response body with the committed Public API Contract",
+        remediation: "align the public-route handler status, content type, headers, and response body with the current Public API Contract",
         proves: "the Framework-owned public router matches its collected contract and discriminating fixtures reject invalid JSON, unknown request or query fields, malformed pagination responses, invalid cursors, undocumented status or content type, prohibited transitions, and incorrect 401/403 authentication meanings",
         does_not_prove: "exhaustive generated-input coverage, a full Identity system, or database-backed Product Domain behavior",
     },
@@ -170,21 +170,21 @@ const NODE_SPECS: &[NodeSpec] = &[
     },
     NodeSpec {
         id: "frontend.typecheck",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "fix the strict no-emit TypeScript errors",
         proves: "the complete frontend TypeScript project passes strict type checking without emit",
         does_not_prove: "browser behavior or server contract conformance",
     },
     NodeSpec {
         id: "frontend.test",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "restore non-empty canonical Vitest coverage and fix the reported failure",
         proves: "the canonical frontend test runner discovered tests and all selected tests passed",
         does_not_prove: "production H5 Application Surface behavior against the real service",
     },
     NodeSpec {
         id: "native.android-generation",
-        prerequisites: &["frontend.lock"],
+        prerequisites: &["api.generated-contract"],
         remediation: "fix committed Expo app configuration, exact dependencies, standard config plugins, or local Expo Modules; do not patch frontend/android generated source",
         proves: "two clean Android generations from the same authored inputs reproduce the complete path, mode, and byte inventory without changing Workspace inputs",
         does_not_prove: "an Android release build, Android runtime behavior, physical-device behavior, or native accessibility",
@@ -518,24 +518,16 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
     "ANDROID_RELEASE_OUTPUT_MISSING",
     "ANDROID_RELEASE_OUTPUT_UNREADABLE",
-    "API_BREAKING_CHANGE_UNACKNOWLEDGED",
-    "API_CHECK_EXECUTABLE_UNAVAILABLE",
+    "API_BUILD_FAILED",
     "API_CLIENT_CONTRACT_FAILED",
-    "API_CLIENT_DRIFT",
     "API_CLIENT_GENERATION_FAILED",
     "API_CLIENT_IMPORT_BOUNDARY_VIOLATION",
     "API_CLIENT_IMPORT_SCAN_FAILED",
-    "API_CLIENT_STAGE_INVALID",
+    "API_CLIENT_LINK_FAILED",
+    "API_CLIENT_OUTPUT_INVALID",
     "API_CLIENT_TOOL_VERSION_INVALID",
     "API_CLIENT_TYPECHECK_FAILED",
     "API_GENERATED_CONTRACT_FAILED",
-    "API_GENERATED_DRIFT",
-    "API_GENERATION_BASELINE_INVALID",
-    "API_GENERATION_BUSY",
-    "API_GENERATION_LOCK_INVALID",
-    "API_GENERATION_RECORD_DRIFT",
-    "API_GENERATION_RECOVERY_FAILED",
-    "API_GENERATION_RECOVERY_REQUIRED",
     "API_OPENAPI_CONTENT_TYPE_INVALID",
     "API_OPENAPI_DECIMAL_INVALID",
     "API_OPENAPI_EXPORT_FAILED",
@@ -549,7 +541,10 @@ const DIAGNOSTIC_VOCABULARY: &[&str] = &[
     "API_OPENAPI_TIMESTAMP_INVALID",
     "API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID",
     "API_OPENAPI_WIRE_TYPE_INVALID",
+    "API_OUTPUT_MISSING",
+    "API_OUTPUT_PREPARE_FAILED",
     "API_RUNTIME_CONFORMANCE_FAILED",
+    "API_WORKSPACE_INVALID",
     "ARCH_DEPENDENCY_CYCLE",
     "ARCH_FORBIDDEN_DEPENDENCY",
     "ARCH_FORBIDDEN_LAYER_EDGE",
@@ -2562,6 +2557,9 @@ impl NodeContext<'_> {
         command
             .args(arguments)
             .envs(environment.iter().copied())
+            // Every check subprocess, including API generation and npm hooks,
+            // builds inside the isolated scratch Workspace.
+            .env("CARGO_TARGET_DIR", self.root.join("target"))
             .current_dir(directory)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
@@ -3106,6 +3104,9 @@ fn validate_architecture(
             }
             if dependency.name.starts_with("yydra-")
                 && !workspace_names.contains(dependency.name.as_str())
+                && !(role == "api-build"
+                    && dependency.name == "yydra-build"
+                    && edge_kind == "build")
             {
                 return Err(NodeFailure::fail(
                     "ARCH_FRAMEWORK_INTERNAL_DEPENDENCY",
@@ -3121,7 +3122,9 @@ fn validate_architecture(
                     .find(|candidate| candidate.name == dependency.name)
                     .expect("workspace dependency name came from packages");
                 let dependency_role = package_role(dependency_package, root)?;
-                if !allowed_workspace_edge(role, dependency_role) {
+                if !allowed_workspace_edge(role, dependency_role)
+                    || (role == "api-build" && edge_kind != "build")
+                {
                     return Err(NodeFailure::fail(
                         "ARCH_FORBIDDEN_LAYER_EDGE",
                         format!(
@@ -3156,7 +3159,12 @@ fn package_role<'a>(
         .and_then(OsStr::to_str)
         .unwrap_or_default();
     match role {
-        "domain" | "application" | "persistence-postgres" | "transport-http" | "server" => Ok(role),
+        "domain"
+        | "application"
+        | "persistence-postgres"
+        | "transport-http"
+        | "server"
+        | "api-build" => Ok(role),
         _ => Err(NodeFailure::fail(
             "ARCH_UNKNOWN_WORKSPACE_ROLE",
             format!(
@@ -3178,6 +3186,7 @@ fn forbidden_ecosystem(role: &str, dependency: &str) -> bool {
         "persistence-postgres" => matches!(dependency, "axum" | "tower" | "tower-http"),
         "transport-http" => dependency == "sqlx",
         "server" => false,
+        "api-build" => dependency != "yydra-build" && !dependency.ends_with("-transport-http"),
         _ => true,
     }
 }
@@ -3188,6 +3197,7 @@ fn allowed_workspace_edge(from: &str, to: &str) -> bool {
         "application" => matches!(to, "domain" | "persistence-postgres"),
         "persistence-postgres" => to == "domain",
         "transport-http" => to == "application",
+        "api-build" => to == "transport-http",
         "server" => matches!(
             to,
             "application" | "persistence-postgres" | "transport-http"
@@ -3344,19 +3354,10 @@ fn check_frontend_lock(context: &mut NodeContext<'_>) -> std::result::Result<(),
 fn check_api_generated_contract(
     context: &mut NodeContext<'_>,
 ) -> std::result::Result<(), NodeFailure> {
-    let executable = std::env::current_exe().map_err(|error| {
-        NodeFailure::infrastructure("API_CHECK_EXECUTABLE_UNAVAILABLE", error.to_string())
-    })?;
-    let executable = executable.to_str().ok_or_else(|| {
-        NodeFailure::infrastructure(
-            "API_CHECK_EXECUTABLE_UNAVAILABLE",
-            "the exact yydra executable path is not valid UTF-8",
-        )
-    })?;
     let output = context.capture(
-        context.root,
-        executable,
-        &["generate", "api", ".", "--check"],
+        &context.root.join("frontend"),
+        "node",
+        &["scripts/prepare-api.mjs"],
         &[],
     )?;
     if output.status.success() {
@@ -3368,10 +3369,6 @@ fn check_api_generated_contract(
         String::from_utf8_lossy(&output.stderr)
     );
     let code = [
-        "API_BREAKING_CHANGE_UNACKNOWLEDGED",
-        "API_GENERATED_DRIFT",
-        "API_CLIENT_DRIFT",
-        "API_GENERATION_RECORD_DRIFT",
         "API_OPENAPI_PROFILE_INVALID",
         "API_OPENAPI_OPERATION_ID_INVALID",
         "API_OPENAPI_CONTENT_TYPE_INVALID",
@@ -3384,23 +3381,23 @@ fn check_api_generated_contract(
         "API_OPENAPI_WIRE_TYPE_INVALID",
         "API_OPENAPI_NULLABILITY_INVALID",
         "API_OPENAPI_SHAPE_REUSE_INVALID",
-        "API_CLIENT_STAGE_INVALID",
+        "API_CLIENT_OUTPUT_INVALID",
         "API_CLIENT_TYPECHECK_FAILED",
         "API_CLIENT_GENERATION_FAILED",
         "API_CLIENT_TOOL_VERSION_INVALID",
+        "API_CLIENT_LINK_FAILED",
+        "API_OUTPUT_MISSING",
+        "API_OUTPUT_PREPARE_FAILED",
+        "API_WORKSPACE_INVALID",
         "API_OPENAPI_EXPORT_FAILED",
-        "API_GENERATION_BASELINE_INVALID",
-        "API_GENERATION_LOCK_INVALID",
-        "API_GENERATION_BUSY",
-        "API_GENERATION_RECOVERY_REQUIRED",
-        "API_GENERATION_RECOVERY_FAILED",
+        "API_BUILD_FAILED",
     ]
     .into_iter()
     .find(|code| detail.contains(code))
     .unwrap_or("API_GENERATED_CONTRACT_FAILED");
     Err(NodeFailure::fail(
         code,
-        "isolated `yydra generate api --check` rejected the committed authority chain",
+        "API build preparation rejected the current contract or generated client",
     ))
 }
 
@@ -3451,9 +3448,7 @@ fn check_generated_client_import_boundary(root: &Path) -> std::result::Result<()
         let relative = path.strip_prefix(&frontend).map_err(|error| {
             NodeFailure::infrastructure("API_CLIENT_IMPORT_SCAN_FAILED", error.to_string())
         })?;
-        if relative.starts_with("src/generated/public-api")
-            || relative.starts_with("src/framework/api")
-        {
+        if relative.starts_with("src/framework/api") {
             continue;
         }
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
@@ -3532,7 +3527,9 @@ fn imports_generated_public_api(source: &str) -> std::result::Result<bool, &'sta
         let JavaScriptToken::String(specifier) = token else {
             continue;
         };
-        if !specifier.contains("generated/public-api") {
+        if !specifier.contains("generated/public-api")
+            && !specifier.contains("@yydra/generated-api")
+        {
             continue;
         }
         let previous = index.checked_sub(1).and_then(|index| tokens.get(index));
@@ -3771,6 +3768,7 @@ const FRONTEND_SOURCES: &[&str] = &[
     "scripts",
     "app.json",
     "eslint.config.mjs",
+    "metro.config.mjs",
     "orval.config.mjs",
     "package.json",
     "playwright.config.mts",
@@ -3785,6 +3783,7 @@ const FRONTEND_LINT_SOURCES: &[&str] = &[
     "src",
     "scripts",
     "eslint.config.mjs",
+    "metro.config.mjs",
     "orval.config.mjs",
     "playwright.config.mts",
     "vitest.config.mts",
@@ -3908,6 +3907,7 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 export default defineConfig({
   root,
   resolve: {
+    preserveSymlinks: true,
     alias: {
       "@": fileURLToPath(new URL("../../src", import.meta.url)),
       "@react-native-community/netinfo": fileURLToPath(
@@ -4871,42 +4871,7 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
             &["--version"],
             &environment,
         )?;
-        let concurrency_init_path = artifact_root.join("gradle-concurrency.init.gradle");
-        write_gradle_concurrency_init_script(&concurrency_init_path)?;
-        let concurrency_init_path_text = concurrency_init_path.display().to_string();
-        let resolved = context.capture(
-            &android,
-            "./gradlew",
-            &[
-                "--no-daemon",
-                "assembleRelease",
-                "-I",
-                concurrency_init_path_text.as_str(),
-                "-Pkotlin.compiler.execution.strategy=in-process",
-                "--max-workers=1",
-            ],
-            &environment,
-        )?;
-        if !resolved.status.success() {
-            return Err(NodeFailure::fail(
-                "ANDROID_RELEASE_BUILD_FAILED",
-                format!(
-                    "the bounded Gradle release invocation exited with {}: {}",
-                    resolved.status,
-                    String::from_utf8_lossy(&resolved.stderr).trim()
-                ),
-            ));
-        }
-        let source = android.join("app/build/outputs/apk/release/app-release.apk");
-        if !source.is_file() {
-            return Err(NodeFailure::fail(
-                "ANDROID_RELEASE_OUTPUT_MISSING",
-                format!(
-                    "Gradle succeeded without producing the required release APK at '{}'",
-                    source.display()
-                ),
-            ));
-        }
+        let source = assemble_android_release(context, &artifact_root, &environment)?;
         let apk_path = artifact_root.join("app-release.apk");
         let (apk_bytes, apk_sha256) = retain_bounded_artifact(
             &source,
@@ -4941,6 +4906,82 @@ fn check_android_release(context: &mut NodeContext<'_>) -> std::result::Result<(
     let cleanup = remove_android_host(context.root);
     cleanup?;
     execution
+}
+
+/// Build the same account-free APK as the quality contract, retaining the product artifact.
+pub(crate) fn build_android_artifact(root: &Path) -> Result<PathBuf> {
+    let shutdown = install_shutdown_handler().context("install Android build shutdown handler")?;
+    let result = (|| -> std::result::Result<PathBuf, NodeFailure> {
+        let artifact_root = root.join("frontend/.expo/yydra-build");
+        create_private_dir_all(&artifact_root).map_err(evidence_write_failure)?;
+        // These fixed files describe this invocation; keep reusable caches intact.
+        for relative in ["android.log", "gradle-concurrency.init.gradle"] {
+            match fs::remove_file(artifact_root.join(relative)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(evidence_write_failure(error)),
+            }
+        }
+        let mut context = NodeContext {
+            root,
+            evidence_root: &artifact_root,
+            shutdown: &shutdown,
+            log: create_private_file(&artifact_root.join("android.log"))
+                .map_err(evidence_write_failure)?,
+            commands: Vec::new(),
+            tool_versions: BTreeMap::new(),
+        };
+        remove_android_host(root)?;
+        generate_android_host(&mut context)?;
+        let account_free = AccountFreeAndroidEnvironment::prepare(&artifact_root)?;
+        assemble_android_release(&mut context, &artifact_root, &account_free.gradle())
+    })();
+    result.map_err(|failure| anyhow::anyhow!("{}: {}", failure.code, failure.message))
+}
+
+fn assemble_android_release(
+    context: &mut NodeContext<'_>,
+    artifact_root: &Path,
+    environment: &[(&str, &str)],
+) -> std::result::Result<PathBuf, NodeFailure> {
+    let android = context.root.join("frontend/android");
+    let concurrency_init_path = artifact_root.join("gradle-concurrency.init.gradle");
+    write_gradle_concurrency_init_script(&concurrency_init_path)?;
+    let concurrency_init_path_text = concurrency_init_path.display().to_string();
+    let resolved = context.capture(
+        &android,
+        "./gradlew",
+        &[
+            "--no-daemon",
+            "assembleRelease",
+            "-I",
+            concurrency_init_path_text.as_str(),
+            "-Pkotlin.compiler.execution.strategy=in-process",
+            "--max-workers=1",
+        ],
+        environment,
+    )?;
+    if !resolved.status.success() {
+        return Err(NodeFailure::fail(
+            "ANDROID_RELEASE_BUILD_FAILED",
+            format!(
+                "the bounded Gradle release invocation exited with {}: {}",
+                resolved.status,
+                String::from_utf8_lossy(&resolved.stderr).trim()
+            ),
+        ));
+    }
+    let source = android.join("app/build/outputs/apk/release/app-release.apk");
+    if !source.is_file() {
+        return Err(NodeFailure::fail(
+            "ANDROID_RELEASE_OUTPUT_MISSING",
+            format!(
+                "Gradle succeeded without producing the required release APK at '{}'",
+                source.display()
+            ),
+        ));
+    }
+    Ok(source)
 }
 
 fn write_gradle_concurrency_init_script(path: &Path) -> std::result::Result<(), NodeFailure> {
@@ -6022,6 +6063,7 @@ fn spawn_server(
     let mut command = sanitized_command("cargo");
     command
         .args(["run", "--locked", "--bin", "server"])
+        .env("CARGO_TARGET_DIR", context.root.join("target"))
         .env("DATABASE_URL", database_url)
         .env("YYDRA_BIND_ADDRESS", server_address)
         .env(

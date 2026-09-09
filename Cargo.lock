@@ -586,8 +586,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
+name = "yydra-build"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "yydra-cli"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",

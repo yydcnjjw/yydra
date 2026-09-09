@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -66,7 +66,7 @@ fn creates_workspace_from_the_normalized_flag_model() {
 
     let origin = fs::read_to_string(destination.join(".yydra/origin.toml"))
         .expect("read Workspace Origin Record");
-    assert!(origin.contains("distribution_version = \"0.2.0\""));
+    assert!(origin.contains("distribution_version = \"0.4.0\""));
     assert!(origin.contains("template_identity = \"yydra-v0-product-workspace\""));
     assert!(origin.contains("product_name = \"Acme Reader\""));
     assert!(origin.contains("product_id = \"acme-reader\""));
@@ -79,22 +79,17 @@ fn materializes_the_public_api_authority_chain() {
     create_with_flags(&workspace, "API Reader", "api-reader");
 
     for relative in [
-        "contracts/openapi.json",
-        ".yydra/api-generation.json",
-        ".yydra/api-generation-history.json",
-        ".yydra/api-generation.lock",
         "crates/application/src/post_commit.rs",
         "crates/application/tests/post_commit_executor.rs",
         "crates/application/tests/reading_queue_postgres.rs",
-        "crates/transport-http/src/bin/export-openapi.rs",
+        "crates/api-build/build.rs",
+        ".yydra/build-support/src/lib.rs",
         "crates/transport-http/tests/public_api_contract.rs",
         "migrations/0002_reading_queue.sql",
         "migrations/0003_reading_entry_transitions.sql",
         "migrations/0004_reading_queue_pagination.sql",
         "migrations/0005_reading_progress.sql",
         "frontend/orval.config.mjs",
-        "frontend/src/generated/public-api/fetch/client.ts",
-        "frontend/src/generated/public-api/fetch/schemas/index.ts",
         "frontend/src/framework/api/client.ts",
         "frontend/src/framework/api/client.test.ts",
     ] {
@@ -146,23 +141,6 @@ fn materializes_the_public_api_authority_chain() {
     assert!(persistence.contains("FOR UPDATE"));
     assert!(persistence.contains("pub async fn update_reading_entry_state"));
     assert!(persistence.contains("pub async fn adjust_reading_progress"));
-
-    let generated =
-        fs::read_to_string(workspace.join("frontend/src/generated/public-api/fetch/client.ts"))
-            .expect("read generated Fetch client");
-    assert!(generated.contains("getFrameworkContractProfile"));
-    assert!(generated.contains("createReadingQueueEntry"));
-    assert!(generated.contains("listReadingQueueEntries"));
-    assert!(generated.contains("changeReadingQueueEntryState"));
-    assert!(generated.contains("getFrameworkProtectedContract"));
-    assert!(generated.contains("fetchFn"));
-    let create_schema =
-        fs::read_to_string(workspace.join(
-            "frontend/src/generated/public-api/request/schemas/frameworkContractCreate.zod.ts",
-        ))
-        .expect("read generated create schema");
-    assert!(create_schema.contains("ExactAmountRegExp"));
-    assert!(create_schema.contains(".regex("));
 
     let facade = fs::read_to_string(workspace.join("frontend/src/framework/api/client.ts"))
         .expect("read handwritten Framework facade");
@@ -353,7 +331,7 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
         "transaction",
         "persistence",
         "Public API",
-        "atomic",
+        "build outputs",
         "Product Presentation",
         "accessibility",
         "yydra check",
@@ -387,7 +365,6 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
         "CHECK_PREREQUISITE_FAILED",
         "CHECK_NOT_SELECTED",
         "incomplete diagnostic evidence",
-        "API_GENERATION_BUSY",
     ] {
         assert!(
             diagnostic_contract.contains(required),
@@ -419,11 +396,6 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
         "DOCTOR_WORKSPACE_VERIFY",
         "Do not edit those",
         "authorities into agreement",
-        "API_GENERATION_BUSY",
-        "Do not edit API source",
-        "remove a live lock",
-        "API_GENERATION_LOCK_INVALID",
-        "edit records, history, OpenAPI, or client digests into agreement",
         "API_CLIENT_TOOL_VERSION_INVALID",
         "Do not change",
         "Public API source to disguise a missing or wrong tool",
@@ -483,7 +455,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     )
     .expect("parse Distribution inventory");
     assert_eq!(inventory["schema_version"], 1);
-    assert_eq!(inventory["distribution_version"], "0.2.0");
+    assert_eq!(inventory["distribution_version"], "0.4.0");
     assert_eq!(
         inventory["lifecycles"],
         serde_json::json!([
@@ -547,12 +519,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
         })
         .map(|pattern| pattern.as_str().expect("path pattern"))
         .collect::<Vec<_>>();
-    for canonical in [
-        "crates/**",
-        "frontend/src/**",
-        "contracts/openapi.json",
-        "frontend/src/generated/public-api/**",
-    ] {
+    for canonical in ["crates/**", "frontend/src/**"] {
         assert!(
             patterns.contains(&canonical),
             "missing canonical {canonical}"
@@ -602,21 +569,6 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
                     && rule["workspace_source_authority"] == false)
         );
     }
-    for generated in [
-        "contracts/openapi.json",
-        ".yydra/api-generation.json",
-        ".yydra/api-generation-history.json",
-        ".yydra/api-generation.lock",
-        "frontend/src/generated/public-api/fetch/client.ts",
-    ] {
-        let artifact = artifacts
-            .iter()
-            .find(|artifact| artifact["path"] == generated)
-            .unwrap_or_else(|| panic!("missing generated artifact {generated}"));
-        assert_eq!(artifact["lifecycle"], "committed-generated-output");
-        assert_eq!(artifact["hand_editable_after_creation"], false);
-    }
-
     let ignore = fs::read_to_string(destination.join(".gitignore"))
         .expect("read generated-output ignore authority");
     for generated_host in ["/frontend/android/", "/frontend/ios/"] {
@@ -1920,6 +1872,11 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
             "exact Distribution snapshot drift",
         ),
         (
+            "build-support-drift",
+            ".yydra/build-support/src/lib.rs",
+            "exact Distribution snapshot drift",
+        ),
+        (
             "generated-drift",
             ".yydra/distribution-inventory.json",
             "committed generated inventory drift",
@@ -1951,6 +1908,30 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
         );
         assert_eq!(before, byte_inventory(&workspace));
     }
+}
+
+#[test]
+fn doctor_rejects_additional_build_support_source() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("additional-build-script");
+    create_with_flags(&workspace, "Authority Reader", "authority-reader");
+    fs::write(
+        workspace.join(".yydra/build-support/build.rs"),
+        "fn main() {}\n",
+    )
+    .unwrap();
+    let before = byte_inventory(&workspace);
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .arg("doctor")
+        .arg(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "doctor accepted an additional Cargo build script"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exact Distribution snapshot drift"));
+    assert_eq!(before, byte_inventory(&workspace));
 }
 
 #[test]
@@ -2080,7 +2061,7 @@ fn doctor_fails_closed_on_distribution_mismatch_without_mutating_the_workspace()
     fs::write(
         &origin_path,
         origin.replace(
-            "distribution_version = \"0.2.0\"",
+            "distribution_version = \"0.4.0\"",
             "distribution_version = \"9.8.7\"",
         ),
     )
@@ -2137,9 +2118,9 @@ fn doctor_fails_closed_on_template_digest_mismatch_without_mutation() {
         stderr.contains("template digest mismatch"),
         "stderr: {stderr}"
     );
-    assert!(stderr.contains("cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked"));
-    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.2.0"));
-    assert!(stderr.contains("sha256sum --check yydra-cli-0.2.0.crate.sha256"));
+    assert!(stderr.contains("cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked"));
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.4.0"));
+    assert!(stderr.contains("sha256sum --check yydra-cli-0.4.0.crate.sha256"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -2386,10 +2367,10 @@ fn doctor_rejects_origin_schema_and_template_identity_mismatch() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.2.0")
+            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.4.0")
         );
-        assert!(stderr.contains("cargo install yydra-cli@0.2.0 --path ./yydra-cli-0.2.0 --locked"));
-        assert!(stderr.contains("sha256sum --check yydra-cli-0.2.0.crate.sha256"));
+        assert!(stderr.contains("cargo install yydra-cli@0.4.0 --path ./yydra-cli-0.4.0 --locked"));
+        assert!(stderr.contains("sha256sum --check yydra-cli-0.4.0.crate.sha256"));
         assert_eq!(before, byte_inventory(&workspace));
     }
 }
@@ -2435,882 +2416,6 @@ fn doctor_rejects_malformed_ambiguous_or_non_semver_origin_records() {
     }
 }
 
-#[cfg(unix)]
-#[test]
-fn api_generation_staged_failure_preserves_every_committed_output() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("atomic-api-reader");
-    create_with_flags(&workspace, "Atomic API Reader", "atomic-api-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("openapi.json");
-    let mut proposed_openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    proposed_openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-        serde_json::json!({ "type": "string" });
-    let mut proposed_openapi =
-        serde_json::to_vec_pretty(&proposed_openapi).expect("serialize proposed OpenAPI");
-    proposed_openapi.push(b'\n');
-    fs::write(&fixture_openapi, proposed_openapi).expect("write proposed OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_FAIL_AFTER_STAGE", "1")
-        .output()
-        .expect("run staged API failure fixture");
-
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("API_STAGED_FAILURE_INJECTED"));
-    assert_eq!(before, byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_swap_failure_restores_the_complete_previous_output_set() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    for index in 0..4 {
-        let workspace = sandbox.path().join(format!("rollback-api-reader-{index}"));
-        create_with_flags(
-            &workspace,
-            "Rollback API Reader",
-            &format!("rollback-api-reader-{index}"),
-        );
-        install_fake_api_tool_authority(&workspace, "8.27.0");
-        let fixture_openapi = sandbox
-            .path()
-            .join(format!("rollback-openapi-{index}.json"));
-        let mut proposed_openapi: serde_json::Value = serde_json::from_slice(
-            &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-        )
-        .expect("parse OpenAPI fixture");
-        proposed_openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-            serde_json::json!({ "type": "string" });
-        let mut proposed_openapi =
-            serde_json::to_vec_pretty(&proposed_openapi).expect("serialize proposed OpenAPI");
-        proposed_openapi.push(b'\n');
-        fs::write(&fixture_openapi, proposed_openapi).expect("write proposed OpenAPI fixture");
-        let fixture_generated = sandbox.path().join(format!("rollback-generated-{index}"));
-        copy_directory(
-            &workspace.join("frontend/src/generated/public-api"),
-            &fixture_generated,
-        );
-        let before = byte_inventory(&workspace);
-
-        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-            .args([
-                "generate",
-                "api",
-                workspace.to_str().expect("UTF-8 workspace"),
-            ])
-            .env("PATH", &fake_bin)
-            .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-            .env("YYDRA_FAKE_GENERATED", fixture_generated)
-            .env(
-                "YYDRA_TEST_API_GENERATION_FAIL_REPLACE_INDEX",
-                index.to_string(),
-            )
-            .output()
-            .expect("run API swap failure fixture");
-
-        assert!(!output.status.success(), "index={index}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("API_GENERATION_TRANSACTION_FAILED"),
-            "index={index}, stderr={stderr}"
-        );
-        assert!(
-            stderr.contains("rollback completed"),
-            "index={index}, stderr={stderr}"
-        );
-        assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_lock_excludes_a_concurrent_reader_without_mutation() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("locked-api-reader");
-    create_with_flags(&workspace, "Locked API Reader", "locked-api-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("locked-openapi.json");
-    fs::copy(workspace.join("contracts/openapi.json"), &fixture_openapi)
-        .expect("copy OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("locked-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    write_executable(
-        &fake_bin.join("cargo"),
-        r#"#!/bin/sh
-: > "$YYDRA_LOCK_READY"
-while [ ! -f "$YYDRA_LOCK_RELEASE" ]; do /bin/sleep 0.01; done
-last=""
-for argument in "$@"; do last="$argument"; done
-/bin/mkdir -p "$(/usr/bin/dirname "$last")"
-/bin/cp "$YYDRA_FAKE_OPENAPI" "$last"
-"#,
-    );
-    let ready = sandbox.path().join("lock-ready");
-    let release = sandbox.path().join("lock-release");
-    let before = byte_inventory(&workspace);
-
-    let mut writer = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .env("YYDRA_LOCK_READY", &ready)
-        .env("YYDRA_LOCK_RELEASE", &release)
-        .spawn()
-        .expect("start locked API generation fixture");
-    for _ in 0..500 {
-        if ready.is_file() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(
-        ready.is_file(),
-        "writer did not acquire the generation lock"
-    );
-
-    let reader = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .output()
-        .expect("run concurrent API reader fixture");
-    assert!(!reader.status.success());
-    assert!(String::from_utf8_lossy(&reader.stderr).contains("API_GENERATION_BUSY"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-
-    fs::write(&release, b"release\n").expect("release API generation writer");
-    let writer_status = writer.wait().expect("wait for API generation writer");
-    assert!(writer_status.success());
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_recovers_an_abruptly_terminated_transaction_before_writing_again() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("crash-recovery-reader");
-    create_with_flags(&workspace, "Crash Recovery Reader", "crash-recovery-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("crash-openapi.json");
-    let mut proposed_openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    proposed_openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-        serde_json::json!({ "type": "string" });
-    let mut proposed_openapi =
-        serde_json::to_vec_pretty(&proposed_openapi).expect("serialize proposed OpenAPI");
-    proposed_openapi.push(b'\n');
-    fs::write(&fixture_openapi, proposed_openapi).expect("write proposed OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("crash-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let crashed = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_CRASH_REPLACE_INDEX", "1")
-        .output()
-        .expect("run abrupt API transaction fixture");
-    assert_eq!(crashed.status.code(), Some(86));
-    let interrupted = byte_inventory(&workspace);
-    assert_ne!(before, interrupted);
-
-    let read_only = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .output()
-        .expect("check interrupted API transaction fixture");
-    assert!(!read_only.status.success());
-    assert!(
-        String::from_utf8_lossy(&read_only.stderr).contains("API_GENERATION_RECOVERY_REQUIRED")
-    );
-    assert_same_byte_inventory(&interrupted, &byte_inventory(&workspace));
-
-    let recovered = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_FAIL_AFTER_STAGE", "1")
-        .output()
-        .expect("recover interrupted API transaction fixture");
-    assert!(!recovered.status.success());
-    assert!(String::from_utf8_lossy(&recovered.stderr).contains("API_STAGED_FAILURE_INJECTED"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_rolls_back_a_crash_before_the_commit_marker_is_published() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("commit-marker-crash-reader");
-    create_with_flags(
-        &workspace,
-        "Commit Marker Crash Reader",
-        "commit-marker-crash-reader",
-    );
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("commit-marker-crash-openapi.json");
-    let mut proposed_openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    proposed_openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-        serde_json::json!({ "type": "string" });
-    let mut proposed_openapi =
-        serde_json::to_vec_pretty(&proposed_openapi).expect("serialize proposed OpenAPI");
-    proposed_openapi.push(b'\n');
-    fs::write(&fixture_openapi, &proposed_openapi).expect("write proposed OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("commit-marker-crash-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let crashed = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_CRASH_COMMIT_MARKER", "1")
-        .output()
-        .expect("run commit-marker crash fixture");
-    assert_eq!(crashed.status.code(), Some(87));
-    assert_eq!(
-        fs::read(workspace.join("contracts/openapi.json")).expect("read interrupted OpenAPI"),
-        proposed_openapi
-    );
-
-    let recovered = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_FAIL_AFTER_STAGE", "1")
-        .output()
-        .expect("recover commit-marker crash fixture");
-    assert!(!recovered.status.success());
-    assert!(String::from_utf8_lossy(&recovered.stderr).contains("API_STAGED_FAILURE_INJECTED"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_cleanup_failure_never_rolls_back_a_committed_output_set() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("committed-cleanup-reader");
-    create_with_flags(
-        &workspace,
-        "Committed Cleanup Reader",
-        "committed-cleanup-reader",
-    );
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("committed-cleanup-openapi.json");
-    let mut proposed_openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    proposed_openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-        serde_json::json!({ "type": "string" });
-    let mut proposed_openapi =
-        serde_json::to_vec_pretty(&proposed_openapi).expect("serialize proposed OpenAPI");
-    proposed_openapi.push(b'\n');
-    fs::write(&fixture_openapi, &proposed_openapi).expect("write proposed OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("committed-cleanup-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-
-    let failed_cleanup = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .env("YYDRA_TEST_API_GENERATION_FAIL_CLEANUP", "1")
-        .output()
-        .expect("run committed cleanup failure fixture");
-    assert!(!failed_cleanup.status.success());
-    assert!(
-        String::from_utf8_lossy(&failed_cleanup.stderr)
-            .contains("committed outputs but cleanup was intentionally rejected")
-    );
-    assert_eq!(
-        fs::read(workspace.join("contracts/openapi.json")).expect("read committed OpenAPI"),
-        proposed_openapi
-    );
-    let interrupted = byte_inventory(&workspace);
-    let committed_record = fs::read(workspace.join(".yydra/api-generation.json"))
-        .expect("read committed generation record");
-    let committed_history = fs::read(workspace.join(".yydra/api-generation-history.json"))
-        .expect("read committed generation history");
-    let committed_client = byte_inventory(&workspace.join("frontend/src/generated/public-api"));
-
-    let read_only = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .output()
-        .expect("check committed cleanup failure fixture");
-    assert!(!read_only.status.success());
-    assert!(
-        String::from_utf8_lossy(&read_only.stderr).contains("API_GENERATION_RECOVERY_REQUIRED")
-    );
-    assert_same_byte_inventory(&interrupted, &byte_inventory(&workspace));
-
-    let recovered = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("clean committed transaction fixture");
-    assert!(
-        recovered.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&recovered.stderr)
-    );
-    assert_eq!(
-        fs::read(workspace.join("contracts/openapi.json")).expect("read recovered OpenAPI"),
-        proposed_openapi
-    );
-    assert_eq!(
-        fs::read(workspace.join(".yydra/api-generation.json"))
-            .expect("read recovered generation record"),
-        committed_record
-    );
-    assert_eq!(
-        fs::read(workspace.join(".yydra/api-generation-history.json"))
-            .expect("read recovered generation history"),
-        committed_history
-    );
-    assert_same_byte_inventory(
-        &committed_client,
-        &byte_inventory(&workspace.join("frontend/src/generated/public-api")),
-    );
-    assert!(
-        fs::read_dir(&workspace)
-            .expect("read recovered Workspace")
-            .all(|entry| !entry
-                .expect("read recovered entry")
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".yydra-api-transaction-"))
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_write_is_idempotent_when_outputs_are_current() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("idempotent-api-reader");
-    create_with_flags(&workspace, "Idempotent API Reader", "idempotent-api-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("openapi.json");
-    fs::copy(workspace.join("contracts/openapi.json"), &fixture_openapi)
-        .expect("copy OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("run idempotent API generation fixture");
-
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_allows_product_owned_reading_queue_replacement() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("product-api-reader");
-    create_with_flags(&workspace, "Product API Reader", "product-api-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-
-    let fixture_openapi = sandbox.path().join("product-openapi.json");
-    let mut openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    openapi["paths"]
-        .as_object_mut()
-        .expect("OpenAPI paths")
-        .retain(|path, _| !path.starts_with("/api/v1/reading-queue"));
-    let schemas = openapi["components"]["schemas"]
-        .as_object_mut()
-        .expect("OpenAPI schemas");
-    for schema in [
-        "CreateReadingEntryRequest",
-        "ChangeReadingEntryStateRequest",
-        "ReadingQueueEntryResponse",
-        "ReadingQueueEntryState",
-        "ReadingQueueResponse",
-        "ReadingQueueSort",
-        "ReadingQueueStatusFilter",
-    ] {
-        schemas.remove(schema);
-    }
-    let mut openapi = serde_json::to_vec_pretty(&openapi).expect("serialize OpenAPI fixture");
-    openapi.push(b'\n');
-    fs::write(&fixture_openapi, openapi).expect("write product-owned OpenAPI fixture");
-
-    let fixture_generated = sandbox.path().join("product-generated");
-    for (relative, source) in [
-        (
-            "fetch/client.ts",
-            "// SPDX-License-Identifier: MIT OR Apache-2.0\n// Do not edit manually.\n// getFrameworkContractProfile fetchFn FrameworkContractProfile.parse\n",
-        ),
-        (
-            "fetch/schemas/frameworkContractProfile.zod.ts",
-            "export const FrameworkContractProfile = zod.object({});\n",
-        ),
-        (
-            "fetch/schemas/problemDetails.zod.ts",
-            "export const ProblemDetails = zod.object({});\n",
-        ),
-        (
-            "request/schemas/frameworkContractCreate.zod.ts",
-            "export const FrameworkContractCreate = zod.strictObject({});\n",
-        ),
-        (
-            "request/schemas/frameworkContractPatch.zod.ts",
-            "export const FrameworkContractPatch = zod.strictObject({});\n",
-        ),
-    ] {
-        let path = fixture_generated.join(relative);
-        fs::create_dir_all(path.parent().expect("generated parent"))
-            .expect("create generated fixture directory");
-        fs::write(path, source).expect("write generated fixture");
-    }
-
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--acknowledge-breaking-change",
-            "issue-32-product-evolution",
-        ])
-        .env("PATH", fake_api_generation_tools(&sandbox))
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("replace the bounded Reading Queue fixture");
-
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let committed = fs::read_to_string(workspace.join("contracts/openapi.json"))
-        .expect("read evolved Product API");
-    assert!(!committed.contains("reading-queue"));
-    assert!(!committed.contains("ReadingQueue"));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_check_discriminates_compatible_breaking_and_client_drift_read_only() {
-    let sandbox = tempdir().expect("create test sandbox");
-    for case in [
-        "compatible-openapi",
-        "breaking-openapi",
-        "breaking-required-relaxation",
-        "breaking-required-parameter",
-        "breaking-constraint",
-        "unsupported-path-parameters",
-        "unsupported-global-security",
-        "unsupported-component-parameters",
-        "client",
-    ] {
-        let workspace = sandbox.path().join(case);
-        create_with_flags(&workspace, "Contract Drift Reader", "contract-drift-reader");
-        install_fake_api_tool_authority(&workspace, "8.27.0");
-        let fixture_openapi = sandbox.path().join(format!("{case}-openapi.json"));
-        let mut openapi: serde_json::Value = serde_json::from_slice(
-            &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-        )
-        .expect("parse OpenAPI fixture");
-        match case {
-            "compatible-openapi" => {
-                openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["futureOptional"] =
-                    serde_json::json!({ "type": "string" });
-            }
-            "breaking-openapi" => {
-                openapi["components"]["schemas"]["ProblemDetails"]["properties"]
-                    .as_object_mut()
-                    .expect("Problem properties")
-                    .remove("detail");
-            }
-            "breaking-required-relaxation" => {
-                openapi["components"]["schemas"]["ProblemDetails"]["required"]
-                    .as_array_mut()
-                    .expect("Problem required array")
-                    .retain(|field| field != "title");
-            }
-            "breaking-required-parameter" => {
-                openapi["paths"]["/api/v1/framework-contract"]["get"]["parameters"] = serde_json::json!([{
-                    "in": "query",
-                    "name": "requiredMode",
-                    "required": true,
-                    "schema": { "type": "string" }
-                }]);
-            }
-            "breaking-constraint" => {
-                openapi["components"]["schemas"]["FrameworkContractProfile"]["properties"]["opaqueId"]
-                    ["minLength"] = serde_json::json!(1);
-            }
-            "unsupported-path-parameters" => {
-                openapi["paths"]["/api/v1/framework-contract"]["parameters"] =
-                    serde_json::json!([]);
-            }
-            "unsupported-global-security" => {
-                openapi["security"] = serde_json::json!([]);
-            }
-            "unsupported-component-parameters" => {
-                openapi["components"]["parameters"] = serde_json::json!({});
-            }
-            "client" => {}
-            _ => unreachable!(),
-        }
-        let mut openapi_bytes = serde_json::to_vec_pretty(&openapi).expect("serialize fixture");
-        openapi_bytes.push(b'\n');
-        fs::write(&fixture_openapi, openapi_bytes).expect("write OpenAPI fixture");
-
-        let fixture_generated = sandbox.path().join(format!("{case}-generated"));
-        copy_directory(
-            &workspace.join("frontend/src/generated/public-api"),
-            &fixture_generated,
-        );
-        if case == "client" {
-            let path = workspace.join("frontend/src/generated/public-api/fetch/client.ts");
-            let mut bytes = fs::read(&path).expect("read client fixture");
-            bytes.extend_from_slice(b"\n// hand edit\n");
-            fs::write(path, bytes).expect("drift committed client");
-        }
-        let fake_bin = fake_api_generation_tools(&sandbox);
-        let before = byte_inventory(&workspace);
-        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-            .args([
-                "generate",
-                "api",
-                workspace.to_str().expect("UTF-8 workspace"),
-                "--check",
-            ])
-            .env("PATH", fake_bin)
-            .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-            .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-            .output()
-            .expect("run API drift fixture");
-
-        assert!(!output.status.success(), "case {case} unexpectedly passed");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let expected = match case {
-            "compatible-openapi" => "API_GENERATED_DRIFT",
-            "breaking-openapi"
-            | "breaking-required-relaxation"
-            | "breaking-required-parameter"
-            | "breaking-constraint" => "API_BREAKING_CHANGE_UNACKNOWLEDGED",
-            "unsupported-path-parameters"
-            | "unsupported-global-security"
-            | "unsupported-component-parameters" => "API_OPENAPI_PROFILE_INVALID",
-            "client" => "API_CLIENT_DRIFT",
-            _ => unreachable!(),
-        };
-        assert!(stderr.contains(expected), "case={case}, stderr={stderr}");
-        assert_eq!(before, byte_inventory(&workspace), "case={case}");
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn api_check_rejects_generation_record_authority_drift_read_only() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("record-drift-reader");
-    create_with_flags(&workspace, "Record Drift Reader", "record-drift-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("record-openapi.json");
-    fs::copy(workspace.join("contracts/openapi.json"), &fixture_openapi)
-        .expect("copy OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("record-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let record_path = workspace.join(".yydra/api-generation.json");
-    let mut record: serde_json::Value =
-        serde_json::from_slice(&fs::read(&record_path).expect("read generation record"))
-            .expect("parse generation record");
-    record["sourceAuthority"] = serde_json::json!("hand-edited-authority");
-    let mut record = serde_json::to_vec_pretty(&record).expect("serialize generation record");
-    record.push(b'\n');
-    fs::write(&record_path, record).expect("drift generation record");
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("run generation-record drift fixture");
-
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("API_GENERATION_RECORD_DRIFT"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_check_recomputes_the_recorded_breaking_decision_from_history() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("history-reader");
-    create_with_flags(&workspace, "History Reader", "history-reader");
-    install_fake_api_tool_authority(&workspace, "8.27.0");
-    let fixture_openapi = sandbox.path().join("history-openapi.json");
-    let mut openapi: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join("contracts/openapi.json")).expect("read OpenAPI fixture"),
-    )
-    .expect("parse OpenAPI fixture");
-    openapi["components"]["schemas"]["ProblemDetails"]["properties"]
-        .as_object_mut()
-        .expect("Problem properties")
-        .remove("detail");
-    let mut openapi = serde_json::to_vec_pretty(&openapi).expect("serialize OpenAPI fixture");
-    openapi.push(b'\n');
-    fs::write(&fixture_openapi, openapi).expect("write OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("history-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let initial_history_len = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(workspace.join(".yydra/api-generation-history.json"))
-            .expect("read initial generation history"),
-    )
-    .expect("parse initial generation history")
-    .as_array()
-    .map(Vec::len)
-    .expect("generation history array");
-
-    let generated = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--acknowledge-breaking-change",
-            "issue-31",
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .output()
-        .expect("generate acknowledged breaking fixture");
-    assert!(
-        generated.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&generated.stderr)
-    );
-    let history: serde_json::Value = serde_json::from_slice(
-        &fs::read(workspace.join(".yydra/api-generation-history.json"))
-            .expect("read generation history"),
-    )
-    .expect("parse generation history");
-    assert_eq!(
-        history.as_array().map(Vec::len),
-        Some(initial_history_len + 1)
-    );
-
-    let clean = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", &fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", &fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", &fixture_generated)
-        .output()
-        .expect("check acknowledged breaking fixture");
-    assert!(
-        clean.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&clean.stderr)
-    );
-
-    let record_path = workspace.join(".yydra/api-generation.json");
-    let record = fs::read_to_string(&record_path).expect("read generation record");
-    let decision_start = record
-        .find("  \"breakingChanges\": [")
-        .expect("breaking decision start");
-    let replacement = "  \"breakingChanges\": [],\n  \"acknowledgements\": []\n";
-    let mut tampered = record[..decision_start].to_owned();
-    tampered.push_str(replacement);
-    tampered.push_str("}\n");
-    fs::write(&record_path, tampered).expect("clear recorded breaking decision");
-    let before = byte_inventory(&workspace);
-
-    let rejected = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("check tampered breaking fixture");
-    assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("API_GENERATION_RECORD_DRIFT"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
-#[cfg(unix)]
-#[test]
-fn api_generation_rejects_a_different_installed_orval_version_read_only() {
-    let sandbox = tempdir().expect("create test sandbox");
-    let workspace = sandbox.path().join("orval-drift-reader");
-    create_with_flags(&workspace, "Orval Drift Reader", "orval-drift-reader");
-    install_fake_api_tool_authority(&workspace, "8.26.0");
-    let fixture_openapi = sandbox.path().join("orval-openapi.json");
-    fs::copy(workspace.join("contracts/openapi.json"), &fixture_openapi)
-        .expect("copy OpenAPI fixture");
-    let fixture_generated = sandbox.path().join("orval-generated");
-    copy_directory(
-        &workspace.join("frontend/src/generated/public-api"),
-        &fixture_generated,
-    );
-    let fake_bin = fake_api_generation_tools(&sandbox);
-    let before = byte_inventory(&workspace);
-
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args([
-            "generate",
-            "api",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--check",
-        ])
-        .env("PATH", fake_bin)
-        .env("YYDRA_FAKE_OPENAPI", fixture_openapi)
-        .env("YYDRA_FAKE_GENERATED", fixture_generated)
-        .output()
-        .expect("run Orval authority drift fixture");
-
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("API_CLIENT_TOOL_VERSION_INVALID"));
-    assert_same_byte_inventory(&before, &byte_inventory(&workspace));
-}
-
 fn fn_append_duplicate_version(mut origin: String) -> String {
     origin.push_str("distribution_version = \"9.9.9\"\n");
     origin
@@ -3323,7 +2428,7 @@ fn fn_append_malformed_table(mut origin: String) -> String {
 
 fn fn_replace_with_non_semver(origin: String) -> String {
     origin.replace(
-        "distribution_version = \"0.2.0\"",
+        "distribution_version = \"0.4.0\"",
         "distribution_version = \"not-semver\"",
     )
 }
@@ -3375,56 +2480,6 @@ fn create_with_flags(destination: &Path, product_name: &str, product_id: &str) {
     );
 }
 
-fn copy_directory(source: &Path, destination: &Path) {
-    fs::create_dir_all(destination).expect("create copied directory");
-    for entry in fs::read_dir(source).expect("read copied directory") {
-        let entry = entry.expect("read copied entry");
-        let target = destination.join(entry.file_name());
-        if entry.file_type().expect("read copied type").is_dir() {
-            copy_directory(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).expect("copy fixture file");
-        }
-    }
-}
-
-#[cfg(unix)]
-fn fake_api_generation_tools(sandbox: &tempfile::TempDir) -> PathBuf {
-    let fake_bin = sandbox.path().join("fake-api-bin");
-    fs::create_dir_all(&fake_bin).expect("create fake API tool directory");
-    write_executable(
-        &fake_bin.join("cargo"),
-        r#"#!/bin/sh
-last=""
-for argument in "$@"; do last="$argument"; done
-/bin/mkdir -p "$(/usr/bin/dirname "$last")"
-/bin/cp "$YYDRA_FAKE_OPENAPI" "$last"
-"#,
-    );
-    write_executable(
-        &fake_bin.join("npm"),
-        r#"#!/bin/sh
-if [ -n "$YYDRA_GENERATED_API_OUTPUT" ]; then
-  /bin/mkdir -p "$YYDRA_GENERATED_API_OUTPUT"
-  /bin/cp -R "$YYDRA_FAKE_GENERATED/." "$YYDRA_GENERATED_API_OUTPUT/"
-fi
-"#,
-    );
-    fake_bin
-}
-
-fn install_fake_api_tool_authority(workspace: &Path, version: &str) {
-    let package = workspace.join("frontend/node_modules/orval/package.json");
-    fs::create_dir_all(package.parent().expect("Orval package parent"))
-        .expect("create fake Orval package directory");
-    fs::write(
-        package,
-        serde_json::to_vec(&serde_json::json!({ "version": version }))
-            .expect("serialize fake Orval package metadata"),
-    )
-    .expect("write fake Orval package metadata");
-}
-
 fn byte_inventory(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn visit(root: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
         for entry in fs::read_dir(directory).expect("read inventory directory") {
@@ -3445,19 +2500,6 @@ fn byte_inventory(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     visit(root, root, &mut files);
     files
-}
-
-fn assert_same_byte_inventory(
-    before: &BTreeMap<PathBuf, Vec<u8>>,
-    after: &BTreeMap<PathBuf, Vec<u8>>,
-) {
-    let changed = before
-        .keys()
-        .chain(after.keys())
-        .filter(|path| before.get(*path) != after.get(*path))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    assert!(changed.is_empty(), "changed paths: {changed:?}");
 }
 
 fn tracked_inventory(root: &Path) -> BTreeMap<PathBuf, (u32, Vec<u8>)> {
