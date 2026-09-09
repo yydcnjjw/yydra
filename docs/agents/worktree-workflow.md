@@ -18,6 +18,10 @@ when relevant; a small change does not require a new Issue. Split independent
 changes, and resume an existing task in its own worktree instead of creating a
 second checkout for the same branch.
 
+The [GitHub development workflow](github-workflow.md) requires every change to
+`main` to use a PR and selects Squash and merge by default. It defines PR review
+and complete-CI requirements in addition to this document's local workflow.
+
 Keep the primary worktree on `main` for inspection and integration. Preserve
 existing modifications and local commits; do not reset, clean, or stash unrelated
 work to start a task. If relevant edits already exist elsewhere, identify the

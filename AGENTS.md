@@ -21,6 +21,10 @@ Use a multi-context layout with a root `CONTEXT-MAP.md` pointing to context-loca
 
 Follow `docs/agents/worktree-workflow.md` for task isolation, creation, synchronization, handoff, and authorized cleanup. Put every change intended for a commit in a task worktree, defaulting to `.worktree/<slug>` and `codex/<slug>`. Reuse an existing tool-created task worktree when appropriate. Ordinary development ends with reviewed, validated, cryptographically signed local commits carrying DCO sign-offs; continue external actions within the current task's explicit authorization.
 
+### GitHub development workflow
+
+Follow `docs/agents/github-workflow.md`: all changes enter `main` through a PR, with DCO and complete CI successful before an authorized merge, and Squash and merge as the default. Preserve the worktree workflow's local completion and external-action authorization boundaries.
+
 ### Local development workflow
 
 Follow `docs/agents/development-workflow.md` when selecting local validation and reporting task completion. Select checks by changed behavior; require Android builds for native or Android build-chain changes and full validation before release. Honor explicit task-specific acceptance conditions.
