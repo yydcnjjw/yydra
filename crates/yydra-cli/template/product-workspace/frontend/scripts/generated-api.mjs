@@ -10,8 +10,7 @@ export function generatedApiDirectory() {
   return fs.realpathSync(packagePath);
 }
 
-if (import.meta.main) {
-  const output = process.argv[2];
+export function linkGeneratedApi(output) {
   if (!output || !path.isAbsolute(output)) {
     throw new Error("Expected the absolute generated API build directory");
   }

@@ -22,8 +22,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
-mod api_generation;
 mod check_graph;
+mod product_build;
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
@@ -90,24 +90,17 @@ enum Command {
         #[arg(long = "aggregate-evidence", value_name = "MANIFEST")]
         aggregate_evidence: Vec<PathBuf>,
     },
-    /// Generate build outputs from Product Workspace authorities.
-    Generate {
-        #[command(subcommand)]
-        command: GenerateCommand,
+    /// Build backend and H5 production artifacts, or one selected application target.
+    Build {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long, value_enum)]
+        target: Option<product_build::BuildTarget>,
     },
     /// Manage the Product Workspace database explicitly.
     Db {
         #[command(subcommand)]
         command: DbCommand,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum GenerateCommand {
-    /// Generate and validate OpenAPI and the Orval client in the Cargo build directory.
-    Api {
-        #[arg(default_value = ".")]
-        workspace: PathBuf,
     },
 }
 
@@ -201,11 +194,7 @@ fn main() -> Result<()> {
                 )
             }
         }
-        Command::Generate { command } => match command {
-            GenerateCommand::Api { workspace } => {
-                api_generation::generate_api(&workspace, &reporter)
-            }
-        },
+        Command::Build { workspace, target } => product_build::build(&workspace, target, &reporter),
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
             DbCommand::Migration { command } => match command {
@@ -784,6 +773,7 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
             let (lifecycle, hand_editable_after_creation) = if third_party
                 || matches!(path.as_str(), "LICENSE-APACHE" | "LICENSE-MIT")
                 || path.starts_with(".agents/skills/yydra-")
+                || path.starts_with(".yydra/build-support/")
             {
                 ("exact-distribution-snapshot", false)
             } else if matches!(
@@ -850,9 +840,13 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 new_bytes_license_authority: Some("workspace-origin-record.product_source_license"),
             },
             LifecyclePathRule {
-                path_patterns: &["LICENSE-*", ".agents/skills/yydra-*/**"],
+                path_patterns: &[
+                    "LICENSE-*",
+                    ".agents/skills/yydra-*/**",
+                    ".yydra/build-support/**",
+                ],
                 lifecycle: "exact-distribution-snapshot",
-                priority: 300,
+                priority: 400,
                 hand_editable: false,
                 workspace_source_authority: false,
                 provenance_authority: "exact-yydra-distribution",
@@ -1058,6 +1052,17 @@ fn verify_snapshot_authorities_with_origin(
         input: normalized,
         template_digest: expected_template,
     };
+    let expected = template_source_files()
+        .into_iter()
+        .filter(|(relative, _)| relative.starts_with(".yydra/build-support/"))
+        .map(|(relative, contents)| {
+            Ok((
+                materialized_template_path(Path::new(&relative)),
+                render_template(std::str::from_utf8(contents)?, &render)?.into_bytes(),
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+    verify_build_support_snapshot(root, &expected)?;
     let expected_policy = render_template(policy_source, &render)?;
     let policy_path = root.join(policy_relative);
     let actual_policy = fs::read_to_string(&policy_path).with_context(|| {
@@ -1073,6 +1078,37 @@ fn verify_snapshot_authorities_with_origin(
     }
     if origin.product_source_license != normalized.product_source_license {
         bail!("Workspace provenance license does not match its normalized Origin Record")
+    }
+    Ok(())
+}
+
+fn verify_build_support_snapshot(
+    root: &Path,
+    expected: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<()> {
+    let mut actual = std::collections::BTreeMap::new();
+    let mut pending = vec![PathBuf::from(".yydra/build-support")];
+    while let Some(relative) = pending.pop() {
+        let path = root.join(&relative);
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("read exact build-support snapshot '{}'", path.display()))?;
+        if metadata.is_dir() && expected.keys().any(|file| file.starts_with(&relative)) {
+            for child in fs::read_dir(&path)? {
+                pending.push(relative.join(child?.file_name()));
+            }
+        } else if metadata.is_file() {
+            actual.insert(relative, fs::read(path)?);
+        } else {
+            bail!(
+                "exact Distribution snapshot drift at '{}'; unsupported build-support path",
+                relative.display()
+            );
+        }
+    }
+    if &actual != expected {
+        bail!(
+            "exact Distribution snapshot drift at '.yydra/build-support'; restore the complete reviewed yydra-build source"
+        );
     }
     Ok(())
 }

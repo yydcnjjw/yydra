@@ -83,8 +83,10 @@ rather than guessing which authority or external condition to change.
 - `API_CLIENT_TOOL_VERSION_INVALID`: run `yydra setup .` to restore the exact
   project-local Orval dependency from the committed npm lock. Do not change
   Public API source to disguise a missing or wrong tool.
-- `API_CHECK_EXECUTABLE_UNAVAILABLE`: restore or invoke the exact Yydra CLI named
-  by the Workspace Origin Record; this is not an API source failure.
+- `API_BUILD_FAILED`: inspect the Cargo/build-script diagnostics and repair the
+  reported Rust input or frontend tool failure before rerunning the consumer.
+- `API_OUTPUT_MISSING`: preparation could not restore complete outputs after
+  its one package-scoped rebuild; inspect the output path and generator failure.
 - `API_OPENAPI_PROFILE_INVALID`, `API_OPENAPI_OPERATION_ID_INVALID`,
   `API_OPENAPI_CONTENT_TYPE_INVALID`, `API_OPENAPI_FIELD_NAME_INVALID`,
   `API_OPENAPI_UNKNOWN_FIELD_POLICY_INVALID`, `API_OPENAPI_REQUIREDNESS_INVALID`,

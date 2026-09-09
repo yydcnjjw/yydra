@@ -64,6 +64,18 @@ fn creates_only_authored_api_inputs_and_generates_without_full_workspace_identit
 #[test]
 fn frontend_resolves_the_generated_package_after_build_output_cleanup() {
     let fixture = Fixture::new();
+    let lock = fixture.root.join("Cargo.lock");
+    // A valid lock may have a different textual ordering after product-name rendering.
+    let source = fs::read_to_string(&lock).unwrap();
+    let (header, packages) = source.split_once("[[package]]").unwrap();
+    let mut packages = packages.split("[[package]]").collect::<Vec<_>>();
+    packages.reverse();
+    fs::write(
+        &lock,
+        format!("{header}[[package]]{}", packages.join("[[package]]")),
+    )
+    .unwrap();
+    let locked_bytes = fs::read(&lock).unwrap();
     for _ in 0..2 {
         assert_success(&fixture.generate().output().unwrap());
         let package = fixture
@@ -75,7 +87,11 @@ fn frontend_resolves_the_generated_package_after_build_output_cleanup() {
                 .starts_with(&fixture.target)
         );
         assert!(package.join("fetch/client.ts").is_file());
-        fs::remove_dir_all(fixture.target.join("yydra/api")).unwrap();
+        fs::remove_dir_all(fixture.api_output()).unwrap();
+        assert!(
+            fs::read(&lock).unwrap() == locked_bytes,
+            "recovery changed Cargo.lock"
+        );
     }
 }
 
@@ -97,7 +113,8 @@ fn failed_generation_can_be_rebuilt_without_recovery_and_preserves_other_build_o
             .join("frontend/node_modules/@yydra/generated-api")
             .exists()
     );
-    let obsolete = fixture.api_output().join("public-api/obsolete.ts");
+    let out = walk_api_output(&fixture.target);
+    let obsolete = out.join("public-api/obsolete.ts");
     fs::write(&obsolete, "partial output").unwrap();
     assert_success(&fixture.generate().output().unwrap());
     assert!(!obsolete.exists());
@@ -112,12 +129,8 @@ fn sequential_workspaces_sharing_a_cargo_cache_keep_their_own_generated_clients(
         .root
         .join("frontend/node_modules/@yydra/generated-api/fetch/client.ts");
     let expected = fs::read(&first_client).unwrap();
-    let second = Fixture::new();
-    fs::write(
-        &second.metadata,
-        json!({"target_directory": first.target, "workspace_root": second.root}).to_string(),
-    )
-    .unwrap();
+    let mut second = Fixture::new();
+    second.target = first.target.clone();
     let mut different = expected.clone();
     different.extend_from_slice(b"// Another product's client\n");
     fs::write(second.client.join("fetch/client.ts"), different).unwrap();
@@ -168,6 +181,10 @@ fn frontend_entrypoint_stops_on_generation_failure_and_runs_after_repair() {
         .find(|path| path.is_file())
         .expect("real npm installed for frontend entrypoint test");
     let run = |fail: bool| {
+        let config = frontend.join("orval.config.mjs");
+        let mut source = fs::read_to_string(&config).unwrap();
+        source.push_str("\n// force a new generator attempt\n");
+        fs::write(config, source).unwrap();
         let generator = fixture.generate();
         let mut command = Command::new(&npm);
         command
@@ -177,8 +194,7 @@ fn frontend_entrypoint_stops_on_generation_failure_and_runs_after_repair() {
                 generator
                     .get_envs()
                     .map(|(key, value)| (key, value.unwrap())),
-            )
-            .env("YYDRA_EXECUTABLE", env!("CARGO_BIN_EXE_yydra"));
+            );
         if fail {
             command.env("YYDRA_FAKE_FAIL", "1");
         }
@@ -200,17 +216,15 @@ struct Fixture {
     bin: PathBuf,
     openapi: PathBuf,
     client: PathBuf,
-    metadata: PathBuf,
 }
 
 impl Fixture {
     fn api_output(&self) -> PathBuf {
-        fs::read_dir(self.target.join("yydra/api"))
+        fs::canonicalize(self.root.join("frontend/node_modules/@yydra/generated-api"))
             .unwrap()
-            .next()
+            .parent()
             .unwrap()
-            .unwrap()
-            .path()
+            .to_path_buf()
     }
 
     fn new() -> Self {
@@ -232,12 +246,6 @@ impl Fixture {
                 .unwrap(),
         );
         let target = sandbox.path().join("configured target");
-        let metadata = sandbox.path().join("metadata.json");
-        fs::write(
-            &metadata,
-            json!({"target_directory": target, "workspace_root": root}).to_string(),
-        )
-        .unwrap();
         let openapi = sandbox.path().join("fixture.json");
         let decimal = json!({"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"});
         fs::write(&openapi, json!({
@@ -292,24 +300,46 @@ impl Fixture {
         fs::write(orval.join("package.json"), r#"{"version":"8.27.0"}"#).unwrap();
         let bin = sandbox.path().join("bin");
         fs::create_dir(&bin).unwrap();
-        executable(
-            &bin.join("cargo"),
-            r#"#!/bin/sh
-if [ "$1" = metadata ]; then
-  /bin/cat "$YYDRA_FAKE_METADATA"
-  exit 0
-fi
-for argument in "$@"; do last="$argument"; done
-/bin/mkdir -p "$(/usr/bin/dirname "$last")"
-/bin/cp "$YYDRA_FAKE_OPENAPI" "$last"
-"#,
+        let api_build = root.join("crates/api-build");
+        fs::create_dir_all(api_build.join("src")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/api-build\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        let helper = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../yydra-build")
+            .canonicalize()
+            .unwrap();
+        fs::write(api_build.join("Cargo.toml"), format!(
+            "[package]\nname = \"api-product-api-build\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[build-dependencies]\nyydra-build = {{ path = {:?} }}\n", helper)).unwrap();
+        fs::write(api_build.join("src/lib.rs"), "// Build target\n").unwrap();
+        fs::write(api_build.join("build.rs"), r#"fn main() {
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    yydra_build::generate_api(include_bytes!("../../../fixture.json"), &yydra_build::ApiBuild {
+        frontend: &manifest.join("../../frontend"), out_dir: &std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()),
+    }).unwrap();
+}
+"#).unwrap();
+        assert_success(
+            &Command::new("cargo")
+                .args(["generate-lockfile", "--offline"])
+                .current_dir(&root)
+                .output()
+                .unwrap(),
         );
+        for tool in ["typescript", "zod"] {
+            let dir = root.join("frontend/node_modules").join(tool);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("package.json"), "{}").unwrap();
+        }
         executable(
             &bin.join("npm"),
             r#"#!/bin/sh
 if [ -n "$YYDRA_GENERATED_API_OUTPUT" ]; then
   /bin/mkdir -p "$YYDRA_GENERATED_API_OUTPUT"
   /bin/cp -R "$YYDRA_FAKE_CLIENT/." "$YYDRA_GENERATED_API_OUTPUT/"
+  echo generated >> "$YYDRA_FAKE_GENERATIONS"
   if [ -n "$YYDRA_FAKE_FAIL" ]; then exit 7; fi
 fi
 "#,
@@ -321,21 +351,23 @@ fi
             bin,
             openapi,
             client,
-            metadata,
         }
     }
 
     fn generate(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_yydra"));
+        let mut command = Command::new("node");
         let mut paths = vec![self.bin.clone()];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
         command
-            .args(["generate", "api"])
-            .arg(&self.root)
+            .arg("scripts/prepare-api.mjs")
+            .current_dir(self.root.join("frontend"))
             .env("PATH", std::env::join_paths(paths).unwrap())
-            .env("YYDRA_FAKE_METADATA", &self.metadata)
+            .env("CARGO_TARGET_DIR", &self.target)
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("CARGO_BUILD_JOBS", "2")
+            .env("YYDRA_FAKE_GENERATIONS", self.root.join("generations"))
             .env("YYDRA_FAKE_OPENAPI", &self.openapi)
             .env("YYDRA_FAKE_CLIENT", &self.client);
         command
@@ -352,5 +384,45 @@ fn assert_success(output: &Output) {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn walk_api_output(root: &Path) -> PathBuf {
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            if path.join("openapi.json").is_file() {
+                return path;
+            }
+            let found = walk_api_output(&path);
+            if !found.as_os_str().is_empty() {
+                return found;
+            }
+        }
+    }
+    PathBuf::new()
+}
+
+#[test]
+fn unchanged_inputs_reuse_generation_and_missing_frontend_links_are_restored() {
+    let fixture = Fixture::new();
+    assert_success(&fixture.generate().output().unwrap());
+    let count = fs::read_to_string(fixture.root.join("generations")).unwrap();
+    fs::remove_file(
+        fixture
+            .root
+            .join("frontend/node_modules/@yydra/generated-api"),
+    )
+    .unwrap();
+    assert_success(&fixture.generate().output().unwrap());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("generations")).unwrap(),
+        count
+    );
+    assert!(
+        fixture
+            .api_output()
+            .join("public-api/fetch/client.ts")
+            .is_file()
     );
 }

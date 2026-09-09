@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "__PRODUCT_ID__-api-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[build-dependencies]
+product-transport-http = { package = "__PRODUCT_ID__-transport-http", path = "../transport-http" }
+yydra-build = { version = "=0.4.0", path = "../../.yydra/build-support" }

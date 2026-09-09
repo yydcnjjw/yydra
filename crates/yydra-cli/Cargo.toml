@@ -14,6 +14,7 @@ include = [
   "src/**",
   "tests/consumer_creation.rs",
   "tests/api_generation.rs",
+  "tests/build.rs",
   "tests/check_contract.rs",
   "tests/live_workspace.rs",
   "tests/packaged_consumer.rs",
