@@ -95,6 +95,11 @@ triggered, say that it was not run under the change scope. A selected check resu
 `pass-selected`, `complete: false`; do not describe it as full or aggregate
 Conformance Evidence or relabel an unrun node as passing.
 
+The [GitHub development workflow](github-workflow.md) adds the separate PR merge
+gate: DCO and the existing complete quality CI must succeed before merging.
+Local completion, including a documentation-only task that did not trigger
+Android locally, does not waive that gate or authorize external actions.
+
 Before publishing a Distribution, require the existing complete clean and
 Reading Queue validation and aggregate evidence for the release candidate,
 including Android. A local version bump or package test is not by itself a

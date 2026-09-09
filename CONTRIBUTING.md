@@ -14,6 +14,20 @@ change, defaulting to `.worktree/<slug>` and `codex/<slug>`, and preserve the
 primary worktree on `main`. The workflow covers validation, synchronization,
 local completion, PR handoff, and cleanup within the task's authorization.
 
+## GitHub development workflow
+
+Follow the [GitHub development workflow](docs/agents/github-workflow.md) for the
+PR, review, and merge policy. Every change to `main` goes through a PR,
+including documentation and small fixes. Require DCO and complete CI success
+before an authorized merge and use Squash and merge by default. Local validation,
+PR merge, cleanup, and Distribution publication have distinct completion and
+authorization requirements.
+
+Write PR bodies in English using the [PR template](.github/pull_request_template.md):
+`Motivation`, `Solution`, `Validation`, and `User impact and compatibility` are
+required; `Reviewer notes` and `References` are included when useful. Follow the
+GitHub workflow's content guidance for small changes, evidence, and optional fields.
+
 ## Commit conventions
 
 Follow the [commit conventions](docs/agents/commits.md) for human and agent

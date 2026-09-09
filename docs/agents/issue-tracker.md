@@ -3,6 +3,11 @@
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+See the [GitHub development workflow](github-workflow.md) for PR preparation,
+Issue references and closure, review, and integration requirements. A small
+change may use a PR without creating a new Issue; the PR-only integration policy
+does not turn PRs into the feature-request triage surface described below.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
