@@ -73,6 +73,17 @@ fn current_contract_omits_supply_chain_checks_instead_of_passing_them() {
             .unwrap();
     assert_eq!(catalog["notEvaluated"], manifest["notEvaluated"]);
     assert!(!catalog["nodes"].to_string().contains("supply-chain."));
+    let mut available = std::collections::BTreeSet::new();
+    for node in catalog["nodes"].as_array().unwrap() {
+        for prerequisite in node["prerequisites"].as_array().unwrap() {
+            assert!(
+                available.contains(prerequisite.as_str().unwrap()),
+                "{} runs before prerequisite {prerequisite}",
+                node["id"]
+            );
+        }
+        available.insert(node["id"].as_str().unwrap());
+    }
 }
 
 fn create_workspace(destination: &Path, product_id: &str) {
@@ -1988,7 +1999,7 @@ fn api_generated_contract_node_rejects_invalid_client_without_changing_authored_
     );
     assert!(!output.status.success());
     let parsed = events(&output);
-    for prerequisite in ["rust.architecture", "rust.compile", "frontend.lock"] {
+    for prerequisite in ["rust.architecture", "frontend.lock"] {
         let prerequisite_result = node(&parsed, prerequisite);
         assert_eq!(
             prerequisite_result["outcome"],
@@ -2093,7 +2104,6 @@ fn api_client_contract_rejects_a_multiline_direct_generated_import_read_only() {
     let parsed = events(&output);
     for prerequisite in [
         "rust.architecture",
-        "rust.compile",
         "frontend.lock",
         "api.generated-contract",
         "frontend.typecheck",
@@ -2219,7 +2229,7 @@ fn failed_prerequisites_skip_dependents_while_independent_nodes_continue() {
     let contents = fs::read_to_string(&origin)
         .expect("read Origin Record")
         .replace(
-            "distribution_version = \"0.3.0\"",
+            "distribution_version = \"0.4.0\"",
             "distribution_version = \"9.9.9\"",
         );
     fs::write(origin, contents).expect("write mismatched Origin Record");

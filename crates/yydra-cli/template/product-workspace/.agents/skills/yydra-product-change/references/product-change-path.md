@@ -37,7 +37,7 @@ constraints, rollback, locking, concurrency, or query behavior are material.
   authorization classification, status codes, and RFC 9457 Problem types.
 - Exercise both success and invalid input, state, authorization, and not-found
   behavior in the runtime contract tests.
-- Run `yydra generate api .` to export, validate and type-check current API build
+- Run `yydra build . --target h5` to export, validate and type-check current API build
   outputs. Generate before frontend consumption, including after build cleanup.
 - Keep the contract and `@yydra/generated-api` client in the configured Cargo
   build directory. Do not hand-edit or commit them. No history or breaking-change

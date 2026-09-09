@@ -10,130 +10,86 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{Reporter, find_workspace_root, npm_program};
-
 const ORVAL_VERSION: &str = "8.27.0";
 const EXACT_DECIMAL_PATTERN: &str = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$";
 const HTTP_METHODS: &[&str] = &[
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
 ];
 
-pub(crate) fn generate_api(workspace: &Path, reporter: &Reporter) -> Result<()> {
-    let root = find_workspace_root(workspace)
-        .context("API_WORKSPACE_INVALID: locate Product Workspace")?;
-    for relative in [
-        "Cargo.toml",
-        "crates/transport-http/src/bin/export-openapi.rs",
-        "frontend/package.json",
-        "frontend/orval.config.mjs",
-        "frontend/scripts/generated-api.mjs",
-    ] {
-        if !root.join(relative).is_file() {
-            bail!("API_WORKSPACE_INVALID: required generation input '{relative}' is missing");
-        }
-    }
-    validate_generator_version(&root)?;
-    let target = cargo_target_directory(&root)?;
-    // Different Product Workspaces may reuse one Cargo cache, even sequentially.
-    let workspace_key = hex::encode(Sha256::digest(root.as_os_str().as_encoded_bytes()));
-    let relative = Path::new("yydra/api").join(workspace_key);
-    let output = target.join(&relative);
-    ensure_no_symlink_target(&target, &relative)?;
-    if output.exists() {
-        fs::remove_dir_all(&output)
-            .context("API_OUTPUT_PREPARE_FAILED: clean API build outputs")?;
-    }
-    fs::create_dir_all(&output).context("API_OUTPUT_PREPARE_FAILED: create API build directory")?;
-    let openapi = output.join("openapi.json");
-    let generated = output.join("public-api");
-    reporter.phase(
-        "generate.api.openapi",
-        "API_OPENAPI_EXPORT",
-        Some(&openapi),
-        Some("fix the authoritative Rust route declarations and rerun `yydra generate api`"),
-        || {
-            export_openapi(&root, &openapi)?;
-            validate_openapi_profile(&fs::read(&openapi)?)
-        },
-    )?;
-    reporter.phase(
-        "generate.api.client",
-        "API_CLIENT_GENERATE",
-        Some(&generated),
-        Some("fix the Public API or generator configuration and rerun `yydra generate api`"),
-        || {
-            generate_client(&root, &openapi, &generated)?;
-            validate_generated_client(&generated)?;
-            fs::write(
-                generated.join("package.json"),
-                serde_json::to_vec_pretty(&serde_json::json!({
-                    "name": "@yydra/generated-api",
-                    "private": true,
-                    "type": "module",
-                    "license": "MIT OR Apache-2.0",
-                    "exports": {"./*": "./*.ts"}
-                }))?,
-            )?;
-            run_generation_command(
-                &root.join("frontend"),
-                "node",
-                &[
-                    OsStr::new("scripts/generated-api.mjs"),
-                    generated.as_os_str(),
-                ],
-                &[],
-                "API_CLIENT_LINK_FAILED",
-            )
-        },
-    )
+/// Filesystem inputs for a product build script. `out_dir` must be its Cargo OUT_DIR.
+pub struct ApiBuild<'a> {
+    pub frontend: &'a Path,
+    pub out_dir: &'a Path,
 }
 
-fn cargo_target_directory(root: &Path) -> Result<PathBuf> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--locked", "--no-deps", "--format-version=1"])
-        .current_dir(root)
-        .output()
-        .context("API_WORKSPACE_INVALID: read Cargo workspace metadata")?;
-    if !output.status.success() {
-        bail!(
-            "API_WORKSPACE_INVALID: cargo metadata failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+/// Generate and validate the current Public API Contract and Generated Client.
+/// The caller supplies the contract; this function never invokes Cargo.
+pub fn generate_api(openapi: &[u8], config: &ApiBuild<'_>) -> Result<()> {
+    validate_openapi_profile(openapi)?;
+    let frontend = config
+        .frontend
+        .canonicalize()
+        .context("API_WORKSPACE_INVALID: locate frontend generation inputs")?;
+    for relative in [
+        "orval.config.mjs",
+        "package.json",
+        "package-lock.json",
+        "scripts",
+        "node_modules/orval/package.json",
+        "node_modules/typescript/package.json",
+        "node_modules/zod/package.json",
+    ] {
+        println!(
+            "cargo::rerun-if-changed={}",
+            frontend.join(relative).display()
         );
     }
-    let metadata: Value = serde_json::from_slice(&output.stdout)
-        .context("API_WORKSPACE_INVALID: invalid Cargo workspace metadata")?;
-    let target = metadata["target_directory"]
-        .as_str()
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .context("API_WORKSPACE_INVALID: Cargo target directory must be absolute")?;
-    Ok(target)
+    println!("cargo::rerun-if-env-changed=PATH");
+    validate_generator_version(&frontend)?;
+    if !config.out_dir.is_absolute() {
+        bail!("API_OUTPUT_PREPARE_FAILED: OUT_DIR must be absolute");
+    }
+    // Cargo may reuse one OUT_DIR for same-named packages in different checkouts.
+    let workspace_key = hex::encode(Sha256::digest(frontend.as_os_str().as_encoded_bytes()));
+    let relative = Path::new("yydra-api").join(workspace_key);
+    ensure_no_symlink_target(config.out_dir, &relative)?;
+    let output = config.out_dir.join(&relative);
+    if output.exists() {
+        fs::remove_dir_all(&output)
+            .context("API_OUTPUT_PREPARE_FAILED: clean owned API outputs")?;
+    }
+    fs::create_dir_all(&output).context("API_OUTPUT_PREPARE_FAILED: create API build directory")?;
+    let contract = output.join("openapi.json");
+    fs::write(&contract, openapi).context("API_OPENAPI_EXPORT_FAILED: write derived OpenAPI")?;
+    let client = output.join("public-api");
+    generate_client(&frontend, &contract, &client)?;
+    validate_generated_client(&client)?;
+    let files = directory_inventory(&client)?
+        .keys()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    fs::write(
+        client.join("package.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": "@yydra/generated-api", "private": true, "type": "module",
+            "license": "MIT OR Apache-2.0", "exports": {"./*": "./*.ts"}, "files": files
+        }))?,
+    )
+    .context("API_CLIENT_OUTPUT_INVALID: write generated package metadata")?;
+    println!("cargo::rustc-env=YYDRA_API_OUTPUT={}", output.display());
+    Ok(())
 }
 
-fn export_openapi(root: &Path, output: &Path) -> Result<()> {
-    run_generation_command(
-        root,
-        "cargo",
-        &[
-            OsStr::new("run"),
-            OsStr::new("--locked"),
-            OsStr::new("--quiet"),
-            OsStr::new("--bin"),
-            OsStr::new("export-openapi"),
-            OsStr::new("--"),
-            output.as_os_str(),
-        ],
-        &[],
-        "API_OPENAPI_EXPORT_FAILED",
-    )
+fn npm_program() -> &'static str {
+    if cfg!(windows) { "npm.cmd" } else { "npm" }
 }
 
 fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
     fs::create_dir_all(output)
         .with_context(|| format!("API_OUTPUT_PREPARE_FAILED: create '{}'", output.display()))?;
-    let config = root.join("frontend/orval.config.mjs");
+    let config = root.join("orval.config.mjs");
     run_generation_command(
-        &root.join("frontend"),
+        root,
         npm_program(),
         &[
             OsStr::new("exec"),
@@ -155,7 +111,7 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
         .parent()
         .context("API_CLIENT_TYPECHECK_FAILED: generated output has no parent")?
         .join("generated-client-tsconfig.json");
-    let frontend = root.join("frontend");
+    let frontend = root;
     let include = format!("{}/**/*.ts", output.display()).replace('\\', "/");
     let config = serde_json::json!({
         "compilerOptions": {
@@ -177,7 +133,7 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
     fs::write(&tsconfig, config)
         .context("API_CLIENT_TYPECHECK_FAILED: write generated-client tsconfig")?;
     run_generation_command(
-        &root.join("frontend"),
+        root,
         npm_program(),
         &[
             OsStr::new("exec"),
@@ -193,7 +149,7 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
 }
 
 fn validate_generator_version(root: &Path) -> Result<()> {
-    let package = root.join("frontend/node_modules/orval/package.json");
+    let package = root.join("node_modules/orval/package.json");
     let package: Value = serde_json::from_slice(&fs::read(&package).with_context(
         || "API_CLIENT_TOOL_VERSION_INVALID: project-local Orval is missing; run `yydra setup`",
     )?)

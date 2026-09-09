@@ -35,7 +35,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&package.stderr)
     );
 
-    let extracted = package_target.join("package/yydra-cli-0.3.0");
+    let extracted = package_target.join("package/yydra-cli-0.4.0");
     assert!(extracted.join("Cargo.lock").is_file());
     assert!(extracted.join("third-party/bolts-source.json").is_file());
     for removed in ["supply-chain", "src/supply_chain.rs", "build.rs"] {
@@ -71,6 +71,22 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             "missing packaged Baseline Skill artifact {baseline_skill}"
         );
     }
+    for relative in [
+        "src/lib.rs",
+        "Cargo.toml.tmpl",
+        "README.md",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+    ] {
+        let path = extracted
+            .join("template/product-workspace/.yydra/build-support")
+            .join(relative);
+        assert!(
+            fs::symlink_metadata(&path).unwrap().is_file(),
+            "bundle must contain portable regular files: {}",
+            path.display()
+        );
+    }
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));
@@ -79,7 +95,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     let install = Command::new(&cargo)
         .args([
             "install",
-            "yydra-cli@0.3.0",
+            "yydra-cli@0.4.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",
@@ -196,6 +212,17 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         metadata.status.success(),
         "metadata stderr: {}",
         String::from_utf8_lossy(&metadata.stderr)
+    );
+    let setup = Command::new(&executable)
+        .arg("setup")
+        .arg(&workspace)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()
+        .expect("prepare frontend tools before compiling the api-build Workspace member");
+    assert!(
+        setup.status.success(),
+        "setup stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
     );
     let workspace_tests = Command::new(&cargo)
         .args([
