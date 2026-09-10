@@ -86,7 +86,7 @@ This is Yydra's project convention, informed by Google's change-description
 guidance and the compared open-source templates, including Tokio's separation
 of motivation and solution and Kubernetes's user-impact and reviewer prompts.
 It is not a universal PR-body standard. The
-[research note](../research/2026-09-09-pr-description-conventions.md) records the
+[research note](https://github.com/yydcnjjw/yydra/wiki/Research-2026-09-09-PR-Description-Conventions) records the
 sources and decision. Apply the same format when creating or updating a PR
 through `gh` or an API. The default GitHub template becomes available after it
 lands on `main`; an explicit CLI/API body must still follow the format. Enforce

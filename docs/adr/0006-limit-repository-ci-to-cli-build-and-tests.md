@@ -101,3 +101,11 @@ Validation used `rustc 1.100.0-nightly (cea272fa3 2026-09-07)` and
 integration tests were not run under this CI/test-selection-only change.
 The GitHub ruleset still requires its previous checks at this local handoff;
 no push, PR, ruleset update, or merge has been performed for this task.
+
+## Subsequent documentation storage
+
+[ADR 0007](0007-store-research-and-validation-in-wiki.md), accepted on
+2026-09-10, moves the historical research and validation collection to the
+Wiki while retaining its original claims and code-repository history. It
+changes the storage location, not the outcomes or raw evidence described
+by this decision.

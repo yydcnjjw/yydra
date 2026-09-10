@@ -125,6 +125,16 @@ triggered, say that it was not run under the change scope. A selected check resu
 `pass-selected`, `complete: false`; do not describe it as full or aggregate
 Conformance Evidence or relabel an unrun node as passing.
 
+Put new standalone validation records in the
+[Yydra Wiki](https://github.com/yydcnjjw/yydra/wiki/Home), following
+[ADR 0007](../adr/0007-store-research-and-validation-in-wiki.md). Task and PR
+reports still summarize the checks performed; a separate Wiki page is not
+required for every routine run. Detailed records identify the exact candidate
+and executor, performed checks, outcomes, retained evidence locations, and
+coverage limits. Preserve dated outcomes and mark later corrections separately.
+An ADR relying on a record links to its fixed Wiki revision. Publishing a record
+does not upload the artifacts it describes or establish new validation results.
+
 The [GitHub development workflow](github-workflow.md) adds the separate PR merge
 gate: DCO and CLI build/test CI must succeed before merging.
 Local completion, including a documentation-only task that did not trigger

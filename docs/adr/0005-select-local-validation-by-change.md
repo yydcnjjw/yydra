@@ -36,7 +36,7 @@ CI, Gradle, or cache implementation change is part of this decision.
 
 ## Decision evidence
 
-The [Distribution 0.4.0 validation record](../validation/2026-09-09-yydra-build.md)
+The [Distribution 0.4.0 validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-09-Yydra-Build/6a878e624ef5fba3d3069e3daf38a7169d798982)
 identifies the retained local manifest. In that run, `android.release` took
 2,178,409 ms out of 2,554,302 ms summed across all check nodes (85.3%). Other
 nodes summed to 375,893 ms. These are observations from one completed run,

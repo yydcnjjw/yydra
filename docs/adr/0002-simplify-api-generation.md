@@ -129,5 +129,5 @@ Repository regressions passed (115 passed, 5 default ignores), and the packaged
 CLI passed all 29 Clean Product checks, including real H5 and Android release
 builds, after repairing a Gradle download timeout with a verified public wrapper
 cache. Both review axes have no unresolved findings. See the
-[implementation validation record](../validation/2026-09-08-api-generation.md)
+[implementation validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-08-API-Generation/6a878e624ef5fba3d3069e3daf38a7169d798982)
 for package identities, failure/rebuild cases, evidence, and scope limits.

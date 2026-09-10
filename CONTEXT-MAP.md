@@ -18,7 +18,9 @@
 - [Provide reusable API generation through yydra-build](./docs/adr/0004-provide-yydra-build.md): accepted; complete generation library, dedicated product api-build crate, and public build entrypoint; default backend/H5 with explicit Android; implemented in Distribution 0.4.0 and locally verified
 - [Select local development validation by change](./docs/adr/0005-select-local-validation-by-change.md): accepted; active local agent workflow with Android triggered by native or build-chain changes; complete validation before release; CI subsequently amended by ADR 0006
 - [Limit repository CI to CLI build and tests](./docs/adr/0006-limit-repository-ci-to-cli-build-and-tests.md): accepted; CLI build and command-behavior tests with independent DCO; implemented and locally verified; remote required-check migration pending
+- [Store research and validation in the Wiki](./docs/adr/0007-store-research-and-validation-in-wiki.md): accepted documentation-storage decision; current rules remain in this repository; Wiki published and independently verified
 
-## Historical research
+## Historical research and validation
 
-- [Research index](./docs/research/README.md): dated decision inputs and pointers to subsequent decisions and implementation
+- [Wiki home](https://github.com/yydcnjjw/yydra/wiki/Home): research and dated validation records; current context and ADR authority remains above
+- [Research index](https://github.com/yydcnjjw/yydra/wiki/Research-Index): dated decision inputs and pointers to subsequent decisions and implementation

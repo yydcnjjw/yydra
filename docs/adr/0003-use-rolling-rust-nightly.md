@@ -5,7 +5,7 @@ Status: accepted — 2026-09-09.
 
 The maintainer confirmed the consolidated scope and authorized implementation
 with “确认共同理解并开始实施”. Implemented in Distribution 0.5.0 and locally
-verified on 2026-09-09; see the [acceptance record](../validation/2026-09-09-rust-nightly.md).
+verified on 2026-09-09; see the [acceptance record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-09-Rust-Nightly/6a878e624ef5fba3d3069e3daf38a7169d798982).
 
 The maintainer selected the rolling `nightly` channel with “滚动通道”, choosing
 channel updates over a date-pinned nightly release. The selected toolchain
@@ -82,8 +82,16 @@ aggregation cases covering distinct nightly builds and invalid observations;
 and complete clean/Reading Queue checks with real Rust, API generation, H5 and
 Android build paths. Record the actual nightly used and any failed or unrun
 checks. Preflight disk space for heavy builds and reuse valid build caches.
-The [acceptance record](../validation/2026-09-09-rust-nightly.md) records passing
+The [acceptance record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-09-Rust-Nightly/6a878e624ef5fba3d3069e3daf38a7169d798982) records passing
 repository regressions, both complete 29-node checks, and aggregation from
 retained evidence using the independently packaged 0.5.0 executor. These local
 results apply to the observed nightly and do not establish compatibility with
 future nightly releases.
+
+## Subsequent documentation storage
+
+[ADR 0007](0007-store-research-and-validation-in-wiki.md), accepted on
+2026-09-10, moves the historical research and validation collection to the
+Wiki while retaining its original claims and code-repository history. It
+changes the storage location, not the outcomes or raw evidence described
+by this decision.
