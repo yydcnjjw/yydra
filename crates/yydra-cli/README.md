@@ -5,6 +5,11 @@
 diagnosing Product Workspaces initialized from a Yydra Distribution and owned
 independently by their product teams.
 
+For a step-by-step Chinese introduction on Linux/Bash, follow
+[Run your first product with yydra-cli](https://github.com/yydcnjjw/yydra/blob/main/docs/tutorials/yydra-cli-getting-started.md).
+It covers packaging and installing the 0.5.0 candidate, creating a Product
+Workspace, running the backend and H5 application, and building artifacts.
+
 Distribution `0.5.0` is a local development candidate; it has not been published.
 Use the candidate's independently packaged `yydra-cli-0.5.0.crate` and its recorded
 checksum, then extract and install with the packaged lockfile in a fresh directory:
