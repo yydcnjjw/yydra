@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Worktree development workflow
 
-Status: active — 2026-09-09. Confirmed through the worktree workflow design
-interview and linked from the contributor and agent guidance.
+Status: active — 2026-09-10. The 2026-09-09 worktree workflow is amended by
+the confirmed task-artifact cleanup decision, including outputs outside the
+worktree. Linked from the contributor and agent guidance.
 
 ## Scope and task boundaries
 
@@ -90,6 +91,56 @@ development workflow; creating a worktree does not itself require Android or a
 complete release validation. Preserve valid caches and evidence, and repeat
 expensive checks only when their coverage is no longer valid.
 
+## Track task artifacts and caches
+
+Keep temporary outputs whose location can be selected under
+`<task-worktree>/.task/tmp/`. Maintain an inventory at
+`<task-worktree>/.task/artifacts.md`; `/.task/` is ignored by Git. Initialize it
+once and read it when resuming a task. The inventory is an agent-maintained
+cleanup record, not an automatic cleanup command or a standalone validation
+report. Keep source changes and deliverable documentation outside `.task/`.
+
+Record the task branch and absolute worktree path, then each artifact's absolute
+path, purpose, creating command/tool, ownership evidence, disposition, and
+status. A task-owned directory may cover its contents as one entry; identify
+any retained exceptions. Register planned paths before creating them and add
+tool-selected paths as soon as they are known. Include temporary consumer
+Workspaces, build outputs, logs, downloads made only for the task, PR bodies,
+API request/response files, and tool-generated caches. Do not put credentials
+or raw authenticated request contents in the inventory.
+
+Assign a disposition to each entry:
+
+| Disposition | Lifetime and cleanup |
+| --- | --- |
+| Disposable task artifact | Remove when no longer needed for execution, review, or diagnosis, and by authorized task cleanup. This includes task-private `target`, `node_modules`, and generated caches. |
+| Required evidence | Record why it must remain, its destination, and the condition or date for reconsidering retention. Retain the bytes needed by the evidence claim. |
+| Reusable shared cache | Preserve established dependency/download caches and supported reusable build caches. Record the reuse purpose for any task-created cache retained beyond the task. |
+
+Before running tools, inspect their output/cache settings and inherited
+overrides. Use supported command-scoped temporary/cache-directory options to
+place disposable outputs under `.task/tmp/`, including `TMPDIR` when the tool
+honors it. Keep ordinary shared dependency caches available and preserve the
+validation runner's isolation requirements. If a tool requires an external
+location, register its actual path and reason instead of silently leaving an
+untracked output there. A registered external path does not require another
+permission round when the task already authorizes its cleanup.
+
+Inventory coverage follows task ownership, not a directory prefix. Include
+paths under `~/.cache`, `/tmp`, `/var/tmp`, overridden temporary roots, and
+other external locations. Tools may create generic names such as `metro-cache`
+without `yydra` in the name. For mixed/shared directories, record only entries
+whose task ownership can be established; a task path in one cache entry does
+not establish ownership of its siblings. Do not delete a shared cache root to
+remove a task's entries.
+
+When a command succeeds or fails, update the inventory with discovered outputs
+and files already removed. A failed or paused task keeps artifacts still needed
+for diagnosis or continuation. Moving a directory into `~/.cache` does not make
+it a reusable cache, and moving evidence outside a worktree does not finish its
+lifecycle: update its recorded destination and retention condition. A Wiki
+summary alone does not preserve local artifact bytes.
+
 ## Synchronize with main when needed
 
 Synchronize when a dependency update, conflict, or integration requirement makes
@@ -132,7 +183,9 @@ path within the task's existing authorization for remote actions.
 Report the branch, absolute worktree path, commit, checks and results, and any
 coverage limits or remaining work. Keep local completion, PR merge, and cleanup
 as distinct states. A paused or locally completed task retains its worktree and
-branch for continuation.
+branch for continuation. Include the artifact inventory path and summarize
+remaining external artifacts, retention reasons, and unresolved ownership in
+the handoff. Report residual artifacts even when Git status is clean.
 
 Push, PR creation, merge, and publication follow the current task's explicit
 authorization. Continue within authorization already given without asking again;
@@ -154,9 +207,11 @@ does not by itself authorize merging it or deleting its branch and worktree.
 
 When the task already authorizes cleanup after merge, carry out the following
 checks and cleanup without another permission round. Scope cleanup to that
-task's exact worktree and local/remote branch. Preserve the primary worktree,
-other tasks and branches, and reusable caches. A closed, unmerged PR or an
-abandoned task needs its own scoped disposal decision.
+task's exact worktree, local/remote branch, and registered disposable artifacts,
+including those outside the worktree. Preserve the primary worktree, other
+tasks and branches, shared caches, and required evidence under the
+[artifact inventory rules](#track-task-artifacts-and-caches). A closed, unmerged
+PR or an abandoned task needs its own scoped disposal decision.
 
 Before removing anything:
 
@@ -167,9 +222,14 @@ Before removing anything:
    `origin/main`. Inspect the local branch and any surviving remote task branch
    for changes beyond the reviewed head. Preserve and report any additional work.
 3. Check the task worktree for staged, unstaged, and untracked changes. Inspect
-   ignored files for local-only work or evidence that must be retained, and make
-   sure no task process is still using the directory. Retain required evidence
-   and reusable caches outside the directory before removing it.
+   ignored files and `.task/artifacts.md` for local-only work and required
+   evidence. Reconcile the inventory with the task's actual commands and tool
+   outputs, including external paths. For older tasks without an inventory,
+   reconstruct it from creation records and current files; a name-only search
+   is not sufficient. Verify exact path identities, symlinks/mount boundaries,
+   and process use before deletion. Preserve and report uncertain entries.
+   Retain required evidence and reusable shared caches outside the worktree
+   when necessary, recording the destination, reason, and retention condition.
 4. Fast-forward the clean primary `main` when possible. Preserve and report
    primary-worktree changes or divergence; do not reset it to permit cleanup.
 
@@ -193,7 +253,14 @@ errors. If integration or ownership is uncertain, retain the task and report
 what remains unresolved.
 
 Once the checks pass, run cleanup from outside the task worktree, normally from
-the primary root. For the ordinary ancestry-preserving case:
+the primary root. First remove verified disposable external entries using their
+exact recorded paths and update the inventory. Stop and report failed deletions;
+do not discard the inventory while external cleanup remains unresolved. Keep
+the reviewed inventory available in the task report before removing the worktree
+that contains it. Temporary cleanup scripts and inventories created outside the
+worktree are themselves disposable entries and must also be accounted for.
+Do not use wildcard deletion across `~/.cache`, `/tmp`, or other shared roots.
+For the ordinary ancestry-preserving case:
 
 ```sh
 git worktree remove "$worktree_dir"
@@ -215,7 +282,10 @@ neither replaces the integration checks above. Do not automatically substitute
 change and absence of additional work have been established under the existing
 cleanup authorization.
 
-Verify that only the intended task path and refs disappeared. Report any cleanup
-still pending. Use `git worktree remove` for registered worktrees, not directory
-deletion or wildcard cleanup; `git worktree prune` only removes stale Git
-administrative records and is not a substitute for task cleanup.
+Verify that the intended task path, disposable external entries, and refs
+disappeared, while retained paths remain available. Report removed artifacts,
+retained locations and reasons, and any pending cleanup; a removed worktree or
+clean Git status alone does not establish complete artifact cleanup. Use
+`git worktree remove` for registered worktrees, not directory deletion or
+wildcard cleanup; `git worktree prune` only removes stale Git administrative
+records and is not a substitute for task cleanup.
