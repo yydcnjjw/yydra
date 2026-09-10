@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # GitHub development workflow
 
-Status: active — 2026-09-09. The maintainer confirmed the complete workflow and
-authorized its GitHub ruleset configuration. The rules were applied and verified
-on that date; repository configuration remains subject to later authorized changes.
+Status: active — 2026-09-10. [ADR 0006](../adr/0006-limit-repository-ci-to-cli-build-and-tests.md)
+amends the CI requirement to CLI build/tests plus DCO. The original ruleset was
+applied and verified on 2026-09-09; replacing its old required checks is pending
+an authorized GitHub integration of this change. Recheck live configuration.
 
 ## Scope and responsibilities
 
@@ -44,7 +45,7 @@ existing synchronization, build isolation, cache reuse, and cleanup rules.
 Follow the [commit conventions](commits.md) for logical commit boundaries,
 English Conventional Commits, cryptographic signatures, and DCO sign-offs.
 Select local checks under the [local development workflow](development-workflow.md).
-Local completion does not claim that the PR has passed complete CI or merged.
+Local completion does not claim that the PR has passed required CI or merged.
 
 ## Open and review the PR
 
@@ -99,35 +100,34 @@ that record, validate affected behavior, and verify new signatures and CI
 results for the updated candidate. Authorization for earlier work does not
 cover unrelated scope added later.
 
-## Require complete CI before merging
+## Require CLI CI and DCO before merging
 
-Both DCO and the complete existing quality workflow must finish successfully
-before any PR merges, including a documentation-only PR. Local selected checks
-do not replace this gate. The required jobs are:
+Both DCO and the CLI build/test workflow must finish successfully before any
+PR merges, including a documentation-only PR. Local selected checks do not
+replace this gate. The required jobs are:
 
 | Workflow | Required job name |
 | --- | --- |
 | DCO | `Every submitted commit is signed off` |
-| Yydra Mechanical Quality Contract | `Build the exact Distribution executor once` |
-| Yydra Mechanical Quality Contract | `Complete clean evidence` |
-| Yydra Mechanical Quality Contract | `Complete reading-queue evidence` |
-| Yydra Mechanical Quality Contract | `Aggregate clean and Reading Queue conformance` |
+| Yydra CLI CI | `Build and test yydra-cli` |
 
 Inspect results for the current PR candidate. A missing, pending, cancelled,
 failed, skipped, or neutral job does not establish the required successful run.
 GitHub's required-status-check mechanism can accept skipped or neutral results;
-the merge operator must still require actual success from all five jobs.
-Requiring the executor and both fixture jobs as well as the aggregate prevents
-a skipped aggregate from hiding a failed prerequisite in the current workflow.
+the merge operator must still require actual success from both jobs.
 
 If a check fails, fix the cause or verify a successful rerun after resolving an
 execution problem. An infrastructure failure remains a failure. Do not bypass
 the gate because local checks passed, the change is small, or the merge was
 already authorized. Report any remaining failure or waiting state accurately.
 
-Keep the existing CI triggers and complete check graph. Local Android selection
-still follows the changed behavior; PR CI runs its existing full validation.
-This deliberately accepts waiting for complete CI on routine PRs.
+CLI CI builds the release CLI and runs its default unit and command-behavior
+tests on Ubuntu with rolling Rust nightly. Real consumer integration tests are
+retained for explicit invocation under the [local validation workflow](development-workflow.md).
+PRs, pushes to `main`, and manual runs keep the same CI scope. This narrows
+routine CI coverage; it no longer runs clean/Reading Queue complete checks or
+aggregates Product Workspace Conformance Evidence. Release validation retains
+its full requirements, including Android.
 
 ## Merge and finish
 
@@ -161,20 +161,31 @@ automatically establish release readiness.
 
 ## GitHub enforcement
 
-The active [`main` ruleset](https://github.com/yydcnjjw/yydra/rules/22613063)
+The [`main` ruleset](https://github.com/yydcnjjw/yydra/rules/22613063)
 prohibits deletion and non-fast-forward updates, requires linear history and
-verified signatures, and has an empty bypass list. It also requires:
+verified signatures, and has an empty bypass list. The required configuration is:
 
 - A pull-request requirement with zero required GitHub approving reviews. The
   maintainer's task-level review and merge authorization remain required.
-- Required status checks for all five jobs above, from the GitHub Actions app
+- Required status checks for both jobs above, from the GitHub Actions app
   (integration ID `15368`). Keep job names aligned with the actual workflows.
+
+The previous configuration required DCO plus four complete-quality jobs:
+`Build the exact Distribution executor once`, `Complete clean evidence`,
+`Complete reading-queue evidence`, and
+`Aggregate clean and Reading Queue conformance`. Before integrating this CI
+change, replace those four quality requirements with `Build and test yydra-cli`
+in a scoped, authorized ruleset update. Retain DCO, its Actions app identity,
+and all other rules. Verify the reviewed candidate's new CLI and DCO jobs,
+then read back the ruleset before merge. Do not leave obsolete missing checks
+as requirements or treat removal of a requirement as a successful test.
+This document records the intended configuration; it does not establish that
+the remote update has already happened.
 
 The selected status-check mode (`strict_required_status_checks_policy: false`)
 does not require a branch to be up to date with `main` merely because another
 PR merged. It retains the worktree workflow's synchronization when needed and
-avoids automatic repeated
-full builds. This accepts that successful checks may predate the newest `main`
+avoids automatic repeated CI runs. This accepts that successful checks may predate the newest `main`
 combination. Strict mode would instead require updating and revalidating before
 merge when the base advances.
 

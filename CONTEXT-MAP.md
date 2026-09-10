@@ -16,7 +16,8 @@
 - [Simplify API generation](./docs/adr/0002-simplify-api-generation.md): accepted; sequential generation, narrower entrypoint checks, disposable build outputs, and current-version-only validation; implemented in Distribution 0.3.0 and locally verified
 - [Use the rolling Rust nightly channel](./docs/adr/0003-use-rolling-rust-nightly.md): accepted; nightly-only support for repository, CI, and new Workspaces; no stable MSRV declaration, actual per-run versions, and mixed-nightly aggregation; implemented in Distribution 0.5.0 and locally verified
 - [Provide reusable API generation through yydra-build](./docs/adr/0004-provide-yydra-build.md): accepted; complete generation library, dedicated product api-build crate, and public build entrypoint; default backend/H5 with explicit Android; implemented in Distribution 0.4.0 and locally verified
-- [Select local development validation by change](./docs/adr/0005-select-local-validation-by-change.md): accepted; active local agent workflow with Android triggered by native or build-chain changes; complete validation before release and existing CI retained
+- [Select local development validation by change](./docs/adr/0005-select-local-validation-by-change.md): accepted; active local agent workflow with Android triggered by native or build-chain changes; complete validation before release; CI subsequently amended by ADR 0006
+- [Limit repository CI to CLI build and tests](./docs/adr/0006-limit-repository-ci-to-cli-build-and-tests.md): accepted; CLI build and command-behavior tests with independent DCO; implemented and locally verified; remote required-check migration pending
 
 ## Historical research
 

@@ -580,6 +580,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires npm against a real Product Workspace"]
 fn fresh_workspace_selects_its_locked_npm_registry_without_user_configuration() {
     let sandbox = tempdir().expect("create registry sandbox");
     let workspace = sandbox.path().join("registry-reader");
@@ -1494,6 +1495,7 @@ fn dev_backend_spawn_failure_uses_the_stable_diagnostic_contract() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node to execute the consumer H5 runner"]
 fn production_h5_runner_serves_real_exports_without_source_maps_and_preserves_failures() {
     let sandbox = tempdir().expect("create H5 export sandbox");
     let workspace = sandbox.path().join("h5-export-reader");
@@ -1579,6 +1581,7 @@ writeFileSync(join(root, 'index.html'), '<script src="/_expo/static/js/web/entry
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node to execute the consumer H5 runner"]
 fn production_h5_runner_signal_terminates_export_process_group() {
     if !Command::new("node")
         .arg("--version")
