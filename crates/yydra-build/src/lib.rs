@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -88,23 +86,23 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
     fs::create_dir_all(output)
         .with_context(|| format!("API_OUTPUT_PREPARE_FAILED: create '{}'", output.display()))?;
     let config = root.join("orval.config.mjs");
+    let npm = npm_program();
     run_generation_command(
-        root,
-        npm_program(),
-        &[
-            OsStr::new("exec"),
-            OsStr::new("--offline"),
-            OsStr::new("--"),
-            OsStr::new("orval"),
-            OsStr::new("--config"),
-            config.as_os_str(),
-            OsStr::new("--clean"),
-            OsStr::new("--fail-on-warnings"),
-        ],
-        &[
-            ("YYDRA_OPENAPI_INPUT", openapi.as_os_str()),
-            ("YYDRA_GENERATED_API_OUTPUT", output.as_os_str()),
-        ],
+        npm,
+        duct::cmd!(
+            npm,
+            "exec",
+            "--offline",
+            "--",
+            "orval",
+            "--config",
+            config,
+            "--clean",
+            "--fail-on-warnings"
+        )
+        .dir(root)
+        .env("YYDRA_OPENAPI_INPUT", openapi)
+        .env("YYDRA_GENERATED_API_OUTPUT", output),
         "API_CLIENT_GENERATION_FAILED",
     )?;
     let tsconfig = output
@@ -133,17 +131,8 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
     fs::write(&tsconfig, config)
         .context("API_CLIENT_TYPECHECK_FAILED: write generated-client tsconfig")?;
     run_generation_command(
-        root,
-        npm_program(),
-        &[
-            OsStr::new("exec"),
-            OsStr::new("--offline"),
-            OsStr::new("--"),
-            OsStr::new("tsc"),
-            OsStr::new("--project"),
-            tsconfig.as_os_str(),
-        ],
-        &[],
+        npm,
+        duct::cmd!(npm, "exec", "--offline", "--", "tsc", "--project", tsconfig).dir(root),
         "API_CLIENT_TYPECHECK_FAILED",
     )
 }
@@ -165,18 +154,13 @@ fn validate_generator_version(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_generation_command(
-    directory: &Path,
-    program: &str,
-    arguments: &[&OsStr],
-    environment: &[(&str, &OsStr)],
-    code: &str,
-) -> Result<()> {
-    let output = Command::new(program)
-        .args(arguments)
-        .envs(environment.iter().copied())
-        .current_dir(directory)
-        .output()
+fn run_generation_command(program: &str, command: duct::Expression, code: &str) -> Result<()> {
+    let output = command
+        .stdin_null()
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked()
+        .run()
         .with_context(|| format!("{code}: start {program}"))?;
     if output.status.success() {
         return Ok(());
