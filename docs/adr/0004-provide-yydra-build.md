@@ -147,5 +147,5 @@ files without maintaining a separate hash ledger.
 The independently packaged helper and CLI passed fresh Product Workspace
 acceptance, including default backend/H5, explicit Android, Cargo incremental
 and recovery behavior, and the complete 29-node quality contract. See the
-[validation record](../validation/2026-09-09-yydra-build.md) for package identities,
+[validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-09-Yydra-Build/6a878e624ef5fba3d3069e3daf38a7169d798982) for package identities,
 test results, review fixes, retained evidence, and the local acceptance boundary.

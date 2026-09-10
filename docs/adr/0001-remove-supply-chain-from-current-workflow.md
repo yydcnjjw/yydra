@@ -14,7 +14,7 @@ The maintainer selected both recommended scope boundaries with “按推荐” a
 confirmed the complete shared understanding with “确认共同理解”. The scope and
 acceptance conditions are accepted. Local implementation and verification for
 Distribution `0.2.0` are complete; see the
-[validation record](../validation/2026-09-08-supply-chain-removal.md).
+[validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-08-Supply-Chain-Removal/6a878e624ef5fba3d3069e3daf38a7169d798982).
 The decision session changed local domain documentation only. The maintainer
 subsequently invoked `/implement`, authorizing implementation and a local commit
 under this scope. GitHub publication and historical release/evidence changes remain
@@ -201,3 +201,11 @@ separate scope and compatibility design. The original documentation-only session
 tracker-publishing workflows. The subsequent `/implement` invocation is the
 authority for local implementation and commit. Publication of
 a future Distribution is also outside this implementation acceptance scope.
+
+## Subsequent documentation storage
+
+[ADR 0007](0007-store-research-and-validation-in-wiki.md), accepted on
+2026-09-10, moves the historical research and validation collection to the
+Wiki while retaining its original claims and code-repository history. It
+changes the storage location, not the outcomes or raw evidence described
+by this decision.

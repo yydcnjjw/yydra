@@ -14,10 +14,26 @@ How the engineering skills should consume this repo's domain documentation when 
 
 If these files do not exist yet, proceed silently. `/domain-modeling` creates them lazily as terms and decisions are resolved.
 
-When consulting `docs/research/`, start with its [research index](../research/README.md).
-These dated notes preserve earlier facts, alternatives, and recommendations.
-Use the index's subsequent decision and implementation pointers to establish the
-applicable contract; a research recommendation alone does not establish one.
+Research and standalone validation records live in the
+[Yydra Wiki](https://github.com/yydcnjjw/yydra/wiki/Home), under
+[ADR 0007](../adr/0007-store-research-and-validation-in-wiki.md).
+When consulting research, start with its
+[index](https://github.com/yydcnjjw/yydra/wiki/Research-Index). These dated notes
+preserve earlier facts, alternatives, and recommendations. Use their subsequent
+decision and implementation pointers to establish the applicable contract;
+a research recommendation alone does not establish one.
+
+Write new research and standalone validation records in the Wiki. Keep current
+ADRs, context definitions, agent workflows, and necessary references in this
+repository. Do not recreate local copies of the Wiki collection or an automatic
+sync. A task or PR can summarize its work without creating a separate Wiki page
+for every routine check.
+
+Preserve the original outcomes of date/version-specific validation records.
+Identify subsequent corrections separately with their date and reason. ADR
+evidence citations must identify a fixed Wiki revision; ordinary navigation can
+link to the current page. Editing or publishing the Wiki follows the task's
+authorization and does not amend the code repository's PR or validation rules.
 
 ## File structure
 
