@@ -1,11 +1,10 @@
 ---
+# SPDX-License-Identifier: MIT OR Apache-2.0
 name: yydra-merge-mr
 description: Merge a GitHub pull request in yydcnjjw/yydra, verify the result, and finish its worktree, branch, and disposable-artifact cleanup. Use for Yydra requests such as 合并 MR, merge this PR, or resuming an authorized merge and cleanup. Applies only to the Yydra repository.
 ---
 
 # Yydra merge and task cleanup
-
-<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 
 Carry one authorized Yydra merge through to verified task cleanup. MR means a
 GitHub pull request here. Use the installed `gh` CLI and Git.
