@@ -111,6 +111,15 @@ fn failed_generation_can_be_rebuilt_without_recovery_and_preserves_other_build_o
         .output()
         .unwrap();
     assert!(!failed.status.success());
+    let diagnostics = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        diagnostics.contains("API_CLIENT_GENERATION_FAILED: npm exited with 7"),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("generator stdout | generator stderr"),
+        "{diagnostics}"
+    );
     assert!(
         !fixture
             .root
@@ -347,7 +356,11 @@ if [ -n "$YYDRA_GENERATED_API_OUTPUT" ]; then
   /bin/mkdir -p "$YYDRA_GENERATED_API_OUTPUT"
   /bin/cp -R "$YYDRA_FAKE_CLIENT/." "$YYDRA_GENERATED_API_OUTPUT/"
   echo generated >> "$YYDRA_FAKE_GENERATIONS"
-  if [ -n "$YYDRA_FAKE_FAIL" ]; then exit 7; fi
+  if [ -n "$YYDRA_FAKE_FAIL" ]; then
+    echo 'generator stdout'
+    echo 'generator stderr' >&2
+    exit 7
+  fi
 fi
 "#,
         );
