@@ -3,7 +3,8 @@
 
 Status: active — 2026-09-10. The 2026-09-09 worktree workflow is amended by
 the confirmed task-artifact cleanup decision, including outputs outside the
-worktree. Linked from the contributor and agent guidance.
+worktree, and the merge-request default that includes verified task cleanup.
+Linked from the contributor and agent guidance.
 
 ## Scope and task boundaries
 
@@ -205,6 +206,13 @@ does not by itself authorize merging it or deleting its branch and worktree.
 
 ## Clean up an authorized merged task
 
+A user request to merge a specific PR includes this post-merge cleanup for that
+task, unless the user asks to retain its worktree, branch, or particular
+artifacts. Apply the same scope when resuming that merge request after the PR
+has already merged. Explicit retention and narrower task instructions take
+precedence. Skill selection, a status query, or a request to create a PR does
+not supply merge or cleanup authorization.
+
 When the task already authorizes cleanup after merge, carry out the following
 checks and cleanup without another permission round. Scope cleanup to that
 task's exact worktree, local/remote branch, and registered disposable artifacts,
@@ -260,12 +268,15 @@ the reviewed inventory available in the task report before removing the worktree
 that contains it. Temporary cleanup scripts and inventories created outside the
 worktree are themselves disposable entries and must also be accounted for.
 Do not use wildcard deletion across `~/.cache`, `/tmp`, or other shared roots.
-For the ordinary ancestry-preserving case:
+For the ordinary ancestry-preserving case, set `remote_task_head` to the
+surviving remote task branch's inspected commit SHA after proving it contains
+no additional work. The deletion lease must use that explicit SHA; if the
+remote branch moves, preserve it and report the changed state:
 
 ```sh
 git worktree remove "$worktree_dir"
 git branch -d "$task_branch"
-git push origin --delete "$task_branch"
+git push --force-with-lease="refs/heads/$task_branch:$remote_task_head" origin ":refs/heads/$task_branch"
 git worktree list --porcelain
 git status --short --branch
 git branch --list "$task_branch"

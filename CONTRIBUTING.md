@@ -19,9 +19,10 @@ local completion, PR handoff, and cleanup within the task's authorization.
 Follow the [GitHub development workflow](docs/agents/github-workflow.md) for the
 PR, review, and merge policy. Every change to `main` goes through a PR,
 including documentation and small fixes. Require DCO and CLI build/test CI success
-before an authorized merge and use Squash and merge by default. Local validation,
-PR merge, cleanup, and Distribution publication have distinct completion and
-authorization requirements.
+before an authorized merge and use Squash and merge by default. A request to
+merge a specific PR includes its verified task cleanup unless retention is
+requested. Local completion, PR merge, and cleanup remain distinct reported
+states; Distribution publication requires its own authorization.
 
 Write PR bodies in English using the [PR template](.github/pull_request_template.md):
 `Motivation`, `Solution`, `Validation`, and `User impact and compatibility` are
