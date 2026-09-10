@@ -25,6 +25,8 @@ Follow `docs/agents/worktree-workflow.md` for task isolation, creation, synchron
 
 Follow `docs/agents/github-workflow.md`: all changes enter `main` through a PR, with DCO and CLI build/test CI successful before an authorized merge, and Squash and merge as the default. Preserve the worktree workflow's local completion and external-action authorization boundaries.
 
+Use the project skill at `.agents/skills/yydra-merge-mr/SKILL.md` for requests to merge a Yydra PR. A request to merge a specific PR includes that task's verified post-merge worktree, branch, and disposable-artifact cleanup unless the user asks to retain them. Continue through cleanup without another prompt; preserve and report additional work or unresolved ownership. Creating a PR alone does not authorize merge or cleanup.
+
 ### Local development workflow
 
 Follow `docs/agents/development-workflow.md` when selecting local validation and reporting task completion. Select checks by changed behavior; require Android builds for native or Android build-chain changes and full validation before release. Honor explicit task-specific acceptance conditions.

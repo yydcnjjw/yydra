@@ -23,8 +23,10 @@ approve the maintainer's own PR.
 The default development endpoint and external-action authorization remain those
 of the [worktree workflow](worktree-workflow.md): reviewed, validated,
 cryptographically signed local commits with author-matching DCO sign-offs.
-Push, PR creation, merge, publication, and cleanup follow the task's explicit
-authorization. Continue within authorization already given without asking again.
+Push, PR creation, merge, and publication follow the task's explicit
+authorization. A request to merge a specific PR includes its verified
+post-merge task cleanup unless the user asks to retain the task or particular
+artifacts. Continue within authorization already given without asking again.
 A request to create a PR does not by itself authorize merging or cleanup.
 Issue writes also follow the task's authorization, including automatic closure
 through PR keywords. Existing authorization does not need to be requested again.
@@ -152,9 +154,23 @@ ancestry alone to judge a squash merge. Confirm linked implementation Issues
 are complete before closing them; parent or tracking Issues may still have
 other acceptance conditions.
 
-Apply the worktree workflow's integration and ownership checks before any
-authorized branch or worktree cleanup. Retain the task when cleanup is not
-authorized or additional work remains. PR merge and cleanup do not authorize
+Use the project-local [yydra-merge-mr skill](../../.agents/skills/yydra-merge-mr/SKILL.md)
+to carry a merge request through verification and cleanup. Here, MR means a
+GitHub pull request in `yydcnjjw/yydra`. Loading the skill, inspecting a PR,
+and creating a PR do not themselves authorize merging it.
+
+After an authorized merge, continue directly through the worktree workflow's
+integration, ownership, and cleanup checks. Remove only that task's worktree,
+local/remote branch, and registered disposable artifacts, including external
+ones. Honor explicit retention requests. Preserve and report additional work,
+unresolved ownership, or failed cleanup steps without repeating the general
+cleanup-permission question. Report merge and cleanup outcomes separately.
+
+This is task execution, not a background monitor. If the user merges on GitHub
+while the task is inactive, inspect the PR when the original task resumes;
+continue any previously authorized cleanup. An already merged PR does not need
+another merge attempt, and verified absence of a cleanup target is successful
+completion for that target. PR merge and cleanup do not authorize
 publication. A Distribution release still requires its existing candidate-specific
 complete validation and publication authorization; a PR check result does not
 automatically establish release readiness.
