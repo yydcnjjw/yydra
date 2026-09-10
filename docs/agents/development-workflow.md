@@ -1,14 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Local development workflow
 
-Status: active — 2026-09-09.
+Status: active — 2026-09-10.
 Decision: [ADR 0005](../adr/0005-select-local-validation-by-change.md).
 
 This workflow applies to agents developing the Yydra repository locally.
-It selects validation for a development task. CI and the Product Workspace
-Mechanical Quality Contract keep their existing requirements. An explicitly
-agreed task-specific acceptance condition still applies; this default does not
-silently amend an existing task or ADR requiring full validation.
+It selects validation for a development task. Repository CI separately builds
+and tests the CLI under [ADR 0006](../adr/0006-limit-repository-ci-to-cli-build-and-tests.md).
+The Product Workspace Mechanical Quality Contract retains its requirements.
+An explicitly agreed task-specific acceptance condition still applies; this
+default does not silently amend an existing task or ADR requiring full validation.
 
 Use the [worktree development workflow](worktree-workflow.md) for task
 isolation, creation, synchronization, local commits, handoff, and authorized
@@ -40,6 +41,35 @@ Judge the actual change and affected dependency graph. An edit to
 `check_graph.rs` does not automatically affect Android, and a frontend lockfile
 edit must be inspected for changes to native dependencies or build tooling.
 A Rust-only dependency or formatter change is not itself an Android trigger.
+
+## Run repository CLI tests
+
+The default CLI suite runs unit tests and command-behavior regressions:
+
+```console
+cargo test --locked --package yydra-cli --all-targets
+```
+
+Tests using real consumer dependencies, compilation, Node/npm, databases,
+browsers, or native tooling carry descriptive `#[ignore = "requires …"]`
+annotations (newly classified tests use the `consumer integration:` prefix).
+They remain in the suite and must be explicitly selected when the change
+requires that coverage. Inspect each annotation and test's setup; some fixtures
+use offline Cargo operations and need their consumer dependencies fetched first.
+
+For example, after preparing the required Node/npm versions and Cargo caches:
+
+```console
+cargo test --locked --package yydra-cli --test api_generation -- --ignored
+cargo test --locked --package yydra-cli --test packaged_consumer -- --ignored
+```
+
+Use `--test <target> <test-name> -- --ignored` for a particular integration test.
+`cargo test --locked --package yydra-cli --all-targets -- --include-ignored`
+requests the complete Rust test collection, including real consumer acceptance;
+it requires the corresponding tools, caches, Docker image, and browser setup.
+An ignored test is unrun, not passing. Neither the default CLI suite nor the
+complete Rust collection replaces candidate-specific aggregate release evidence.
 
 ## Use the existing focused check entrypoint
 
@@ -96,13 +126,13 @@ triggered, say that it was not run under the change scope. A selected check resu
 Conformance Evidence or relabel an unrun node as passing.
 
 The [GitHub development workflow](github-workflow.md) adds the separate PR merge
-gate: DCO and the existing complete quality CI must succeed before merging.
+gate: DCO and CLI build/test CI must succeed before merging.
 Local completion, including a documentation-only task that did not trigger
 Android locally, does not waive that gate or authorize external actions.
 
 Before publishing a Distribution, require the existing complete clean and
 Reading Queue validation and aggregate evidence for the release candidate,
 including Android. A local version bump or package test is not by itself a
-publication step. Keep existing CI unchanged, and respect any stronger
-explicit acceptance conditions of the current task. Validation does not
-authorize publication.
+publication step. CLI CI does not supply this complete release evidence.
+Respect any stronger explicit acceptance conditions of the current task.
+Validation does not authorize publication.

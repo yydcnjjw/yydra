@@ -128,13 +128,24 @@ nodes do not retry; infrastructure establishment may retry once and records
 both attempts. Add `--message-format=json` before the subcommand for versioned
 JSON Lines diagnostics.
 
-CI builds and uploads one exact executor, then uses those same bytes to create
-independent clean and Reading Queue Workspaces. The Distribution validates
-`clean` as `Clean Product` / `clean-product` / `Apache-2.0` and
-`reading-queue` as `Reading Queue` / `reading-queue` / `Apache-2.0` from each
-Workspace Origin Record; `--fixture` is not a caller-trusted label. CI uploads
-the entire evidence trees, including hidden files, before that executor can grant
-aggregate conformance:
+Repository CI builds `yydra-cli` and runs its default unit and command-behavior
+tests; DCO is a separate required check. Consumer integration tests are retained
+with explicit ignore reasons. After preparing the required tools and caches,
+select them with:
+
+```console
+cargo test --locked --package yydra-cli --test <target> <test-name> -- --ignored
+```
+
+CLI CI does not establish complete Product Workspace conformance.
+
+Release validation uses one exact executor to create and check independent clean
+and Reading Queue Workspaces. The Distribution validates `clean` as
+`Clean Product` / `clean-product` / `Apache-2.0` and `reading-queue` as
+`Reading Queue` / `reading-queue` / `Apache-2.0` from each Workspace Origin
+Record; `--fixture` is not a caller-trusted label. Retain both entire evidence
+trees, including hidden files, before that same executor grants aggregate
+conformance:
 
 ```console
 yydra check ./clean --fixture clean --evidence-dir /external/clean-evidence

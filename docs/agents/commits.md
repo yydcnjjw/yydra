@@ -29,7 +29,7 @@ Enforce the convention through contributor guidance, agent instructions,
 and review. This policy adds no commit-message CI job or local hook and does not
 configure automated versioning or releases. The separate
 [GitHub development workflow](github-workflow.md) selects Squash and merge as
-the default and defines PR review and complete-CI requirements. Its squash
+the default and defines PR review and required-CI requirements. Its squash
 commit still needs a compliant message, verified signature, and author-matching
 DCO sign-off. The merge-subject exception above remains relevant to signed
 integration commits on task branches.

@@ -11,6 +11,7 @@ use serde_json::json;
 use tempfile::{TempDir, tempdir};
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn generates_rebuildable_outputs_in_the_configured_cargo_target_directory() {
     let fixture = Fixture::new();
     let output = fixture.generate().output().expect("generate API");
@@ -29,6 +30,7 @@ fn generates_rebuildable_outputs_in_the_configured_cargo_target_directory() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn creates_only_authored_api_inputs_and_generates_without_full_workspace_identity() {
     let fixture = Fixture::new();
     for relative in [
@@ -62,6 +64,7 @@ fn creates_only_authored_api_inputs_and_generates_without_full_workspace_identit
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn frontend_resolves_the_generated_package_after_build_output_cleanup() {
     let fixture = Fixture::new();
     let lock = fixture.root.join("Cargo.lock");
@@ -96,6 +99,7 @@ fn frontend_resolves_the_generated_package_after_build_output_cleanup() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn failed_generation_can_be_rebuilt_without_recovery_and_preserves_other_build_outputs() {
     let fixture = Fixture::new();
     fs::create_dir_all(&fixture.target).unwrap();
@@ -122,6 +126,7 @@ fn failed_generation_can_be_rebuilt_without_recovery_and_preserves_other_build_o
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn sequential_workspaces_sharing_a_cargo_cache_keep_their_own_generated_clients() {
     let first = Fixture::new();
     assert_success(&first.generate().output().unwrap());
@@ -139,6 +144,7 @@ fn sequential_workspaces_sharing_a_cargo_cache_keep_their_own_generated_clients(
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn rejects_invalid_current_schema_client_and_generator_version() {
     for (relative, contents, code) in [
         ("fixture.json", "{}", "API_OPENAPI_PROFILE_INVALID"),
@@ -166,6 +172,7 @@ fn rejects_invalid_current_schema_client_and_generator_version() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn frontend_entrypoint_stops_on_generation_failure_and_runs_after_repair() {
     let fixture = Fixture::new();
     assert_success(&fixture.generate().output().unwrap());
@@ -404,6 +411,7 @@ fn walk_api_output(root: &Path) -> PathBuf {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compilation of the consumer api-build crate"]
 fn unchanged_inputs_reuse_generation_and_missing_frontend_links_are_restored() {
     let fixture = Fixture::new();
     assert_success(&fixture.generate().output().unwrap());

@@ -41,3 +41,10 @@ identifies the retained local manifest. In that run, `android.release` took
 2,178,409 ms out of 2,554,302 ms summed across all check nodes (85.3%). Other
 nodes summed to 375,893 ms. These are observations from one completed run,
 not a future latency guarantee or the total development-session duration.
+
+## Subsequent CI amendment
+
+[ADR 0006](0006-limit-repository-ci-to-cli-build-and-tests.md), accepted on
+2026-09-10, separately narrows repository CI to CLI build/tests plus DCO.
+The original decision above retained the then-current CI; its local validation
+selection and complete release-validation requirements continue to apply.

@@ -23,7 +23,7 @@ Follow `docs/agents/worktree-workflow.md` for task isolation, creation, synchron
 
 ### GitHub development workflow
 
-Follow `docs/agents/github-workflow.md`: all changes enter `main` through a PR, with DCO and complete CI successful before an authorized merge, and Squash and merge as the default. Preserve the worktree workflow's local completion and external-action authorization boundaries.
+Follow `docs/agents/github-workflow.md`: all changes enter `main` through a PR, with DCO and CLI build/test CI successful before an authorized merge, and Squash and merge as the default. Preserve the worktree workflow's local completion and external-action authorization boundaries.
 
 ### Local development workflow
 

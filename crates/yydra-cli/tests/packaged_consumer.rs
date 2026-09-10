@@ -7,6 +7,7 @@ use std::process::Command;
 use tempfile::tempdir;
 
 #[test]
+#[ignore = "consumer integration: requires CLI package/install, Node/npm, and cached consumer Cargo dependencies"]
 fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() {
     let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let sandbox = tempdir().expect("create packaged-consumer sandbox");

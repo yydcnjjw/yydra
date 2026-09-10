@@ -242,6 +242,7 @@ fn check_with_path(
 }
 
 #[test]
+#[ignore = "consumer integration: requires compiling and testing the consumer Rust workspace"]
 fn server_release_builds_the_exact_locked_product_binary_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("server-release-reader");
@@ -574,6 +575,7 @@ fn database_runtime_invariant_failure_is_discriminating_and_read_only() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and compiling/testing the consumer Rust workspace"]
 fn post_commit_executor_node_rejects_behavior_and_missing_tests_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("post-commit-executor-reader");
@@ -1306,42 +1308,42 @@ fn aggregate_does_not_emit_success_before_its_manifest_is_durable() {
 }
 
 #[test]
-fn github_quality_workflow_executes_the_distribution_graph_and_aggregates_uploaded_evidence() {
+fn github_ci_builds_and_tests_only_the_cli() {
     let workflow_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/quality.yml");
     if !workflow_path.is_file() {
         return;
     }
-    let workflow = fs::read_to_string(workflow_path).expect("read quality workflow");
-    assert!(workflow.contains("fixture: [clean, reading-queue]"));
-    assert!(workflow.contains("--fixture \"$FIXTURE\""));
-    assert_eq!(workflow.matches("--aggregate-evidence").count(), 2);
-    assert!(workflow.contains("name: quality-clean"));
-    assert!(workflow.contains("name: quality-reading-queue"));
-    assert!(workflow.contains("name: quality-aggregate"));
-    assert_eq!(workflow.matches("name: quality-executor").count(), 3);
-    assert!(workflow.contains("${{ runner.temp }}/executor/yydra"));
-    assert!(workflow.contains("if: ${{ always() && needs.executor.result == 'success' }}"));
-    assert_eq!(workflow.matches("include-hidden-files: true").count(), 2);
-    assert_eq!(workflow.matches("continue-on-error: true").count(), 2);
-    for mutable_action_tag in [
-        "actions/checkout@v",
-        "actions/setup-node@v",
-        "actions/setup-java@v",
-        "actions/upload-artifact@v",
-        "actions/download-artifact@v",
+    let workflow = fs::read_to_string(workflow_path).expect("read CLI workflow");
+    assert!(workflow.contains("name: Yydra CLI CI"));
+    assert!(workflow.contains("name: Build and test yydra-cli"));
+    for required in [
+        "pull_request:",
+        "push:",
+        "branches: [main]",
+        "workflow_dispatch:",
+        "cargo build --locked --release --package yydra-cli",
+        "cargo test --locked --package yydra-cli --all-targets",
     ] {
         assert!(
-            !workflow.contains(mutable_action_tag),
-            "quality workflow must pin {mutable_action_tag} by full commit SHA"
+            workflow.contains(required),
+            "missing CLI CI requirement: {required}"
         );
     }
-    for duplicate_semantic_authority in ["cargo test", "cargo clippy", "npm test", "gradlew"] {
+    for consumer_command in [
+        "--fixture",
+        "--aggregate-evidence",
+        "--include-ignored",
+        "--ignored",
+        "npm ",
+        "gradlew",
+    ] {
         assert!(
-            !workflow.contains(duplicate_semantic_authority),
-            "CI must execute yydra check instead of duplicating {duplicate_semantic_authority}"
+            !workflow.contains(consumer_command),
+            "consumer acceptance is outside CLI CI: {consumer_command}"
         );
     }
+    assert!(!workflow.contains("actions/checkout@v"));
 }
 
 #[test]
@@ -1757,6 +1759,7 @@ fn aggregate_rejects_stable_missing_and_incomplete_rust_observations() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires resolving the real consumer Cargo dependency graph"]
 fn rust_architecture_retains_actual_nightly_build_identities() {
     let sandbox = tempdir().unwrap();
     let workspace = sandbox.path().join("nightly-observation");
@@ -1868,6 +1871,7 @@ fn exact_rust_and_frontend_tool_authorities_fail_with_stable_diagnostics() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm to install and lint the consumer frontend"]
 fn frontend_lint_accepts_commonjs_plugin_but_rejects_undefined_globals_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("commonjs-plugin-reader");
@@ -1906,6 +1910,7 @@ fn frontend_lint_accepts_commonjs_plugin_but_rejects_undefined_globals_read_only
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn distribution_owned_typecheck_cannot_be_bypassed_by_a_product_script() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("typecheck-reader");
@@ -1934,6 +1939,7 @@ fn distribution_owned_typecheck_cannot_be_bypassed_by_a_product_script() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn distribution_owned_frontend_test_executes_tsx_tests() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("tsx-test-reader");
@@ -1963,6 +1969,7 @@ test("tsx presentation fixture is executed", () => {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn distribution_owned_frontend_test_resolves_committed_native_compatibility_aliases() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("frontend-positive-reader");
@@ -1982,6 +1989,7 @@ fn distribution_owned_frontend_test_resolves_committed_native_compatibility_alia
 }
 
 #[test]
+#[ignore = "consumer integration: requires resolving the real consumer Cargo dependency graph"]
 fn stale_cargo_lock_fails_before_metadata_can_rewrite_the_scratch_copy() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("lock-reader");
@@ -2113,6 +2121,7 @@ fn generated_snapshot_drift_is_reported_by_its_own_node() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn api_generated_contract_node_rejects_invalid_client_without_changing_authored_inputs() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("api-drift-reader");
@@ -2154,6 +2163,7 @@ fn api_generated_contract_node_rejects_invalid_client_without_changing_authored_
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn check_isolates_cargo_outputs_from_custom_project_target_directories() {
     for target in ["build", "."] {
         let sandbox = tempdir().expect("create sandbox");
@@ -2186,6 +2196,7 @@ fn check_isolates_cargo_outputs_from_custom_project_target_directories() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn api_runtime_conformance_reports_a_stable_failure_for_a_malformed_live_response() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("api-runtime-reader");
@@ -2217,6 +2228,7 @@ fn api_runtime_conformance_reports_a_stable_failure_for_a_malformed_live_respons
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn api_client_contract_rejects_a_multiline_direct_generated_import_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("api-import-reader");
@@ -2264,6 +2276,7 @@ fn api_client_contract_rejects_a_multiline_direct_generated_import_read_only() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires cached consumer Cargo dependencies to regenerate its lockfile"]
 fn architecture_rejects_forbidden_domain_dependencies_in_every_edge_class() {
     let cases = [
         ("normal", "\n[dependencies]\naxum.workspace = true\n"),
@@ -2337,6 +2350,7 @@ fn architecture_reports_a_stable_cycle_diagnostic() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires resolving the real consumer Cargo dependency graph"]
 fn architecture_does_not_confuse_a_product_owned_yydra_prefix_with_framework_internals() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("yydra-reader");
@@ -2389,6 +2403,7 @@ fn failed_prerequisites_skip_dependents_while_independent_nodes_continue() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires resolving the real consumer Cargo dependency graph"]
 fn selected_check_leaves_workspace_inputs_byte_for_byte_unchanged() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("readonly-reader");
@@ -2566,6 +2581,7 @@ fn unavailable_required_tool_is_infrastructure_error_not_semantic_failure() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm and consumer Rust/API builds"]
 fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
     let sandbox = tempdir().expect("create sandbox");
     let rust_workspace = sandbox.path().join("rust-zero-reader");
@@ -2670,6 +2686,7 @@ fn clean_workspace_passes_the_complete_core_real_runtime_contract() {
 }
 
 #[test]
+#[ignore = "consumer integration: requires Node/npm, consumer builds, Docker, and Playwright prerequisites"]
 fn accessibility_node_rejects_a_missing_product_semantics_spec_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("missing-accessibility-spec-reader");
@@ -2837,6 +2854,7 @@ fn h5_semantic_failure_is_discriminating_read_only_and_cleans_up() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_repeats_the_complete_inventory_and_is_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("native-reader");
@@ -2928,6 +2946,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_rejects_inventory_nondeterminism_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("nondeterministic-native-reader");
@@ -2998,6 +3017,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_inventory_includes_root_mode_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("root-mode-native-reader");
@@ -3075,6 +3095,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_rejects_authored_input_mutation_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("mutating-native-reader");
@@ -3129,6 +3150,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_rejects_missing_output_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("missing-native-reader");
@@ -3189,6 +3211,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_rejects_an_undeclared_config_plugin_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("undeclared-plugin-reader");
@@ -3257,6 +3280,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_generation_rejects_local_module_symlink_escape_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("symlink-plugin-reader");
@@ -3317,6 +3341,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_release_needs_only_the_apk_and_preserves_account_free_evidence_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("android-release-reader");
@@ -3472,6 +3497,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_release_rejects_gradle_failure_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("failing-android-release-reader");
@@ -3536,6 +3562,7 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "consumer integration: requires Node/npm and real consumer API prerequisites before the fake native tools"]
 fn android_release_rejects_missing_apk_read_only() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("missing-android-release-reader");
