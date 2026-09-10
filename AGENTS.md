@@ -19,7 +19,7 @@ Use a multi-context layout with a root `CONTEXT-MAP.md` pointing to context-loca
 
 ### Worktree development workflow
 
-Follow `docs/agents/worktree-workflow.md` for task isolation, creation, synchronization, handoff, and authorized cleanup. Put every change intended for a commit in a task worktree, defaulting to `.worktree/<slug>` and `codex/<slug>`. Reuse an existing tool-created task worktree when appropriate. Ordinary development ends with reviewed, validated, cryptographically signed local commits carrying DCO sign-offs; continue external actions within the current task's explicit authorization.
+Follow `docs/agents/worktree-workflow.md` for task isolation, creation, synchronization, handoff, and authorized cleanup. Put every change intended for a commit in a task worktree, defaulting to `.worktree/<slug>` and `codex/<slug>`. Reuse an existing tool-created task worktree when appropriate. Keep controllable temporary outputs in the task's `.task/tmp/` and maintain `.task/artifacts.md`, including task artifacts outside the worktree. Authorized task cleanup includes those registered artifacts while preserving shared caches and required evidence. Ordinary development ends with reviewed, validated, cryptographically signed local commits carrying DCO sign-offs; continue external actions within the current task's explicit authorization.
 
 ### GitHub development workflow
 

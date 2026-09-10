@@ -15,6 +15,15 @@ Use the [worktree development workflow](worktree-workflow.md) for task
 isolation, creation, synchronization, local commits, handoff, and authorized
 cleanup. Run the checks selected here against that task's candidate.
 
+Track validation outputs under the worktree workflow's
+[task artifact rules](worktree-workflow.md#track-task-artifacts-and-caches).
+Place controllable temporary outputs in `.task/tmp/` and register actual
+external paths in `.task/artifacts.md`, including tool-created files under
+`~/.cache` and `/tmp`. Preserve supported shared caches while distinguishing
+them from disposable consumer Workspaces, build outputs, and task-private
+caches. Record a reason and retention condition for evidence kept after the
+task; cleanup follows the inventory even when those files are outside Git.
+
 ## Select validation from the change
 
 Inspect the task, relevant domain documents, and current diff before selecting
