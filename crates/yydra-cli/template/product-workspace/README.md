@@ -180,6 +180,17 @@ client and an isolated no-retry `QueryClient` through the same Provider seam;
 tests do not mock Generated Client files, global Fetch, query hooks, or Query
 internals.
 
+The handwritten API facade and anonymous health client share request execution:
+HTTP(S) base URLs resolve from the origin (path, query, and fragment are removed),
+and each request has a ten-second default deadline covering credentials,
+transport, and response consumption. Caller cancellation remains `cancelled`,
+including during body reads; timeout remains `transport`. The runtime's existing
+transport-only query retry policy applies to timeouts too. Endpoint validation
+and credential policies remain separate: health accepts its existing JSON shape
+and ordinary HTTP failures, while generated API operations retain their exact
+status, media type, and Problem Details checks. Only generated API operations
+receive the configured credential headers.
+
 State ownership stays explicit: TanStack Query owns server state, Expo Router
 URLs own status/sort state, component state owns the short-lived create form,
 and Product Domain rules stay in Rust. No default persistent or global Product

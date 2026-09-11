@@ -12,7 +12,7 @@ import {
 } from "./runtime";
 describe("Framework Runtime health client", () => {
   it("reaches the configured service and accepts the real health shape", async () => {
-    const fetchImplementation = vi.fn(async () =>
+    const fetchImplementation = vi.fn<typeof fetch>(async () =>
       Response.json({ status: "ready", database: "baseline" }),
     );
     const client = createFrameworkClient(
@@ -24,9 +24,11 @@ describe("Framework Runtime health client", () => {
       status: "ready",
       database: "baseline",
     });
-    expect(fetchImplementation).toHaveBeenCalledWith(
+    expect(String(fetchImplementation.mock.calls[0][0])).toBe(
       "http://service.test/health",
-      { signal: undefined },
+    );
+    expect(fetchImplementation.mock.calls[0][1]?.signal).toBeInstanceOf(
+      AbortSignal,
     );
   });
 
