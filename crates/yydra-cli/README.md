@@ -61,7 +61,14 @@ version, compatibility resolver, upgrade path, or lifecycle, and their presence
 does not establish identical client activation, tools, permissions, behavior,
 Agent performance, Agent Eval success, or Skill effect.
 
-Continue only through supported commands:
+To build and run only the server and a persistent PostgreSQL database, enter the
+new Workspace and run `docker compose up --build --wait`. Its Dockerfile compiles
+inside Docker; this deployment path needs no host Rust, Node, or Yydra installation.
+See the generated README's **Run the server with Docker Compose** section for
+ports, data retention, credentials, updates, and image-only builds.
+
+For local development, start `docker compose -f compose.dev.yaml up -d --wait postgres`
+in the Workspace, then continue through the CLI commands:
 
 ```console
 yydra setup ./reader

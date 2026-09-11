@@ -69,6 +69,10 @@ _Avoid_: default Capability, common product feature
 An independently maintained product codebase initialized from a Yydra Distribution and owned by its product team thereafter.
 _Avoid_: generated project, template output
 
+**Product Server Image**:
+A Product Workspace's container image containing its backend server and the matching database migration program, built from the same product revision for independent deployment.
+_Avoid_: Yydra Distribution, Product Workspace, development container
+
 **Workspace Origin Record**:
 The committed, non-resolving record of the exact Yydra Distribution, template identity, and normalized non-secret inputs that created a Product Workspace.
 _Avoid_: dependency lockfile, upgrade manifest, template synchronization state

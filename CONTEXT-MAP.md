@@ -20,6 +20,8 @@
 - [Limit repository CI to CLI build and tests](./docs/adr/0006-limit-repository-ci-to-cli-build-and-tests.md): accepted; CLI build and command-behavior tests with independent DCO; implemented and locally verified; remote required-check migration pending
 - [Store research and validation in the Wiki](./docs/adr/0007-store-research-and-validation-in-wiki.md): accepted documentation-storage decision; current rules remain in this repository; Wiki published and independently verified
 
+- [Provide server containers with Compose](./docs/adr/0008-provide-server-containers-with-compose.md): accepted; Product-owned server image and persistent single-host Compose deployment, separate from the temporary development database
+
 ## Historical research and validation
 
 - [Wiki home](https://github.com/yydcnjjw/yydra/wiki/Home): research and dated validation records; current context and ADR authority remains above

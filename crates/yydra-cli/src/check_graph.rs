@@ -5136,7 +5136,7 @@ fn check_database_runtime_invariants(
     let mut derived = DerivedFiles::default();
     let compose_source = template_source_files()
         .into_iter()
-        .find_map(|(path, bytes)| (path == "compose.yaml").then_some(bytes))
+        .find_map(|(path, bytes)| (path == "compose.dev.yaml").then_some(bytes))
         .expect("packaged PostgreSQL Compose authority is embedded");
     let compose = derived.write(
         context.root,
@@ -5671,7 +5671,7 @@ fn run_h5_playwright(
     let mut derived = DerivedFiles::default();
     let compose_source = template_source_files()
         .into_iter()
-        .find_map(|(path, bytes)| (path == "compose.yaml").then_some(bytes))
+        .find_map(|(path, bytes)| (path == "compose.dev.yaml").then_some(bytes))
         .expect("packaged PostgreSQL Compose authority is embedded");
     let compose = derived.write(
         context.root,

@@ -50,6 +50,7 @@ Reading Queue validation path, and evidence boundaries.
 | I want to… | Start here |
 | --- | --- |
 | Install Yydra and create a product | [CLI guide](crates/yydra-cli/README.md) |
+| Build and run the server with Docker Compose | [Server container tutorial](docs/tutorials/server-compose.md) |
 | Work inside a created product | Its generated `README.md`; preview the [Workspace guide](crates/yydra-cli/template/product-workspace/README.md) |
 | Integrate API generation | [Build support guide](crates/yydra-build/README.md) |
 | Understand concepts and design decisions | [Context map](CONTEXT-MAP.md), with links to the glossary and ADRs |

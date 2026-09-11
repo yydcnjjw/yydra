@@ -287,7 +287,7 @@ impl ComposeGuard {
     fn command(&self) -> Command {
         let mut command = Command::new("docker");
         command
-            .args(["compose", "-p", &self.project])
+            .args(["compose", "-p", &self.project, "-f", "compose.dev.yaml"])
             .current_dir(&self.workspace)
             .env("YYDRA_POSTGRES_PORT", self.postgres_port.to_string());
         command
@@ -524,7 +524,8 @@ fn assert_success(output: &Output, label: &str) {
 #[test]
 fn compose_uses_the_reviewed_pinned_postgres_image() {
     let compose = fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("template/product-workspace/compose.yaml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("template/product-workspace/compose.dev.yaml"),
     )
     .expect("read embedded Compose file");
     assert!(compose.contains(POSTGRES_IMAGE));

@@ -15,6 +15,10 @@
 Product Workspace 是创建后由产品团队独立维护的产品代码库，
 与用于打包 CLI 的 Yydra 源码目录分开。术语见[领域词汇表](../../CONTEXT.md)。
 
+希望直接构建并运行服务端容器，请阅读[服务端 Compose 教程](server-compose.md)。
+该能力需要包含容器配置的新 Product Workspace；本教程固定的旧提交不包含它，
+下文命令仍按旧快照保留。
+
 ## 1. 准备终端和工具
 
 准备一台能够访问 Cargo、npm、GitHub 和容器镜像仓库的 Linux 主机，

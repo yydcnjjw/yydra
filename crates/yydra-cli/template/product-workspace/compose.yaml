@@ -1,18 +1,70 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
+name: __PRODUCT_ID__-server
+
+# server builds the shared image before Compose starts any services.
+x-server-image: &server-image
+  image: ${YYDRA_SERVER_IMAGE:-__PRODUCT_ID__-server:local}
+  pull_policy: never
+
 services:
+  init:
+    <<: *server-image
+    command: ["init"]
+    volumes:
+      - credentials:/var/lib/yydra
+    restart: "no"
+
   postgres:
     image: postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
       POSTGRES_DB: yydra_product
-      POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
-    ports:
-      - "127.0.0.1:${YYDRA_POSTGRES_PORT:-55432}:5432"
+      POSTGRES_PASSWORD_FILE: /var/lib/yydra/postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - credentials:/var/lib/yydra:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d yydra_product"]
-      interval: 1s
+      interval: 2s
       timeout: 3s
       retries: 30
-    tmpfs:
-      - /var/lib/postgresql
+    restart: unless-stopped
+
+  migrate:
+    <<: *server-image
+    command: ["migrate"]
+    volumes:
+      - credentials:/var/lib/yydra:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    <<: *server-image
+    build: .
+    environment:
+      YYDRA_BIND_ADDRESS: 0.0.0.0:4000
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${YYDRA_SERVER_HOST:-127.0.0.1}:${YYDRA_SERVER_PORT:-4000}:4000"
+    volumes:
+      - credentials:/var/lib/yydra:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "2", "http://127.0.0.1:4000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  credentials:

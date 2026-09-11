@@ -820,6 +820,10 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 path_patterns: &[
                     "Cargo.toml",
                     "Cargo.lock",
+                    "Dockerfile",
+                    ".dockerignore",
+                    "compose*.yaml",
+                    "container/**",
                     "migrations/**",
                     "crates/**",
                     "frontend/.npmrc",

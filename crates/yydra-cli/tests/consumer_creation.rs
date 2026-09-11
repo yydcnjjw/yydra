@@ -482,6 +482,20 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     sorted_paths.sort_unstable();
     assert_eq!(paths, sorted_paths, "artifact inventory must be sorted");
     assert!(paths.contains(&"README.md"));
+    for path in [
+        "Dockerfile",
+        ".dockerignore",
+        "compose.yaml",
+        "compose.dev.yaml",
+        "container/entrypoint.sh",
+    ] {
+        let artifact = artifacts
+            .iter()
+            .find(|artifact| artifact["path"] == path)
+            .unwrap_or_else(|| panic!("missing container artifact {path}"));
+        assert_eq!(artifact["lifecycle"], "product-owned-source");
+        assert_eq!(artifact["hand_editable_after_creation"], true);
+    }
     assert!(paths.contains(&"LICENSE-MIT"));
     assert!(paths.contains(&"LICENSE-APACHE"));
     assert!(paths.contains(&".yydra/origin.toml"));
@@ -519,7 +533,14 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
         })
         .map(|pattern| pattern.as_str().expect("path pattern"))
         .collect::<Vec<_>>();
-    for canonical in ["crates/**", "frontend/src/**"] {
+    for canonical in [
+        "crates/**",
+        "frontend/src/**",
+        "Dockerfile",
+        ".dockerignore",
+        "compose*.yaml",
+        "container/**",
+    ] {
         assert!(
             patterns.contains(&canonical),
             "missing canonical {canonical}"
