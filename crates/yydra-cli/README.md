@@ -7,18 +7,19 @@ independently by their product teams.
 
 For a step-by-step Chinese introduction on Linux/Bash, follow
 [Run your first product with yydra-cli](https://github.com/yydcnjjw/yydra/blob/main/docs/tutorials/yydra-cli-getting-started.md).
-It covers packaging and installing the 0.5.0 candidate, creating a Product
-Workspace, running the backend and H5 application, and building artifacts.
+That tutorial deliberately uses a fixed historical 0.5.0 checkout. For the
+current candidate below, follow the generated Workspace README for development
+and GitHub authentication configuration.
 
-Distribution `0.5.0` is a local development candidate; it has not been published.
-Use the candidate's independently packaged `yydra-cli-0.5.0.crate` and its recorded
+Distribution `0.6.0` is a local development candidate; it has not been published.
+Use the candidate's independently packaged `yydra-cli-0.6.0.crate` and its recorded
 checksum, then extract and install with the packaged lockfile in a fresh directory:
 
 ```sh
 rustup toolchain install nightly --profile minimal --component rustfmt,clippy
-sha256sum --check yydra-cli-0.5.0.crate.sha256
-tar -xzf yydra-cli-0.5.0.crate
-cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked
+sha256sum --check yydra-cli-0.6.0.crate.sha256
+tar -xzf yydra-cli-0.6.0.crate
+cargo +nightly install yydra-cli@0.6.0 --path ./yydra-cli-0.6.0 --locked
 yydra --version
 ```
 
@@ -82,13 +83,23 @@ yydra build ./reader --target android
 yydra check ./reader
 ```
 
+New Workspaces require GitHub sign-in before Reading Queue access. Configure a
+GitHub App and its server-side credentials and return URLs using the generated
+README's **GitHub sign-in** section. Missing credentials keep protected access
+closed while health checks remain available. Accounts, sessions, entries, and
+progress are independent per product; sign-out revokes only the current session.
+The reusable Rust/frontend sources are bundled under `.yydra/auth-support` and
+`.yydra/auth-client`, with snapshot integrity checked by `doctor` and `check`.
+Controlled automated checks use an explicitly enabled local provider fixture;
+they require no GitHub credentials and do not prove live GitHub authorization.
+
 `setup` consumes both committed locks. Migration creation (`yydra db migration
 add`) and application are explicit; the server only verifies that PostgreSQL
 matches its compiled history. `check` is read-only for Workspace inputs and
 runs the Distribution-owned core graph, including Public API/Generated Client
 drift and the real PostgreSQL/Axum/H5 Reading Queue
 create/list/complete/reopen/filter/keyset-pagination path with restorable URL
-state, stable cursor Problems, and bounded authentication semantics. The
+state, stable cursor Problems, controlled sign-in/logout, and account isolation. The
 graph also repeats clean Expo Continuous Native Generation and assembles an
 identified Android release APK with the generated Gradle wrapper. These nodes
 run from the committed `app.json`, exact `package.json`/`package-lock.json`,

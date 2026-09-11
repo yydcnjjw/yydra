@@ -393,9 +393,9 @@ fn migration_history_node_rejects_distribution_and_comparison_base_changes_read_
         "-m",
         "comparison base",
     ]);
-    let product_migration = workspace.join("migrations/0006_product_change.sql");
+    let product_migration = workspace.join("migrations/0008_product_change.sql");
     fs::write(&product_migration, b"SELECT 1;\n").expect("add product migration");
-    git(&["add", "migrations/0006_product_change.sql"]);
+    git(&["add", "migrations/0008_product_change.sql"]);
     git(&[
         "-c",
         "user.name=Yydra Check",
@@ -1918,7 +1918,10 @@ fn distribution_owned_typecheck_cannot_be_bypassed_by_a_product_script() {
     let package_path = workspace.join("frontend/package.json");
     let package = fs::read_to_string(&package_path)
         .expect("read package")
-        .replace("\"typecheck\": \"tsc --noEmit\"", "\"typecheck\": \"true\"");
+        .replace(
+            "\"typecheck\": \"tsc --noEmit && tsc --noEmit --project tsconfig.native.json\"",
+            "\"typecheck\": \"true\"",
+        );
     fs::write(package_path, package).expect("weaken product script");
     let config_path = workspace.join("frontend/playwright.config.mts");
     let mut config = fs::read_to_string(&config_path).expect("read authored mts config");
@@ -2377,7 +2380,7 @@ fn failed_prerequisites_skip_dependents_while_independent_nodes_continue() {
     let contents = fs::read_to_string(&origin)
         .expect("read Origin Record")
         .replace(
-            "distribution_version = \"0.5.0\"",
+            "distribution_version = \"0.6.0\"",
             "distribution_version = \"9.9.9\"",
         );
     fs::write(origin, contents).expect("write mismatched Origin Record");
@@ -2621,6 +2624,7 @@ fn rust_and_frontend_zero_test_contracts_have_discriminating_diagnostics() {
     create_workspace(&frontend_workspace, "frontend-zero-reader");
     for relative in [
         "frontend/src/framework/runtime.test.ts",
+        "frontend/src/framework/auth.test.ts",
         "frontend/src/framework/runtime-render.test.tsx",
         "frontend/src/framework/path-containment.test.mjs",
         "frontend/src/framework/android-dependencies-plugin.test.mjs",

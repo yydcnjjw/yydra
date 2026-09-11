@@ -36,7 +36,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&package.stderr)
     );
 
-    let extracted = package_target.join("package/yydra-cli-0.5.0");
+    let extracted = package_target.join("package/yydra-cli-0.6.0");
     assert!(extracted.join("Cargo.lock").is_file());
     assert!(extracted.join("third-party/bolts-source.json").is_file());
     for removed in ["supply-chain", "src/supply_chain.rs", "build.rs"] {
@@ -88,6 +88,43 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             path.display()
         );
     }
+    for (directory, files) in [
+        (
+            "auth-support",
+            &[
+                "Cargo.toml.tmpl",
+                "src/lib.rs",
+                "src/config.rs",
+                "src/test_provider.rs",
+                "migrations/0001_auth.sql",
+                "LICENSE-MIT",
+                "LICENSE-APACHE",
+            ][..],
+        ),
+        (
+            "auth-client",
+            &[
+                "package.json",
+                "src/index.ts",
+                "src/controller.ts",
+                "src/platform.native.ts",
+                "LICENSE-MIT",
+                "LICENSE-APACHE",
+            ][..],
+        ),
+    ] {
+        for file in files {
+            let path = extracted
+                .join("template/product-workspace/.yydra")
+                .join(directory)
+                .join(file);
+            assert!(
+                fs::symlink_metadata(&path).unwrap().is_file(),
+                "shared library snapshot must be a regular file: {}",
+                path.display()
+            );
+        }
+    }
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));
@@ -96,7 +133,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     let install = Command::new(&cargo)
         .args([
             "install",
-            "yydra-cli@0.5.0",
+            "yydra-cli@0.6.0",
             "--path",
             extracted.to_str().expect("UTF-8 extracted package"),
             "--locked",

@@ -11,6 +11,8 @@
 !.yydra/
 !.yydra/build-support/
 !.yydra/build-support/**
+!.yydra/auth-support/
+!.yydra/auth-support/**
 !container/
 !container/**
 !LICENSE-APACHE

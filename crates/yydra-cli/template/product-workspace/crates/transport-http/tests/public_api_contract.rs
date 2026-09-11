@@ -31,6 +31,30 @@ struct OperationFixture {
 
 const OPERATION_FIXTURES: &[OperationFixture] = &[
     OperationFixture {
+        operation_id: "getProductSession",
+        method: "get",
+        path: "/api/v1/auth/session",
+        body: "",
+        content_type: None,
+        authorization: None,
+    },
+    OperationFixture {
+        operation_id: "logoutProductSession",
+        method: "post",
+        path: "/api/v1/auth/logout",
+        body: "{}",
+        content_type: Some("application/json"),
+        authorization: None,
+    },
+    OperationFixture {
+        operation_id: "exchangeNativeHandoff",
+        method: "post",
+        path: "/api/v1/auth/native/exchange",
+        body: r#"{"handoff":"invalid","verifier":"invalid"}"#,
+        content_type: Some("application/json"),
+        authorization: None,
+    },
+    OperationFixture {
         operation_id: "createReadingQueueEntry",
         method: "post",
         path: "/api/v1/reading-queue/entries",
@@ -83,13 +107,9 @@ async fn public_router_executes_every_current_operation_against_its_contract() {
     let (router, collected) = product_transport_http::public_routes()
         .with_state(product_transport_http::ReadingQueueHttpState::new(
             FixtureReadingQueue,
-            product_transport_http::BearerAuthentication::new(
-                "contract-test",
-                "contract-forbidden",
-            )
-            .expect("fixture authentication"),
         ))
         .split_for_parts();
+    let router = fixture_auth(yydra_auth::AuthService::contract_fixture().layer(router));
     let collected: Value = serde_json::to_value(collected).expect("serialize collected OpenAPI");
     let current: Value = serde_json::from_str(
         &product_transport_http::normalized_openapi_json()
@@ -209,16 +229,29 @@ impl ReadingQueueApplication for FixtureReadingQueue {
 }
 
 fn fixture_router() -> axum::Router {
-    product_transport_http::public_routes()
-        .with_state(product_transport_http::ReadingQueueHttpState::new(
-            FixtureReadingQueue,
-            product_transport_http::BearerAuthentication::new(
-                "contract-test",
-                "contract-forbidden",
-            )
-            .expect("fixture authentication"),
-        ))
-        .into()
+    fixture_auth(
+        product_transport_http::public_routes()
+            .with_state(product_transport_http::ReadingQueueHttpState::new(
+                FixtureReadingQueue,
+            ))
+            .into(),
+    )
+}
+
+fn fixture_auth(router: axum::Router) -> axum::Router {
+    router.layer(axum::middleware::from_fn(|mut request: axum::extract::Request, next: axum::middleware::Next| async move {
+        let is_contract = request.uri().path() == "/api/v1/framework-auth-contract";
+        let auth_header = request.headers_mut().remove(header::AUTHORIZATION);
+        let auth = auth_header.as_ref().and_then(|v| v.to_str().ok());
+        if is_contract && auth == Some("Bearer contract-forbidden") {
+            return Response::builder().status(403).header(header::CONTENT_TYPE, "application/problem+json")
+                .body(Body::from(r#"{"type":"https://yydra.dev/problems/access-forbidden","title":"Access forbidden","status":403}"#)).unwrap();
+        }
+        if !is_contract || auth == Some("Bearer contract-test") {
+            request.extensions_mut().insert(yydra_auth::Principal { account_id: "contract-account".into() });
+        }
+        next.run(request).await
+    }))
 }
 
 #[tokio::test]
@@ -604,6 +637,10 @@ fn validate_schema(
             }
             Ok(())
         }
+        "boolean" => value
+            .as_bool()
+            .map(|_| ())
+            .ok_or_else(|| format!("{location} is not a boolean")),
         "string" => validate_string(schema, value, location),
         "integer" => validate_integer(schema, value, location),
         other => Err(format!("{location} uses unsupported schema type {other}")),

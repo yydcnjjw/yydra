@@ -41,9 +41,12 @@ docker compose ps
 
 API 默认只绑定运行机器的 `127.0.0.1:4000`。可通过 shell 环境或产品目录的
 本地 `.env` 设置 `YYDRA_SERVER_PORT`、`YYDRA_SERVER_HOST`，例如将绑定地址
-改为 `0.0.0.0`。PostgreSQL 不向宿主机发布端口。模板中的 Reading Queue
-允许匿名访问，受保护端点只是鉴权契约示例；面向公网的真实产品仍需配置自身
-的访问控制与 HTTPS。
+改为 `0.0.0.0`。PostgreSQL 不向宿主机发布端口。当前 0.6.0 模板的 Reading Queue
+要求产品会话，并按账号隔离数据。未配置 GitHub 时健康检查仍可通过，但不能登录。
+启用登录前，按产品 `README.md` 的 **GitHub sign-in** 部分配置 GitHub App、
+`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`、公开 API 地址及 H5/Android 回调地址。
+生产环境还需 HTTPS 和同站点的 H5/API 部署；Compose 不提供 TLS 代理或 H5 托管。
+客户端密钥仅交给后端，不写入前端公开环境变量。
 
 ## 停止、更新与数据
 

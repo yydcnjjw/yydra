@@ -1,0 +1,1 @@
+../../../../../../../packages/auth-client/src/index.ts

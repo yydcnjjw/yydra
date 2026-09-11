@@ -1,0 +1,21 @@
+{
+  "name": "@yydra/auth-client",
+  "version": "0.6.0",
+  "license": "MIT OR Apache-2.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "expo-crypto": "57.0.2",
+    "expo-secure-store": "57.0.3",
+    "expo-web-browser": "57.0.2",
+    "expo-linking": "57.0.9"
+  }
+}

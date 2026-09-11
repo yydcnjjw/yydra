@@ -14,7 +14,12 @@ path = "src/main.rs"
 name = "migrate"
 path = "src/bin/migrate.rs"
 
+[features]
+# Controlled local validation only; the release server does not enable this feature.
+auth-fixture = ["yydra-auth/test-provider"]
+
 [dependencies]
+yydra-auth.workspace = true
 axum.workspace = true
 product-application = { package = "__PRODUCT_ID__-application", path = "../application" }
 product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }

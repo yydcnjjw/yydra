@@ -3096,6 +3096,9 @@ fn validate_architecture(
                 && !(role == "api-build"
                     && dependency.name == "yydra-build"
                     && edge_kind == "build")
+                && !(matches!(role, "server" | "transport-http")
+                    && dependency.name == "yydra-auth"
+                    && matches!(edge_kind, "normal" | "dev"))
             {
                 return Err(NodeFailure::fail(
                     "ARCH_FRAMEWORK_INTERNAL_DEPENDENCY",
@@ -3762,6 +3765,7 @@ const FRONTEND_SOURCES: &[&str] = &[
     "package.json",
     "playwright.config.mts",
     "tsconfig.json",
+    "tsconfig.native.json",
     "vitest.config.mts",
 ];
 
@@ -3867,25 +3871,31 @@ fn check_frontend_typecheck(context: &mut NodeContext<'_>) -> std::result::Resul
 }
 "#;
     let mut derived = DerivedFiles::default();
-    derived.write(
-        context.root,
-        "frontend/.expo/yydra-check/tsconfig.json",
-        CONFIG.as_bytes(),
-    )?;
-    context.command(
-        &context.root.join("frontend"),
-        npm_program(),
-        &[
-            "exec",
-            "--offline",
-            "--",
-            "tsc",
-            "--project",
-            ".expo/yydra-check/tsconfig.json",
-        ],
-        &[],
-        "FRONTEND_TYPECHECK_FAILED",
-    )
+    for (path, config) in [
+        ("tsconfig.json", CONFIG.to_owned()),
+        (
+            "tsconfig.native.json",
+            CONFIG.replace(
+                "\"strict\": true",
+                "\"moduleSuffixes\": [\".native\", \"\"], \"strict\": true",
+            ),
+        ),
+    ] {
+        let relative = format!(".expo/yydra-check/{path}");
+        derived.write(
+            context.root,
+            &format!("frontend/{relative}"),
+            config.as_bytes(),
+        )?;
+        context.command(
+            &context.root.join("frontend"),
+            npm_program(),
+            &["exec", "--offline", "--", "tsc", "--project", &relative],
+            &[],
+            "FRONTEND_TYPECHECK_FAILED",
+        )?;
+    }
+    Ok(())
 }
 
 fn check_frontend_tests(context: &mut NodeContext<'_>) -> std::result::Result<(), NodeFailure> {
@@ -4488,13 +4498,24 @@ fn check_android_generation_inputs(root: &Path) -> std::result::Result<(), NodeF
                     format!("frontend dependency {name} has a non-string authority"),
                 )
             })?;
+            let bundled_auth =
+                name == "@yydra/auth-client" && authority == "file:../.yydra/auth-client";
+            if bundled_auth {
+                verify_snapshot_authorities(root).map_err(|error| {
+                    NodeFailure::fail(
+                        "NATIVE_GENERATION_INPUT_POLICY_FAILED",
+                        format!("shared authentication snapshot is not exact: {error:#}"),
+                    )
+                })?;
+            }
             if semver::Version::parse(authority).is_err()
                 && !valid_local_module_authority(&frontend, authority)
+                && !bundled_auth
             {
                 return Err(NodeFailure::fail(
                     "NATIVE_GENERATION_INPUT_POLICY_FAILED",
                     format!(
-                        "frontend dependency {name} must use an exact version or a committed file:./modules path, found {authority:?}"
+                        "frontend dependency {name} must use an exact version, committed file:./modules path, or exact bundled authentication snapshot, found {authority:?}"
                     ),
                 ));
             }
@@ -5122,6 +5143,7 @@ fn check_database_runtime_invariants(
         "reading_queue_use_cases_commit_success_and_rollback_failures",
         "cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_together",
         "read_committed_row_lock_serializes_conflicting_commands_without_retry",
+        "account_ownership_isolates_reads_writes_progress_and_cursors",
     ];
     require_named_rust_tests(
         context,
@@ -5402,10 +5424,12 @@ export default defineConfig({
 });
 "#;
     const PLAYWRIGHT_SPEC: &str = r#"import { expect, test } from "@playwright/test";
+import { installAuthFixtureFetch, signIn, verifyAccountIsolation } from "./auth-fixture";
 
 test("production H5 Application Surface reaches Axum and PostgreSQL after refresh", async ({ page }) => {
   const healthResponse = page.waitForResponse((response) => response.url().endsWith("/health"));
-  await page.goto("/");
+  await installAuthFixtureFetch(page);
+  await signIn(page);
   const observed = await healthResponse;
   expect(observed.status()).toBe(200);
   await expect(observed.json()).resolves.toEqual({ status: "ready", database: "baseline" });
@@ -5414,7 +5438,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   const apiUrl = process.env.EXPO_PUBLIC_API_URL;
   expect(apiUrl).toBeTruthy();
   const direct = await page.evaluate(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/health`);
+    const response = await authFixtureFetch(`${baseUrl}/health`);
     return { body: await response.json(), status: response.status };
   }, apiUrl);
   expect(direct).toEqual({
@@ -5431,7 +5455,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
   await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
   const queue = await page.evaluate(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`);
+    const response = await authFixtureFetch(`${baseUrl}/api/v1/reading-queue/entries`);
     return { body: await response.json(), status: response.status };
   }, apiUrl);
   expect(queue.status).toBe(200);
@@ -5441,7 +5465,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   expect(queue.body.entries[0].id).toEqual(expect.any(String));
   const entryId = queue.body.entries[0].id;
   const directComplete = await page.evaluate(async ({ baseUrl, id }) => {
-    const response = await fetch(
+    const response = await authFixtureFetch(
       `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`,
       {
         method: "PATCH",
@@ -5464,24 +5488,20 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
   const negatives = await page.evaluate(async ({ baseUrl, id }) => {
     const transition = `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`;
-    const unknown = await fetch(transition, {
+    const unknown = await authFixtureFetch(transition, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state: "queued", unknown: true }),
     });
-    const malformed = await fetch(transition, {
+    const malformed = await authFixtureFetch(transition, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: "{",
     });
-    const missingAuth = await fetch(`${baseUrl}/api/v1/framework-auth-contract`);
-    const forbidden = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
-      headers: { authorization: "Bearer local-framework-forbidden" },
-    });
-    const authorized = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
-      headers: { authorization: "Bearer local-framework-contract" },
-    });
-    const validation = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
+    const missingAuth = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, { credentials: "omit" });
+    const forbidden = await fetch(`${baseUrl}/api/v1/auth/logout`, { method: "POST", credentials: "include" });
+    const authorized = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, { credentials: "include" });
+    const validation = await authFixtureFetch(`${baseUrl}/api/v1/reading-queue/entries`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -5514,7 +5534,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
     status: 401,
   });
   expect(negatives.forbidden).toMatchObject({
-    body: { type: "https://yydra.dev/problems/access-forbidden" },
+    body: { type: "https://yydra.dev/problems/csrf-verification-failed" },
     status: 403,
   });
   expect(negatives.authorized).toEqual({ body: { access: "granted" }, status: 200 });
@@ -5524,7 +5544,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   });
   const pagination = await page.evaluate(async (baseUrl) => {
     for (let index = 1; index <= 11; index += 1) {
-      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
+      const response = await authFixtureFetch(`${baseUrl}/api/v1/reading-queue/entries`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -5537,7 +5557,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
     const requestPage = async (status, sort, limit, cursor) => {
       const query = new URLSearchParams({ status, sort, limit: String(limit) });
       if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries?${query}`);
+      const response = await authFixtureFetch(`${baseUrl}/api/v1/reading-queue/entries?${query}`);
       return { body: await response.json(), status: response.status };
     };
     const first = await requestPage("queued", "oldest", 3);
@@ -5548,7 +5568,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
     tamperedBytes[payloadIndex] = tamperedBytes[payloadIndex] === "A" ? "B" : "A";
     const tampered = await requestPage("queued", "oldest", 3, tamperedBytes.join(""));
     const mismatch = await requestPage("completed", "oldest", 3, firstCursor);
-    const unknown = await fetch(`${baseUrl}/api/v1/reading-queue/entries?unknown=true`);
+    const unknown = await authFixtureFetch(`${baseUrl}/api/v1/reading-queue/entries?unknown=true`);
     const traversedIds = [];
     let cursor;
     let pages = 0;
@@ -5622,6 +5642,7 @@ test("production H5 Application Surface reaches Axum and PostgreSQL after refres
   await expect(page.getByText(entryTitle, { exact: true })).toBeVisible();
   await expect(page.getByText(sourceUrl, { exact: true })).toBeVisible();
   await expect(page.getByText("State: completed", { exact: true })).toBeVisible();
+  await verifyAccountIsolation(page, entryTitle);
 });
 "#;
     run_h5_playwright(
@@ -5803,7 +5824,7 @@ fn run_h5_playwright(
                 "READING_QUEUE_PAGINATION_POSTGRES_FAILED",
             )?;
         }
-        let mut server = spawn_server(context, &database_url, &server_address)?;
+        let mut server = spawn_server(context, &database_url, &server_address, h5_port)?;
         let readiness = wait_for_server(
             &mut server,
             server_address.parse().map_err(|error| {
@@ -6017,16 +6038,32 @@ fn spawn_server(
     context: &mut NodeContext<'_>,
     database_url: &str,
     server_address: &str,
+    h5_port: u16,
 ) -> std::result::Result<ServerGuard, NodeFailure> {
+    let api_url = format!("http://{server_address}");
+    let web_return = format!("http://127.0.0.1:{h5_port}");
     let display = display_command(
         context.root,
         context.evidence_root,
         context.root,
         "cargo",
-        &["run", "--locked", "--bin", "server"],
+        &[
+            "run",
+            "--locked",
+            "--features",
+            "auth-fixture",
+            "--bin",
+            "server",
+        ],
         &[
             ("DATABASE_URL", database_url),
             ("YYDRA_BIND_ADDRESS", server_address),
+            ("YYDRA_AUTH_DEVELOPMENT", "true"),
+            ("YYDRA_PUBLIC_API_URL", &api_url),
+            ("YYDRA_AUTH_WEB_RETURN", &web_return),
+            ("YYDRA_AUTH_FIXTURE_PROVIDER", &api_url),
+            ("GITHUB_CLIENT_ID", "fixture-client"),
+            ("GITHUB_CLIENT_SECRET", "fixture-secret"),
             (
                 "YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY",
                 "local-reading-queue-cursor-signing-key",
@@ -6051,10 +6088,23 @@ fn spawn_server(
     let stderr = create_private_file(&stderr_path).map_err(evidence_write_failure)?;
     let mut command = sanitized_command("cargo");
     command
-        .args(["run", "--locked", "--bin", "server"])
+        .args([
+            "run",
+            "--locked",
+            "--features",
+            "auth-fixture",
+            "--bin",
+            "server",
+        ])
         .env("CARGO_TARGET_DIR", context.root.join("target"))
         .env("DATABASE_URL", database_url)
         .env("YYDRA_BIND_ADDRESS", server_address)
+        .env("YYDRA_AUTH_DEVELOPMENT", "true")
+        .env("YYDRA_PUBLIC_API_URL", &api_url)
+        .env("YYDRA_AUTH_WEB_RETURN", &web_return)
+        .env("YYDRA_AUTH_FIXTURE_PROVIDER", &api_url)
+        .env("GITHUB_CLIENT_ID", "fixture-client")
+        .env("GITHUB_CLIENT_SECRET", "fixture-secret")
         .env(
             "YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY",
             "local-reading-queue-cursor-signing-key",
@@ -6839,7 +6889,7 @@ mod tests {
             package(
                 "reader-transport-http",
                 "transport-http",
-                &["reader-application", "axum"],
+                &["reader-application", "axum", "yydra-auth"],
             ),
             package(
                 "reader-server",

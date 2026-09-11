@@ -13,6 +13,8 @@ use product_application::{
 };
 use product_persistence_postgres::{Database, apply_migrations};
 
+const TEST_ACCOUNT: &str = "10000000-0000-0000-0000-000000000001";
+
 const CURSOR_SIGNING_KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
 fn all_entries_query() -> ListReadingEntriesQuery {
@@ -21,7 +23,7 @@ fn all_entries_query() -> ListReadingEntriesQuery {
         sort: None,
         limit: Some(50),
         cursor: None,
-        authorization_scope: "anonymous".to_owned(),
+        authorization_scope: TEST_ACCOUNT.to_owned(),
     }
 }
 
@@ -35,6 +37,8 @@ async fn applied_migration_history_rejects_mutation_and_deletion() {
     let database = Database::connect(&database_url, 2)
         .await
         .expect("connect to PostgreSQL");
+    sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', '1', 'test-only') ON CONFLICT DO NOTHING")
+        .bind(TEST_ACCOUNT).execute(&database.pool()).await.expect("create test account");
     database
         .verify_compiled_migrations()
         .await
@@ -110,6 +114,8 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     let database = Database::connect(&database_url, 2)
         .await
         .expect("connect to PostgreSQL");
+    sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', '1', 'test-only') ON CONFLICT DO NOTHING")
+        .bind(TEST_ACCOUNT).execute(&database.pool()).await.expect("create test account");
     let mut cleanup = database.begin().await.expect("begin cleanup transaction");
     sqlx::query("DELETE FROM reading_queue_entries")
         .execute(&mut *cleanup)
@@ -123,6 +129,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
         .expect("valid cursor signing key");
     let created = create
         .execute(CreateReadingEntryCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             title: "PostgreSQL transactions in practice".to_owned(),
             source_url: "https://example.test/postgres-transactions".to_owned(),
         })
@@ -140,6 +147,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
 
     let completed = change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: created.id.clone(),
             target: ReadingQueueEntryState::Completed,
         })
@@ -148,6 +156,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     assert_eq!(completed.state, ReadingQueueEntryState::Completed);
     let conflict = change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: created.id.clone(),
             target: ReadingQueueEntryState::Completed,
         })
@@ -167,6 +176,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     );
     let reopened = change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: created.id.clone(),
             target: ReadingQueueEntryState::Queued,
         })
@@ -175,6 +185,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     assert_eq!(reopened.state, ReadingQueueEntryState::Queued);
     let missing = change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: "missing-opaque-entry".to_owned(),
             target: ReadingQueueEntryState::Completed,
         })
@@ -187,6 +198,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
 
     let invalid = create
         .execute(CreateReadingEntryCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             title: "   ".to_owned(),
             source_url: "https://example.test/not-inserted".to_owned(),
         })
@@ -210,7 +222,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
         .await
         .expect("begin failed command fixture");
     sqlx::query(
-        "INSERT INTO reading_queue_entries (title, source_url, state) VALUES ($1, $2, 'queued')",
+        "INSERT INTO reading_queue_entries (account_id, title, source_url, state) VALUES ('10000000-0000-0000-0000-000000000001', $1, $2, 'queued')",
     )
     .bind("temporarily inserted")
     .bind("https://example.test/temporary")
@@ -218,7 +230,7 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
     .await
     .expect("first statement succeeds inside the transaction");
     let constraint_failure = sqlx::query(
-        "INSERT INTO reading_queue_entries (title, source_url, state) VALUES ($1, $2, $3)",
+        "INSERT INTO reading_queue_entries (account_id, title, source_url, state) VALUES ('10000000-0000-0000-0000-000000000001', $1, $2, $3)",
     )
     .bind("")
     .bind("not-an-http-url")
@@ -261,12 +273,14 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
     let database = Database::connect(&database_url, 4)
         .await
         .expect("connect to PostgreSQL");
+    sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', '1', 'test-only') ON CONFLICT DO NOTHING")
+        .bind(TEST_ACCOUNT).execute(&database.pool()).await.expect("create test account");
     let mut fixture = database.begin().await.expect("begin fixture reset");
     sqlx::query("DELETE FROM reading_queue_entries")
         .execute(&mut *fixture)
         .await
         .expect("clear reading entries");
-    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0")
         .execute(&mut *fixture)
         .await
         .expect("reset reading progress");
@@ -279,7 +293,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .expect("valid cursor signing key");
     assert_eq!(
         progress
-            .execute()
+            .execute(TEST_ACCOUNT)
             .await
             .expect("initial progress")
             .completed_entries,
@@ -287,6 +301,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
     );
     let entry = create
         .execute(CreateReadingEntryCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             title: "Transactional orchestration".to_owned(),
             source_url: "https://example.test/orchestration".to_owned(),
         })
@@ -294,6 +309,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .expect("create queued entry");
     change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: entry.id.clone(),
             target: ReadingQueueEntryState::Completed,
         })
@@ -301,7 +317,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .expect("complete and record progress in one transaction");
     assert_eq!(
         progress
-            .execute()
+            .execute(TEST_ACCOUNT)
             .await
             .expect("completed progress")
             .completed_entries,
@@ -309,6 +325,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
     );
     change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: entry.id.clone(),
             target: ReadingQueueEntryState::Queued,
         })
@@ -316,7 +333,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .expect("reopen and record progress in one transaction");
     assert_eq!(
         progress
-            .execute()
+            .execute(TEST_ACCOUNT)
             .await
             .expect("reopened progress")
             .completed_entries,
@@ -332,8 +349,13 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .commit()
         .await
         .expect("commit fault fixture");
+    assert!(
+        progress.execute(TEST_ACCOUNT).await.is_err(),
+        "a missing progress row for existing entries must not report an empty account"
+    );
     let failure = change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: entry.id.clone(),
             target: ReadingQueueEntryState::Completed,
         })
@@ -356,7 +378,7 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         .await
         .expect("remove entry fixture");
     sqlx::query(
-        "INSERT INTO reading_progress (singleton, completed_entries) VALUES (TRUE, 0) ON CONFLICT (singleton) DO UPDATE SET completed_entries = 0",
+        "INSERT INTO reading_progress (account_id, completed_entries) VALUES ('10000000-0000-0000-0000-000000000001', 0) ON CONFLICT (account_id) DO UPDATE SET completed_entries = 0",
     )
     .execute(&mut *cleanup)
     .await
@@ -374,6 +396,8 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
     let database = Database::connect(&database_url, 6)
         .await
         .expect("connect to PostgreSQL");
+    sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', '1', 'test-only') ON CONFLICT DO NOTHING")
+        .bind(TEST_ACCOUNT).execute(&database.pool()).await.expect("create test account");
     let mut fixture = database.begin().await.expect("begin fixture reset");
     let isolation = sqlx::query_scalar::<_, String>("SHOW transaction_isolation")
         .fetch_one(&mut *fixture)
@@ -384,7 +408,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
         .execute(&mut *fixture)
         .await
         .expect("clear reading entries");
-    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0")
         .execute(&mut *fixture)
         .await
         .expect("reset reading progress");
@@ -395,6 +419,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
     let progress = GetReadingProgress::new(database.clone());
     let entry = create
         .execute(CreateReadingEntryCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             title: "Deterministic contention".to_owned(),
             source_url: "https://example.test/contention".to_owned(),
         })
@@ -412,6 +437,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
     let mut blocked = tokio::spawn(async move {
         blocked_change
             .execute(ChangeReadingEntryStateCommand {
+                account_id: TEST_ACCOUNT.to_owned(),
                 id: blocked_id,
                 target: ReadingQueueEntryState::Completed,
             })
@@ -430,6 +456,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
         .expect("command completes after the row lock is released");
     change
         .execute(ChangeReadingEntryStateCommand {
+            account_id: TEST_ACCOUNT.to_owned(),
             id: entry.id.clone(),
             target: ReadingQueueEntryState::Queued,
         })
@@ -437,10 +464,12 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
         .expect("reopen before simultaneous commands");
 
     let first = change.execute(ChangeReadingEntryStateCommand {
+        account_id: TEST_ACCOUNT.to_owned(),
         id: entry.id.clone(),
         target: ReadingQueueEntryState::Completed,
     });
     let second = change.execute(ChangeReadingEntryStateCommand {
+        account_id: TEST_ACCOUNT.to_owned(),
         id: entry.id.clone(),
         target: ReadingQueueEntryState::Completed,
     });
@@ -457,7 +486,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
     assert_eq!(conflicts, 1, "the losing command is visible, not retried");
     assert_eq!(
         progress
-            .execute()
+            .execute(TEST_ACCOUNT)
             .await
             .expect("progress after contention")
             .completed_entries,
@@ -470,7 +499,7 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
         .execute(&mut *cleanup)
         .await
         .expect("remove contention entry");
-    sqlx::query("UPDATE reading_progress SET completed_entries = 0 WHERE singleton")
+    sqlx::query("UPDATE reading_progress SET completed_entries = 0")
         .execute(&mut *cleanup)
         .await
         .expect("reset progress after contention");
@@ -487,6 +516,8 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
     let database = Database::connect(&database_url, 2)
         .await
         .expect("connect to PostgreSQL");
+    sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', '1', 'test-only') ON CONFLICT DO NOTHING")
+        .bind(TEST_ACCOUNT).execute(&database.pool()).await.expect("create test account");
     let mut fixture = database.begin().await.expect("begin pagination fixture");
     sqlx::query("DELETE FROM reading_queue_entries")
         .execute(&mut *fixture)
@@ -519,7 +550,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
         ),
     ] {
         sqlx::query(
-            "INSERT INTO reading_queue_entries (id, title, source_url, state, created_at) VALUES ($1::uuid, $2, $3, $4, $5::timestamptz)",
+            "INSERT INTO reading_queue_entries (id, title, source_url, state, created_at, account_id) VALUES ($1::uuid, $2, $3, $4, $5::timestamptz, '10000000-0000-0000-0000-000000000001')",
         )
         .bind(id)
         .bind(title)
@@ -540,7 +571,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
             sort: Some("oldest".to_owned()),
             limit: Some(2),
             cursor: None,
-            authorization_scope: "anonymous".to_owned(),
+            authorization_scope: TEST_ACCOUNT.to_owned(),
         })
         .await
         .expect("first queued page");
@@ -559,7 +590,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
             sort: Some("oldest".to_owned()),
             limit: Some(2),
             cursor: Some(first_cursor.clone()),
-            authorization_scope: "anonymous".to_owned(),
+            authorization_scope: TEST_ACCOUNT.to_owned(),
         })
         .await
         .expect("second queued page");
@@ -572,7 +603,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
             sort: Some("oldest".to_owned()),
             limit: Some(2),
             cursor: Some(first_cursor),
-            authorization_scope: "anonymous".to_owned(),
+            authorization_scope: TEST_ACCOUNT.to_owned(),
         })
         .await
         .expect_err("a cursor cannot cross filter context");
@@ -587,7 +618,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
             sort: Some("newest".to_owned()),
             limit: Some(2),
             cursor: None,
-            authorization_scope: "anonymous".to_owned(),
+            authorization_scope: TEST_ACCOUNT.to_owned(),
         })
         .await
         .expect("newest page");
@@ -606,4 +637,87 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
         .await
         .expect("remove pagination fixture rows");
     cleanup.commit().await.expect("commit final cleanup");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated migrated PostgreSQL database supplied by yydra check"]
+async fn account_ownership_isolates_reads_writes_progress_and_cursors() {
+    let database_url = env::var("DATABASE_URL").expect("isolated database");
+    apply_migrations(&database_url).await.unwrap();
+    let database = Database::connect(&database_url, 4).await.unwrap();
+    let first = "20000000-0000-0000-0000-000000000001";
+    let second = "20000000-0000-0000-0000-000000000002";
+    for (id, subject) in [
+        (first, "account-isolation-first"),
+        (second, "account-isolation-second"),
+    ] {
+        sqlx::query("INSERT INTO yydra_auth_accounts (id, provider, subject, auth_epoch) VALUES ($1::uuid, 'fixture', $2, 'test-only') ON CONFLICT DO NOTHING")
+            .bind(id).bind(subject).execute(&database.pool()).await.unwrap();
+    }
+    let create = CreateReadingEntry::new(database.clone());
+    let change = ChangeReadingEntryState::new(database.clone());
+    let list = ListReadingEntries::new(database.clone(), CURSOR_SIGNING_KEY).unwrap();
+    let progress = GetReadingProgress::new(database.clone());
+    let mut first_entries = Vec::new();
+    for account_id in [first, first, second] {
+        let entry = create
+            .execute(CreateReadingEntryCommand {
+                account_id: account_id.into(),
+                title: "Private entry".into(),
+                source_url: "https://example.test/private".into(),
+            })
+            .await
+            .unwrap();
+        if account_id == first {
+            first_entries.push(entry);
+        }
+    }
+    let query = |account: &str, cursor| ListReadingEntriesQuery {
+        status: None,
+        sort: None,
+        limit: Some(1),
+        cursor,
+        authorization_scope: account.into(),
+    };
+    let first_page = list.execute(query(first, None)).await.unwrap();
+    let second_page = list.execute(query(second, None)).await.unwrap();
+    assert_ne!(first_page.entries[0].id, second_page.entries[0].id);
+    assert!(second_page.next_cursor.is_none());
+    assert!(
+        list.execute(query(second, first_page.next_cursor))
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        change
+            .execute(ChangeReadingEntryStateCommand {
+                account_id: second.into(),
+                id: first_entries[0].id.clone(),
+                target: ReadingQueueEntryState::Completed,
+            })
+            .await,
+        Err(ChangeReadingEntryStateError::NotFound { .. })
+    ));
+    change
+        .execute(ChangeReadingEntryStateCommand {
+            account_id: first.into(),
+            id: first_entries[0].id.clone(),
+            target: ReadingQueueEntryState::Completed,
+        })
+        .await
+        .unwrap();
+    assert_eq!(progress.execute(first).await.unwrap().completed_entries, 1);
+    assert_eq!(progress.execute(second).await.unwrap().completed_entries, 0);
+    sqlx::query("DELETE FROM reading_queue_entries WHERE account_id::text IN ($1, $2)")
+        .bind(first)
+        .bind(second)
+        .execute(&database.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM reading_progress WHERE account_id::text IN ($1, $2)")
+        .bind(first)
+        .bind(second)
+        .execute(&database.pool())
+        .await
+        .unwrap();
 }
