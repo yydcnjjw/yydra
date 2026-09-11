@@ -162,7 +162,14 @@ reloads the queue through the same Public API seam. The list uses
 `created_at` plus the opaque entry ID as its stable keyset order, bounded pages,
 and a nullable `nextCursor`. Status and oldest/newest state live in Expo Router
 URLs; TanStack Query keys bind that state, refresh starts at page one, and
-duplicate concurrent next-page calls are suppressed. The versioned URL-safe
+duplicate concurrent next-page calls are suppressed. Refresh cancels an in-flight
+next page before retaining only the previous first page, and blocks pagination
+until the refresh settles. A late cancelled page cannot reappear. After a
+successful write, cached filter/order variants are marked stale; the active
+list refreshes from page one while its previous first page stays visible. A
+failed follow-up read reports that the entry was saved and the displayed list
+may be out of date. Recovery retries the read without repeating the write.
+The versioned URL-safe
 cursor is signed and bound to status, order, page size, and the reapplied route
 authorization context. Tampering or context reuse is a stable 400 Problem.
 Pagination makes no cross-request snapshot, total-count, or universal-paginator
@@ -193,8 +200,13 @@ receive the configured credential headers.
 
 State ownership stays explicit: TanStack Query owns server state, Expo Router
 URLs own status/sort state, component state owns the short-lived create form,
-and Product Domain rules stay in Rust. No default persistent or global Product
-store is installed. The Reading Queue screen separately renders initial and
+and Product Domain rules stay in Rust. `ReadingEntryForm` owns the whole draft
+and its submission revision. Inputs remain editable during submission; success
+clears the draft only if it has not been edited since that submission. Editing
+either field preserves both fields, including when an edit is later reversed.
+`useReadingQueue` owns queries, writes, and refresh coordination; the screen
+composes the form, queue panel, and service status. No default persistent or
+global Product store is installed. The Reading Queue screen separately renders initial and
 background loading, true empty success, blocking and stale-data failures,
 cancellation, typed Problem recovery, transport failure, and contract-safe
 fallbacks while retaining responsive wrapping, scrolling, focus, and recovery.

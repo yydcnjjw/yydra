@@ -23,14 +23,24 @@ export function readingQueueInfiniteQueryOptions(
   sort: ReadingQueueSort,
   limit: number,
 ) {
-  return infiniteQueryOptions({
-    queryKey: readingQueueQueryKey(status, sort, limit),
-    queryFn: ({ pageParam, signal }) =>
-      client.listReadingQueueEntries(
-        { status, sort, limit, cursor: pageParam },
-        signal,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
+  const queryFn = ({
+    pageParam,
+    signal,
+  }: {
+    pageParam: string | undefined;
+    signal: AbortSignal;
+  }) =>
+    client.listReadingQueueEntries(
+      { status, sort, limit, cursor: pageParam },
+      signal,
+    );
+  return {
+    ...infiniteQueryOptions({
+      queryKey: readingQueueQueryKey(status, sort, limit),
+      queryFn,
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    }),
+    queryFn,
+  };
 }

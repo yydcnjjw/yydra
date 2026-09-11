@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 
 import {
   createTestFrameworkRuntime,
@@ -240,4 +241,237 @@ describe("Reading Queue Product Presentation", () => {
       expect(onRouteStateChange).toHaveBeenCalledWith("completed", "newest"),
     );
   });
+});
+
+const savedEntry = {
+  id: "saved-entry",
+  title: "Submitted title",
+  sourceUrl: "https://example.test/submitted",
+  state: "queued" as const,
+};
+function fillDraft() {
+  fireEvent.change(screen.getByLabelText("Entry title"), {
+    target: { value: savedEntry.title },
+  });
+  fireEvent.change(screen.getByLabelText("Source URL"), {
+    target: { value: savedEntry.sourceUrl },
+  });
+}
+
+describe("Reading Queue write and refresh lifecycle", () => {
+  it("clears an unchanged draft once the write succeeds", async () => {
+    renderScreen(
+      fakeClient({ createReadingQueueEntry: vi.fn(async () => savedEntry) }),
+    );
+    await screen.findByText("The queue is empty.");
+    fillDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Entry title") as HTMLInputElement).value,
+      ).toBe(""),
+    );
+    expect(
+      (screen.getByLabelText("Source URL") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
+  it.each(["Entry title", "Source URL"])(
+    "retains the entire draft when %s changes during submission",
+    async (field) => {
+      const write = deferred<typeof savedEntry>();
+      const create = vi.fn(() => write.promise);
+      renderScreen(fakeClient({ createReadingQueueEntry: create }));
+      await screen.findByText("The queue is empty.");
+      fillDraft();
+      fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+      const nextValue =
+        field === "Entry title" ? "Next draft" : "https://example.test/next";
+      fireEvent.change(screen.getByLabelText(field), {
+        target: { value: nextValue },
+      });
+      write.resolve(savedEntry);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: "Add entry" })
+            .getAttribute("aria-disabled"),
+        ).not.toBe("true"),
+      );
+      expect(create).toHaveBeenCalledExactlyOnceWith({
+        title: savedEntry.title,
+        sourceUrl: savedEntry.sourceUrl,
+      });
+      expect(
+        (screen.getByLabelText("Entry title") as HTMLInputElement).value,
+      ).toBe(field === "Entry title" ? nextValue : savedEntry.title);
+      expect(
+        (screen.getByLabelText("Source URL") as HTMLInputElement).value,
+      ).toBe(field === "Source URL" ? nextValue : savedEntry.sourceUrl);
+    },
+  );
+
+  it.each(["create", "transition"])(
+    "keeps saved data and retries only the read after a successful %s",
+    async (operation) => {
+      const refresh = deferred<{
+        entries: (typeof savedEntry)[];
+        nextCursor: null;
+      }>();
+      const list = vi
+        .fn()
+        .mockResolvedValueOnce({ entries: [savedEntry], nextCursor: null })
+        .mockImplementationOnce(() => refresh.promise)
+        .mockResolvedValue({
+          entries: [{ ...savedEntry, title: "Fresh result" }],
+          nextCursor: null,
+        });
+      const create = vi.fn(async () => savedEntry);
+      const change = vi.fn(async () => ({
+        ...savedEntry,
+        state: "completed" as const,
+      }));
+      renderScreen(
+        fakeClient({
+          listReadingQueueEntries: list,
+          createReadingQueueEntry: create,
+          changeReadingQueueEntryState: change,
+        }),
+      );
+      await screen.findByRole("heading", { name: savedEntry.title });
+      if (operation === "create") {
+        fillDraft();
+        fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", { name: `Complete ${savedEntry.title}` }),
+        );
+      }
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      expect(
+        screen.getByRole("heading", { name: savedEntry.title }),
+      ).toBeTruthy();
+      refresh.reject({ kind: "transport", message: "offline" });
+      expect(
+        await screen.findByText(/Entry saved. Queue refresh failed/),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: savedEntry.title }),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Retry queue" }));
+      await screen.findByRole("heading", { name: "Fresh result" });
+      expect(list).toHaveBeenCalledTimes(3);
+      expect(create).toHaveBeenCalledTimes(operation === "create" ? 1 : 0);
+      expect(change).toHaveBeenCalledTimes(operation === "transition" ? 1 : 0);
+      expect(
+        screen.queryByText(/Entry saved. Queue refresh failed/),
+      ).toBeNull();
+    },
+  );
+
+  it("cancels a next page before refresh and ignores its late result", async () => {
+    const nextPage = deferred<{
+      entries: (typeof savedEntry)[];
+      nextCursor: null;
+    }>();
+    const firstPage = deferred<{
+      entries: (typeof savedEntry)[];
+      nextCursor: string;
+    }>();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: [savedEntry], nextCursor: "cursor-1" })
+      .mockImplementationOnce(() => nextPage.promise)
+      .mockImplementationOnce(() => firstPage.promise);
+    renderScreen(fakeClient({ listReadingQueueEntries: list }));
+    await screen.findByRole("heading", { name: savedEntry.title });
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    const nextSignal = list.mock.calls[1][1] as AbortSignal;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh from first page" }),
+    );
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+    expect(nextSignal.aborted).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(list).toHaveBeenCalledTimes(3);
+    nextPage.resolve({
+      entries: [{ ...savedEntry, id: "late", title: "Late page" }],
+      nextCursor: null,
+    });
+    firstPage.resolve({
+      entries: [{ ...savedEntry, title: "Fresh first page" }],
+      nextCursor: "fresh-cursor",
+    });
+    await screen.findByRole("heading", { name: "Fresh first page" });
+    expect(screen.queryByRole("heading", { name: "Late page" })).toBeNull();
+    expect(list.mock.calls[2][0]).toMatchObject({ cursor: undefined });
+    expect(
+      screen
+        .getByRole("button", { name: "Load more" })
+        .getAttribute("aria-disabled"),
+    ).not.toBe("true");
+  });
+});
+
+it("retains the write acknowledgement when changing filters cancels its refresh", async () => {
+  const oldRefresh = deferred<{
+    entries: (typeof savedEntry)[];
+    nextCursor: null;
+  }>();
+  const newRefresh = deferred<{
+    entries: (typeof savedEntry)[];
+    nextCursor: null;
+  }>();
+  const list = vi
+    .fn()
+    .mockResolvedValueOnce({ entries: [savedEntry], nextCursor: null })
+    .mockImplementationOnce(() => oldRefresh.promise)
+    .mockImplementationOnce(() => newRefresh.promise)
+    .mockResolvedValue({
+      entries: [{ ...savedEntry, title: "Fresh filtered entry" }],
+      nextCursor: null,
+    });
+  const create = vi.fn(async () => savedEntry);
+  const runtime = createTestFrameworkRuntime(
+    fakeClient({
+      listReadingQueueEntries: list,
+      createReadingQueueEntry: create,
+    }),
+  );
+  function RoutedScreen() {
+    const [status, setStatus] = useState<"all" | "queued" | "completed">("all");
+    return (
+      <FrameworkRuntime runtime={runtime}>
+        <ReadingQueueScreen
+          productName="Routing probe"
+          sort="oldest"
+          status={status}
+          onRouteStateChange={setStatus}
+        />
+      </FrameworkRuntime>
+    );
+  }
+  render(<RoutedScreen />);
+  await screen.findByRole("heading", { name: savedEntry.title });
+  fillDraft();
+  fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  const oldSignal = list.mock.calls[1][1] as AbortSignal;
+  fireEvent.click(screen.getByRole("button", { name: "Queued entries" }));
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+  expect(oldSignal.aborted).toBe(true);
+  oldRefresh.resolve({
+    entries: [{ ...savedEntry, title: "Cancelled result" }],
+    nextCursor: null,
+  });
+  newRefresh.reject({ kind: "transport", message: "offline" });
+  expect(
+    await screen.findByText(/Entry saved. Queue refresh failed/),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry queue" }));
+  await screen.findByRole("heading", { name: "Fresh filtered entry" });
+  expect(screen.queryByText(/Entry saved. Queue refresh failed/)).toBeNull();
+  expect(create).toHaveBeenCalledOnce();
+  expect(list).toHaveBeenCalledTimes(4);
 });
