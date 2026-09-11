@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createPublicApiClient, isTransportFailure } from "./client";
+import { createHealthClient } from "./health";
 
 const validProfile = {
   opaqueId: "framework-contract-v1",
@@ -399,7 +400,7 @@ describe("Framework Public API facade", () => {
     await cancelled;
   });
 
-  it("enforces the configured timeout as a non-retryable transport failure", async () => {
+  it("classifies the configured timeout as a transport failure", async () => {
     vi.useFakeTimers();
     const client = createPublicApiClient({
       baseUrl: "https://service.test",
@@ -414,4 +415,118 @@ describe("Framework Public API facade", () => {
     await vi.advanceTimersByTimeAsync(5);
     await timedOut;
   });
+});
+
+describe.each(["health", "public API"] as const)(
+  "%s request lifecycle",
+  (endpoint) => {
+    function request(fetchImplementation: typeof fetch, signal?: AbortSignal) {
+      const options = {
+        baseUrl: "https://service.test/root/?ignored=true",
+        fetchImplementation,
+      };
+      return endpoint === "health"
+        ? createHealthClient(options)(signal)
+        : createPublicApiClient(options).frameworkContractProfile({ signal });
+    }
+
+    it("cancels while consuming a response body", async () => {
+      const controller = new AbortController();
+      const fetchImplementation = vi.fn<typeof fetch>(async (_input, init) => {
+        const body = new ReadableStream({
+          start(stream) {
+            init?.signal?.addEventListener(
+              "abort",
+              () => stream.error(init.signal?.reason),
+              { once: true },
+            );
+          },
+        });
+        return new Response(body, {
+          headers: { "content-type": "application/json" },
+        });
+      });
+      const pending = request(fetchImplementation, controller.signal);
+      const rejected = expect(pending).rejects.toMatchObject({
+        kind: "cancelled",
+      });
+      await vi.waitFor(() =>
+        expect(fetchImplementation).toHaveBeenCalledOnce(),
+      );
+      controller.abort();
+      await rejected;
+    });
+
+    it("enforces the default ten-second deadline even when Fetch ignores cancellation", async () => {
+      vi.useFakeTimers();
+      const fetchImplementation = vi.fn<typeof fetch>(
+        () => new Promise(() => {}),
+      );
+      const pending = request(fetchImplementation);
+      const rejected = expect(pending).rejects.toMatchObject({
+        kind: "transport",
+        message: "request timed out after 10000 ms",
+      });
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(fetchImplementation.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(fetchImplementation.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    });
+
+    it("does not start an already cancelled request", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const fetchImplementation = vi.fn<typeof fetch>();
+      await expect(
+        request(fetchImplementation, controller.signal),
+      ).rejects.toMatchObject({ kind: "cancelled" });
+      expect(fetchImplementation).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("health endpoint contract", () => {
+  it("normalizes the origin and accepts additive health fields", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async () =>
+      Response.json({ status: "ready", database: "baseline", extra: true }),
+    );
+    const health = createHealthClient({
+      baseUrl: "https://service.test/root/?ignored=true#fragment",
+      fetchImplementation,
+    });
+    await expect(health()).resolves.toMatchObject({
+      status: "ready",
+      database: "baseline",
+    });
+    expect(String(fetchImplementation.mock.calls[0][0])).toBe(
+      "https://service.test/health",
+    );
+    expect(
+      new Headers(fetchImplementation.mock.calls[0][1]?.headers).has(
+        "authorization",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a plain HTTP 503 retryable without requiring Problem Details", async () => {
+    const health = createHealthClient({
+      baseUrl: "https://service.test/",
+      fetchImplementation: async () => new Response(null, { status: 503 }),
+    });
+    await expect(health()).rejects.toSatisfy(isTransportFailure);
+  });
+
+  it.each(["not JSON", JSON.stringify({ status: 1, database: "baseline" })])(
+    "rejects malformed health data: %s",
+    async (body) => {
+      const health = createHealthClient({
+        baseUrl: "https://service.test",
+        fetchImplementation: async () => new Response(body),
+      });
+      await expect(health()).rejects.toMatchObject({
+        kind: "contractViolation",
+      });
+    },
+  );
 });

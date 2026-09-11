@@ -32,12 +32,11 @@ import {
   ReadingQueueResponse,
 } from "./api/client";
 
+import { createHealthClient, HealthStatus } from "./api/health";
+
 export { isFrameworkFailure, isTransportFailure } from "./api/client";
 
-export interface HealthStatus {
-  status: string;
-  database: string;
-}
+export type { HealthStatus } from "./api/health";
 
 export interface FrameworkClient {
   health(signal?: AbortSignal): Promise<HealthStatus>;
@@ -217,6 +216,7 @@ export function createFrameworkClient(
     fetchImplementation,
     credentialHeaders,
   });
+  const health = createHealthClient({ baseUrl, fetchImplementation });
   return {
     frameworkContractProfile(signal) {
       return publicApi.frameworkContractProfile({ signal });
@@ -233,58 +233,8 @@ export function createFrameworkClient(
     changeReadingQueueEntryState(id, input, signal) {
       return publicApi.changeReadingQueueEntryState(id, input, { signal });
     },
-    async health(signal) {
-      let response: Response;
-      try {
-        response = await fetchImplementation(`${baseUrl}/health`, { signal });
-      } catch (cause) {
-        if (signal?.aborted) {
-          throw {
-            kind: "cancelled",
-            message: "health request was cancelled by its caller",
-          } satisfies FrameworkFailure;
-        }
-        throw {
-          kind: "transport",
-          message:
-            cause instanceof Error ? cause.message : "health request failed",
-        } satisfies FrameworkFailure;
-      }
-      if (!response.ok) {
-        throw {
-          kind: "transport",
-          message: `health request returned HTTP ${response.status}`,
-        } satisfies FrameworkFailure;
-      }
-      let body: unknown;
-      try {
-        body = await response.json();
-      } catch {
-        throw {
-          kind: "contractViolation",
-          message: "health response is not valid JSON",
-        } satisfies FrameworkFailure;
-      }
-      if (!isHealthStatus(body)) {
-        throw {
-          kind: "contractViolation",
-          message: "health response does not match the Framework contract",
-        } satisfies FrameworkFailure;
-      }
-      return body;
-    },
+    health,
   };
-}
-
-function isHealthStatus(value: unknown): value is HealthStatus {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "status" in value &&
-    typeof value.status === "string" &&
-    "database" in value &&
-    typeof value.database === "string"
-  );
 }
 
 function frameworkFailureKind(error: unknown): FrameworkFailureKind {
