@@ -13,6 +13,7 @@ export interface ReadingQueueScreenProps {
     status: ReadingQueueStatusFilter,
     sort: ReadingQueueSort,
   ): void;
+  onSortPreferenceChange?(sort: ReadingQueueSort): void;
   productName: string;
   sort: ReadingQueueSort;
   status: ReadingQueueStatusFilter;
@@ -20,6 +21,7 @@ export interface ReadingQueueScreenProps {
 
 export function ReadingQueueScreen({
   onRouteStateChange,
+  onSortPreferenceChange,
   productName,
   sort,
   status,
@@ -35,6 +37,7 @@ export function ReadingQueueScreen({
       <ReadingQueuePanel
         queue={queue}
         onRouteStateChange={onRouteStateChange}
+        onSortPreferenceChange={onSortPreferenceChange}
         sort={sort}
         status={status}
       />

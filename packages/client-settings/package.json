@@ -1,0 +1,44 @@
+{
+  "name": "@yydra/client-settings",
+  "version": "0.5.0",
+  "description": "Reusable client settings using Zustand stores and persistence",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check src test package.json tsconfig.json"
+  },
+  "dependencies": {
+    "zustand": "5.0.15"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.2.4",
+    "@types/react-dom": "19.2.3",
+    "jsdom": "30.0.1",
+    "prettier": "3.9.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

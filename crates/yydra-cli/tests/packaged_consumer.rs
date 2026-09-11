@@ -106,6 +106,23 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             .join("template/product-workspace/.cargo/config.toml")
             .is_file()
     );
+    for relative in [
+        "package.json",
+        "src/index.ts",
+        "src/react.ts",
+        "README.md",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+    ] {
+        let path = extracted
+            .join("template/product-workspace/frontend/modules/yydra-client-settings")
+            .join(relative);
+        assert!(
+            fs::symlink_metadata(&path).unwrap().is_file(),
+            "settings package must contain portable regular files: {}",
+            path.display()
+        );
+    }
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));
@@ -196,6 +213,12 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         "crates/server/src/main.rs",
         "crates/transport-http/Cargo.toml",
         "frontend/app/index.tsx",
+        "frontend/modules/yydra-client-settings/package.json",
+        "frontend/modules/yydra-client-settings/src/index.ts",
+        "frontend/modules/yydra-client-settings/src/react.ts",
+        "frontend/modules/yydra-client-settings/LICENSE-MIT",
+        "frontend/modules/yydra-client-settings/LICENSE-APACHE",
+        "frontend/modules/yydra-client-settings/README.md",
         "frontend/.npmrc",
         "frontend/package-lock.json",
         "migrations/0001_baseline.sql",

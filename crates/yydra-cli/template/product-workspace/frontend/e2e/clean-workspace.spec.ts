@@ -358,3 +358,39 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   ).toBeVisible();
   await verifyAccountIsolation(page, entryTitle);
 });
+
+test("remembers explicit sorting without persisting URL or filter overrides", async ({
+  page,
+}) => {
+  await signIn(page);
+  const oldest = page.getByRole("button", { name: "Oldest first" });
+  const newest = page.getByRole("button", { name: "Newest first" });
+  await expect(oldest).toHaveAttribute("aria-selected", "true");
+  await newest.click();
+  await expect(newest).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const stored = localStorage.getItem("__PRODUCT_ID__:client-settings");
+        return stored ? JSON.parse(stored).state.defaultSort : null;
+      }),
+    )
+    .toBe("newest");
+
+  await page.goto("/");
+  await expect(newest).toHaveAttribute("aria-selected", "true");
+  await page.reload();
+  await expect(newest).toHaveAttribute("aria-selected", "true");
+
+  await page.goto("/?sort=oldest");
+  await expect(oldest).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Queued entries" }).click();
+  await page.goto("/");
+  await expect(newest).toHaveAttribute("aria-selected", "true");
+
+  await page.goto("/?sort=oldest");
+  await expect(oldest).toHaveAttribute("aria-selected", "true");
+  await oldest.click();
+  await page.goto("/");
+  await expect(oldest).toHaveAttribute("aria-selected", "true");
+});

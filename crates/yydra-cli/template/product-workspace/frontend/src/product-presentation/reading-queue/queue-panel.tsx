@@ -12,6 +12,7 @@ import { styles } from "./styles";
 export function ReadingQueuePanel({
   queue,
   onRouteStateChange,
+  onSortPreferenceChange,
   sort,
   status,
 }: Omit<ReadingQueueScreenProps, "productName"> & {
@@ -65,7 +66,10 @@ export function ReadingQueuePanel({
             accessibilityState={{ selected: sort === value }}
             aria-selected={sort === value}
             key={value}
-            onPress={() => onRouteStateChange(status, value)}
+            onPress={() => {
+              onRouteStateChange(status, value);
+              onSortPreferenceChange?.(value);
+            }}
             style={[
               styles.filterButton,
               sort === value && styles.selectedButton,

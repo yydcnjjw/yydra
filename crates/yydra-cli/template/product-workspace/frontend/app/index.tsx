@@ -6,6 +6,7 @@ import {
   useRouter,
 } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useStore } from "@yydra/client-settings/react";
 
 import {
   ReadingQueueSort,
@@ -13,6 +14,7 @@ import {
 } from "@/product-presentation/reading-queue/queries";
 import { ProductAuthGate } from "@/product-presentation/auth/runtime";
 import { ReadingQueueScreen } from "@/product-presentation/reading-queue/screen";
+import { clientSettings } from "@/product-presentation/settings";
 
 function firstSearchValue(
   value: string | string[] | undefined,
@@ -27,18 +29,26 @@ function statusFromUrl(
   return status === "queued" || status === "completed" ? status : "all";
 }
 
-function sortFromUrl(value: string | string[] | undefined): ReadingQueueSort {
-  return firstSearchValue(value) === "newest" ? "newest" : "oldest";
+function sortFromUrl(
+  value: string | string[] | undefined,
+  defaultSort: ReadingQueueSort,
+): ReadingQueueSort {
+  const sort = firstSearchValue(value);
+  return sort === "newest" || sort === "oldest" ? sort : defaultSort;
 }
 
 export default function IndexRoute() {
   const router = useRouter();
+  const defaultSort = useStore(
+    clientSettings,
+    (settings) => settings.defaultSort,
+  );
   const search = useLocalSearchParams<{
     status?: string | string[];
     sort?: string | string[];
   }>();
   const status = statusFromUrl(search.status);
-  const sort = sortFromUrl(search.sort);
+  const sort = sortFromUrl(search.sort, defaultSort);
 
   return (
     <ProductAuthGate>
@@ -49,6 +59,9 @@ export default function IndexRoute() {
             status: nextStatus,
           })
         }
+        onSortPreferenceChange={(defaultSort) => {
+          void clientSettings.setState({ defaultSort });
+        }}
         productName={__PRODUCT_NAME_JSON__}
         sort={sort}
         status={status}

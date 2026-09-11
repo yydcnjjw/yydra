@@ -127,7 +127,15 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
     );
     let build = command_output(
         Command::new(&cargo)
-            .args(["build", "--locked", "--offline", "--workspace", "--bins"])
+            .args([
+                "build",
+                "--locked",
+                "--offline",
+                "--workspace",
+                "--bins",
+                "--features",
+                "live-reader-server/auth-fixture",
+            ])
             .current_dir(&workspace),
         "build clean Workspace binaries",
     );
@@ -235,7 +243,14 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
     assert_success(&restore_version, "restore migration version fixture");
 
     let server_port = reserve_port();
-    let mut server = ServerGuard::spawn(&server_binary, &workspace, &database_url, server_port);
+    let h5_port = reserve_port();
+    let mut server = ServerGuard::spawn(
+        &server_binary,
+        &workspace,
+        &database_url,
+        server_port,
+        h5_port,
+    );
     let health = wait_for_health(&mut server.child, server_port);
     assert!(
         health.contains("HTTP/1.1 200 OK"),
@@ -257,7 +272,6 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         );
         assert_success(&output, label);
     }
-    let h5_port = reserve_port();
     let h5 = command_output(
         Command::new("npm")
             .args(["run", "test:e2e"])
@@ -343,13 +357,25 @@ struct ServerGuard {
 }
 
 impl ServerGuard {
-    fn spawn(binary: &Path, workspace: &Path, database_url: &str, port: u16) -> Self {
+    fn spawn(binary: &Path, workspace: &Path, database_url: &str, port: u16, h5_port: u16) -> Self {
         let mut command = Command::new(binary);
         command
             .current_dir(workspace)
             .env("DATABASE_URL", database_url)
             .env("YYDRA_BIND_ADDRESS", format!("127.0.0.1:{port}"))
             .env("YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY", CURSOR_SIGNING_KEY)
+            .env("YYDRA_AUTH_DEVELOPMENT", "true")
+            .env("YYDRA_PUBLIC_API_URL", format!("http://127.0.0.1:{port}"))
+            .env(
+                "YYDRA_AUTH_WEB_RETURN",
+                format!("http://127.0.0.1:{h5_port}"),
+            )
+            .env(
+                "YYDRA_AUTH_FIXTURE_PROVIDER",
+                format!("http://127.0.0.1:{port}"),
+            )
+            .env_remove("GITHUB_CLIENT_ID")
+            .env_remove("GITHUB_CLIENT_SECRET")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);

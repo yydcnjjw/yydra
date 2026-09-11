@@ -779,6 +779,7 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                     "LICENSE-*",
                     ".agents/skills/yydra-*/**",
                     ".yydra/build-support/**",
+                    "frontend/modules/yydra-client-settings/**",
                 ],
                 lifecycle: "exact-distribution-snapshot",
                 priority: 400,
@@ -999,9 +1000,12 @@ fn verify_snapshot_authorities_with_origin(
 }
 
 fn is_library_snapshot(path: &str) -> bool {
-    [".yydra/build-support/"]
-        .iter()
-        .any(|prefix| path.starts_with(prefix))
+    [
+        ".yydra/build-support/",
+        "frontend/modules/yydra-client-settings/",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
 }
 
 fn verify_build_support_snapshot(
@@ -1009,18 +1013,25 @@ fn verify_build_support_snapshot(
     expected: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<()> {
     let mut actual = std::collections::BTreeMap::new();
-    let mut pending = [".yydra/build-support"]
-        .into_iter()
-        .filter(|root| expected.keys().any(|file| file.starts_with(root)))
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
+    let mut pending = [
+        ".yydra/build-support",
+        "frontend/modules/yydra-client-settings",
+    ]
+    .into_iter()
+    .filter(|root| expected.keys().any(|file| file.starts_with(root)))
+    .map(PathBuf::from)
+    .collect::<Vec<_>>();
     while let Some(relative) = pending.pop() {
         let path = root.join(&relative);
         let metadata = fs::symlink_metadata(&path)
             .with_context(|| format!("read exact library snapshot '{}'", path.display()))?;
         if metadata.is_dir() && expected.keys().any(|file| file.starts_with(&relative)) {
             for child in fs::read_dir(&path)? {
-                pending.push(relative.join(child?.file_name()));
+                let child = relative.join(child?.file_name());
+                // npm can place linked-package dependencies inside the package.
+                if child != Path::new("frontend/modules/yydra-client-settings/node_modules") {
+                    pending.push(child);
+                }
             }
         } else if metadata.is_file() {
             actual.insert(relative, fs::read(path)?);
@@ -1032,9 +1043,7 @@ fn verify_build_support_snapshot(
         }
     }
     if &actual != expected {
-        bail!(
-            "exact Distribution snapshot drift at '.yydra/build-support'; restore the complete reviewed library sources"
-        );
+        bail!("exact Distribution snapshot drift; restore the complete reviewed library sources");
     }
     Ok(())
 }

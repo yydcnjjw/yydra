@@ -117,6 +117,10 @@ _Avoid_: Capability, infrastructure, application code
 The Product Workspace-owned routes, screens, visual language, accessibility semantics, and interaction flows that present Product Domain behavior through Framework APIs, Capability Presentations, and the Supported Golden Stack Surface.
 _Avoid_: Product Domain, Capability Presentation, Framework UI
 
+**Client Settings**:
+Product-defined, non-secret preferences belonging to one application installation or browser storage space, retained across application restarts and changeable during use. Each Product Workspace owns their meaning and defaults; they are not scoped to an account.
+_Avoid_: backend configuration, account settings, remote configuration
+
 **Product Adapter**:
 A Product Workspace-owned adapter at a real seam that isolates Product Domain code from product-specific external, platform, or ecosystem behavior.
 _Avoid_: Product Domain, Capability, wrapper

@@ -200,6 +200,15 @@ client and an isolated no-retry `QueryClient` through the same Provider seam;
 tests do not mock Generated Client files, global Fetch, query hooks, or Query
 internals.
 
+Client preferences are declared in `frontend/src/product-presentation/settings.ts`
+using `@yydra/client-settings`. The root restores them with Zustand's native
+persist hydration before displaying the application. The Reading Queue remembers
+an explicitly selected sort across reopening; a valid URL sort overrides it
+for that view without changing the preference. A filter change alone does not
+save a sort. Products own defaults, storage keys, and version migrations.
+The shared package under `frontend/modules/yydra-client-settings` is an exact
+Distribution snapshot; see its README for the native Zustand API and scope.
+
 The handwritten API facade and anonymous health client share request execution:
 HTTP(S) base URLs resolve from the origin (path, query, and fragment are removed),
 and each request has a ten-second default deadline covering credentials,
