@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Only server build inputs enter the context. Retain Cargo workspace path dependencies.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!crates/**
+!migrations/
+!migrations/**
+!.yydra/
+!.yydra/build-support/
+!.yydra/build-support/**
+!container/
+!container/**
+!LICENSE-APACHE
+!LICENSE-MIT
+**/target
+**/.env
+**/.env.*

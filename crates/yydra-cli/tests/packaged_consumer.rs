@@ -161,6 +161,12 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&doctor.stderr)
     );
     for materialized in [
+        "Dockerfile",
+        ".dockerignore",
+        "compose.yaml",
+        "compose.dev.yaml",
+        "container/entrypoint.sh",
+        "crates/persistence-postgres/build.rs",
         "Cargo.toml",
         "Cargo.lock",
         "crates/application/Cargo.toml",

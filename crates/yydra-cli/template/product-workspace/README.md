@@ -25,6 +25,71 @@ performance, Agent Eval success, or Skill effect.
 Creation is a one-shot boundary: there is no template rerun, no template sync,
 no upgrade, no compatibility-range selection, and no Distribution-version override contract.
 
+## Run the server with Docker Compose
+
+On a machine with Docker Engine and the Compose plugin, run from this Product
+Workspace (the directory containing this README):
+
+```console
+docker compose up --build --wait
+curl --fail http://127.0.0.1:4000/health
+```
+
+The multi-stage Dockerfile compiles the release `server` and `migrate` binaries
+with Rust nightly inside the builder. The runtime image contains the binaries,
+entrypoint, and runtime dependencies. Host Rust, Node, npm, and the Yydra CLI
+are not required for this path; Docker needs access to the image, Rust, and
+Cargo download services during the initial build. H5 and Android are separate
+build targets and are not included in this server image.
+
+Compose initializes random database and cursor-signing credentials once in the
+`credentials` volume, starts PostgreSQL with the `postgres-data` volume, runs
+the image's migration executable, then starts the backend. Failed initialization
+or migration prevents initial backend startup. `--wait` returns success only
+when PostgreSQL and the backend pass their health checks. The backend still
+verifies compiled migration history; the server executable does not apply it.
+The runtime server runs as a non-root user and handles Docker's stop signal.
+
+The API binds to host loopback on port 4000 by default. To choose a port or
+bind to an externally reachable host interface, set `YYDRA_SERVER_PORT` or
+`YYDRA_SERVER_HOST` (for example, `0.0.0.0`) in the shell or a local `.env` file
+before `compose up`. PostgreSQL has no published host port. The template's
+Reading Queue is anonymous and its protected endpoint is only an authentication
+contract fixture, not a product identity system; configure product access
+control and HTTPS before exposing an actual product publicly.
+
+```console
+docker compose logs --tail 100 server migrate
+docker compose stop
+docker compose start --wait
+docker compose down
+docker compose up --build --wait
+```
+
+`stop`, `down`, container replacement, and rebuilding the image preserve the
+named volumes. Keep both volumes together when backing up or moving a deployment;
+losing credentials is not automatic database-password recovery. `down --volumes`
+explicitly deletes credentials and database records. Do not use it for ordinary
+updates. After pulling a source change, run `up --build --wait` to rebuild and
+apply forward migrations. This is a single-host deployment with possible downtime,
+not an atomic upgrade or an automatic rollback of application or database changes.
+Migration failure on an update may leave the previous server running or unhealthy;
+inspect the migration logs and repair forward before rerunning the command.
+
+For image-only packaging use `docker compose build server`. The image defaults to
+`__PRODUCT_ID__-server:local`; `YYDRA_SERVER_IMAGE` overrides its local tag. To use
+the image independently of Compose, provide `DATABASE_URL` and
+`YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` at runtime, run its `migrate` command
+against that database first, then start its default `server` command. Credentials
+are runtime inputs and never build arguments. Publishing the image to a registry
+is a separate operation. The container files are Product-owned and may be adapted
+to the product's deployment environment.
+
+Development uses the separate `compose.dev.yaml` below, with its own default
+Compose project name (`__PRODUCT_ID__-dev`, versus `__PRODUCT_ID__-server`). It deliberately retains
+an ephemeral PostgreSQL instance and the local port expected by `yydra dev` and
+checks; its data is unrelated to the deployment volumes.
+
 ## Supported local path
 
 `frontend/.npmrc` selects the same registry used by the committed npm lock, so
@@ -44,7 +109,7 @@ Install exact dependency graphs and start the pinned PostgreSQL service:
 
 ```console
 yydra setup .
-docker compose up -d --wait postgres
+docker compose -f compose.dev.yaml up -d --wait postgres
 export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product
 ```
 
