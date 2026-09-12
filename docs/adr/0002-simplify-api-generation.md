@@ -131,3 +131,10 @@ builds, after repairing a Gradle download timeout with a verified public wrapper
 cache. Both review axes have no unresolved findings. See the
 [implementation validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-08-API-Generation/6a878e624ef5fba3d3069e3daf38a7169d798982)
 for package identities, failure/rebuild cases, evidence, and scope limits.
+
+## Subsequent diagnostic and validation scope
+
+[ADR 0009](0009-consolidate-diagnostics-in-doctor.md) retires `yydra check`,
+the quality graph, and aggregate evidence. Current environment diagnostics use
+`doctor`; project validation uses explicit Cargo/npm tests and builds. The
+original decision and dated validation above retain their historical scope.

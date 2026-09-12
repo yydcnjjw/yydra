@@ -7,6 +7,90 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[test]
+fn android_build_reports_generation_gradle_and_artifact_failures() {
+    for (case, generation, gradle, expected) in [
+        (
+            "missing-host",
+            "exit 0",
+            "",
+            "NATIVE_GENERATION_OUTPUT_MISSING",
+        ),
+        (
+            "mutated-input",
+            "echo changed >> ../Cargo.lock",
+            "exit 0",
+            "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS",
+        ),
+        (
+            "gradle-failed",
+            ":",
+            "echo build-failed >&2; exit 7",
+            "ANDROID_RELEASE_BUILD_FAILED",
+        ),
+        (
+            "missing-apk",
+            ":",
+            "exit 0",
+            "ANDROID_RELEASE_OUTPUT_MISSING",
+        ),
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join(case);
+        let created = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("new")
+            .arg(&root)
+            .args([
+                "--product-name",
+                "Failure Product",
+                "--product-id",
+                "failure-product",
+                "--product-source-license",
+                "Apache-2.0",
+            ])
+            .output()
+            .unwrap();
+        assert!(created.status.success());
+        let bin = sandbox.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let npm = bin.join("npm");
+        fs::write(
+            &npm,
+            format!(
+                r#"#!/bin/sh
+if [ "$*" = 'run typecheck' ]; then exit 0; fi
+test "$*" = 'run --ignore-scripts generate:android' || exit 99
+{generation}
+mkdir -p android/app
+touch android/settings.gradle android/app/build.gradle
+cat > android/gradlew <<'WRAPPER'
+#!/bin/sh
+{gradle}
+WRAPPER
+chmod +x android/gradlew
+"#
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("build")
+            .arg(&root)
+            .args(["--target", "android"])
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{case} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn explicit_android_build_produces_an_apk_without_building_server_or_h5() {
     let sandbox = tempfile::tempdir().unwrap();
     let root = sandbox.path().join("product");

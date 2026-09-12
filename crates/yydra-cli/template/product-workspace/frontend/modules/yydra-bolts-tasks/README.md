@@ -15,7 +15,7 @@ fixes cancellation-registration cleanup; it is not asserted byte-equivalent to 1
 Generated native projects remain disposable; Gradle outputs go under their build tree.
 
 The Distribution retains the original LICENSE and file-level attribution record.
-`yydra check` verifies the exact Distribution snapshot and performs the normal
-Android generation and release build. It does not query advisories, collect
-Gradle dependency materials, or produce SBOMs. A successful build does not prove
-Android runtime behavior or blanket legal compatibility.
+`yydra build --target android` performs normal Android generation and release
+assembly. Doctor diagnoses Workspace identity and tools; it does not audit this
+third-party source. A successful build does not prove Android runtime behavior
+or blanket legal compatibility.

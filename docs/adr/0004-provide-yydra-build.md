@@ -149,3 +149,10 @@ acceptance, including default backend/H5, explicit Android, Cargo incremental
 and recovery behavior, and the complete 29-node quality contract. See the
 [validation record](https://github.com/yydcnjjw/yydra/wiki/Validation-2026-09-09-Yydra-Build/6a878e624ef5fba3d3069e3daf38a7169d798982) for package identities,
 test results, review fixes, retained evidence, and the local acceptance boundary.
+
+## Subsequent diagnostic and validation scope
+
+[ADR 0009](0009-consolidate-diagnostics-in-doctor.md) retires `yydra check`,
+the quality graph, and aggregate evidence. Current environment diagnostics use
+`doctor`; project validation uses explicit Cargo/npm tests and builds. The
+original decision and dated validation above retain their historical scope.

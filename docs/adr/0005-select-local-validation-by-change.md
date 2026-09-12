@@ -48,3 +48,10 @@ not a future latency guarantee or the total development-session duration.
 2026-09-10, separately narrows repository CI to CLI build/tests plus DCO.
 The original decision above retained the then-current CI; its local validation
 selection and complete release-validation requirements continue to apply.
+
+## Subsequent diagnostic and validation scope
+
+[ADR 0009](0009-consolidate-diagnostics-in-doctor.md) retires `yydra check`,
+the quality graph, and aggregate evidence. Current environment diagnostics use
+`doctor`; project validation uses explicit Cargo/npm tests and builds. The
+original decision and dated validation above retain their historical scope.

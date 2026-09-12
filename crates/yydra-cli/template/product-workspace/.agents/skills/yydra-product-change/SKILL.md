@@ -46,9 +46,9 @@ only supported orchestration path.
 ## Validate before reporting completion
 
 Read [the validation contract](references/validation.md), run focused tests while
-iterating, and finish through `yydra check .`. Treat a focused node as diagnosis,
-not a complete conformance result. Report what the evidence proves and every
-applicable boundary it does not prove.
+iterating, and finish with the affected Cargo/npm tests and builds. Use
+`yydra doctor .` for environment diagnosis. Report actual commands, outcomes,
+and unrun coverage.
 
 ## Snapshot authority
 
