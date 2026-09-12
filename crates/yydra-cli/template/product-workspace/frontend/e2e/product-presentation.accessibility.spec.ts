@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { expect, test } from "@playwright/test";
+import { signIn } from "./auth-fixture";
 
 test("Reading Queue exposes registered Product Presentation semantics", async ({
   page,
@@ -10,7 +11,7 @@ test("Reading Queue exposes registered Product Presentation semantics", async ({
   const sourceUrl = `https://example.test/visible-semantics/${Date.now()}`;
 
   await page.setViewportSize({ width: 320, height: 480 });
-  await page.goto("/");
+  await signIn(page);
   const productHeadings = page.getByRole("heading", {
     name: productName,
     exact: true,

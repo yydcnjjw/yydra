@@ -60,6 +60,7 @@ pub struct HealthStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateReadingEntryCommand {
+    pub account_id: String,
     pub title: String,
     pub source_url: String,
 }
@@ -253,16 +254,19 @@ impl CreateReadingEntry {
             .begin()
             .await
             .map_err(CreateReadingEntryError::storage)?;
-        let entry = match insert_reading_entry(&mut transaction, &title, &source_url).await {
-            Ok(entry) => entry,
-            Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(CreateReadingEntryError::storage)?;
-                return Err(CreateReadingEntryError::storage(error));
-            }
-        };
+        let entry =
+            match insert_reading_entry(&mut transaction, &command.account_id, &title, &source_url)
+                .await
+            {
+                Ok(entry) => entry,
+                Err(error) => {
+                    transaction
+                        .rollback()
+                        .await
+                        .map_err(CreateReadingEntryError::storage)?;
+                    return Err(CreateReadingEntryError::storage(error));
+                }
+            };
         transaction
             .commit()
             .await
@@ -360,6 +364,7 @@ impl ListReadingEntries {
         }
         let mut items = match list_reading_entries_page(
             &mut transaction,
+            &context.authorization_scope,
             status,
             order,
             after.as_ref(),
@@ -409,6 +414,7 @@ impl ListReadingEntries {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangeReadingEntryStateCommand {
+    pub account_id: String,
     pub id: String,
     pub target: ReadingQueueEntryState,
 }
@@ -433,25 +439,26 @@ impl ChangeReadingEntryStateAndRecordProgress {
             .begin()
             .await
             .map_err(ChangeReadingEntryStateError::storage)?;
-        let mut entry = match lock_reading_entry_for_update(&mut transaction, &id).await {
-            Ok(Some(entry)) => entry,
-            Ok(None) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(ChangeReadingEntryStateError::storage)?;
-                return Err(ChangeReadingEntryStateError::NotFound {
-                    id: id.as_str().to_owned(),
-                });
-            }
-            Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(ChangeReadingEntryStateError::storage)?;
-                return Err(ChangeReadingEntryStateError::storage(error));
-            }
-        };
+        let mut entry =
+            match lock_reading_entry_for_update(&mut transaction, &command.account_id, &id).await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => {
+                    transaction
+                        .rollback()
+                        .await
+                        .map_err(ChangeReadingEntryStateError::storage)?;
+                    return Err(ChangeReadingEntryStateError::NotFound {
+                        id: id.as_str().to_owned(),
+                    });
+                }
+                Err(error) => {
+                    transaction
+                        .rollback()
+                        .await
+                        .map_err(ChangeReadingEntryStateError::storage)?;
+                    return Err(ChangeReadingEntryStateError::storage(error));
+                }
+            };
         let transition = match command.target {
             ReadingQueueEntryState::Completed => entry.complete(),
             ReadingQueueEntryState::Queued => entry.reopen(),
@@ -467,7 +474,9 @@ impl ChangeReadingEntryStateAndRecordProgress {
                 .map_err(ChangeReadingEntryStateError::storage)?;
             return Err(conflict);
         }
-        if let Err(error) = update_reading_entry_state(&mut transaction, &entry).await {
+        if let Err(error) =
+            update_reading_entry_state(&mut transaction, &command.account_id, &entry).await
+        {
             transaction
                 .rollback()
                 .await
@@ -478,7 +487,9 @@ impl ChangeReadingEntryStateAndRecordProgress {
             ReadingQueueEntryState::Completed => 1,
             ReadingQueueEntryState::Queued => -1,
         };
-        if let Err(error) = adjust_reading_progress(&mut transaction, completed_delta).await {
+        if let Err(error) =
+            adjust_reading_progress(&mut transaction, &command.account_id, completed_delta).await
+        {
             transaction
                 .rollback()
                 .await
@@ -510,7 +521,10 @@ impl GetReadingProgress {
         Self { database }
     }
 
-    pub async fn execute(&self) -> Result<ReadingProgressView, GetReadingProgressError> {
+    pub async fn execute(
+        &self,
+        account_id: &str,
+    ) -> Result<ReadingProgressView, GetReadingProgressError> {
         let mut transaction = self
             .database
             .begin()
@@ -526,7 +540,7 @@ impl GetReadingProgress {
                 .map_err(GetReadingProgressError::storage)?;
             return Err(GetReadingProgressError::storage(error));
         }
-        let progress = match load_reading_progress(&mut transaction).await {
+        let progress = match load_reading_progress(&mut transaction, account_id).await {
             Ok(progress) => progress,
             Err(error) => {
                 transaction

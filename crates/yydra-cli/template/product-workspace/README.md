@@ -15,7 +15,7 @@ hand-edited authorities.
 
 Exactly two portable Baseline Skill snapshots are materialized under
 `.agents/skills`: `yydra-product-change` routes an end-to-end Product Domain
-change, and `yydra-diagnose` interprets structured `doctor` and `check` results
+change, and `yydra-diagnose` interprets structured `doctor` results
 for safe focused repair. Their exact Distribution inventory and digests are the
 authority; the Skills have no independent version, compatibility resolver,
 upgrade path, or lifecycle. Client discovery is only a thin integration seam and
@@ -27,19 +27,32 @@ no upgrade, no compatibility-range selection, and no Distribution-version overri
 
 ## Run the server with Docker Compose
 
-On a machine with Docker Engine and the Compose plugin, run from this Product
-Workspace (the directory containing this README):
+This development template requires the local authentication package registries
+before dependency installation or container builds. On the same Linux machine,
+start and seed them from the matching Yydra checkout:
 
 ```console
-docker compose up --build --wait
+python3 scripts/local-packages.py up
+python3 scripts/local-packages.py publish
+```
+
+Registry preparation needs Docker Engine with Compose, Python 3.11+, Rust nightly,
+and Node/npm. See the Yydra repository's `dev/local-packages/README.md` for setup
+and persistence. Then run from this Product Workspace:
+
+```console
+docker compose -f compose.yaml -f compose.local-registry.yaml up --build --wait
 curl --fail http://127.0.0.1:4000/health
 ```
 
 The multi-stage Dockerfile compiles the release `server` and `migrate` binaries
 with Rust nightly inside the builder. The runtime image contains the binaries,
-entrypoint, and runtime dependencies. Host Rust, Node, npm, and the Yydra CLI
-are not required for this path; Docker needs access to the image, Rust, and
-Cargo download services during the initial build. H5 and Android are separate
+entrypoint, and runtime dependencies. Once the registries have been seeded,
+the server build needs only Docker and access to the local registries, image,
+Rust, and Cargo download services. The Linux override gives the build stage
+access to host loopback; runtime containers retain their normal network.
+Running a prebuilt image needs neither the registries nor host language tools.
+H5 and Android are separate
 build targets and are not included in this server image.
 
 Compose initializes random database and cursor-signing credentials once in the
@@ -53,30 +66,32 @@ The runtime server runs as a non-root user and handles Docker's stop signal.
 The API binds to host loopback on port 4000 by default. To choose a port or
 bind to an externally reachable host interface, set `YYDRA_SERVER_PORT` or
 `YYDRA_SERVER_HOST` (for example, `0.0.0.0`) in the shell or a local `.env` file
-before `compose up`. PostgreSQL has no published host port. The template's
-Reading Queue is anonymous and its protected endpoint is only an authentication
-contract fixture, not a product identity system; configure product access
-control and HTTPS before exposing an actual product publicly.
+before `compose up`. PostgreSQL has no published host port. Reading Queue access requires a product
+session, with entries and progress isolated per account. Configure GitHub sign-in and HTTPS as described below
+before enabling sign-in for a deployed product.
 
 ```console
 docker compose logs --tail 100 server migrate
 docker compose stop
 docker compose start --wait
 docker compose down
-docker compose up --build --wait
+docker compose -f compose.yaml -f compose.local-registry.yaml up --build --wait
 ```
 
 `stop`, `down`, container replacement, and rebuilding the image preserve the
 named volumes. Keep both volumes together when backing up or moving a deployment;
 losing credentials is not automatic database-password recovery. `down --volumes`
 explicitly deletes credentials and database records. Do not use it for ordinary
-updates. After pulling a source change, run `up --build --wait` to rebuild and
-apply forward migrations. This is a single-host deployment with possible downtime,
+updates. After pulling a source change, rerun the build/start command above,
+including the local registry override, to rebuild and apply forward migrations.
+This is a single-host deployment with possible downtime,
 not an atomic upgrade or an automatic rollback of application or database changes.
 Migration failure on an update may leave the previous server running or unhealthy;
 inspect the migration logs and repair forward before rerunning the command.
 
-For image-only packaging use `docker compose build server`. The image defaults to
+For image-only packaging use
+`docker compose -f compose.yaml -f compose.local-registry.yaml build server`.
+The image defaults to
 `__PRODUCT_ID__-server:local`; `YYDRA_SERVER_IMAGE` overrides its local tag. To use
 the image independently of Compose, provide `DATABASE_URL` and
 `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` at runtime, run its `migrate` command
@@ -209,16 +224,13 @@ background loading, true empty success, blocking and stale-data failures,
 cancellation, typed Problem recovery, transport failure, and contract-safe
 fallbacks while retaining responsive wrapping, scrolling, focus, and recovery.
 
-The Framework authentication seam declares anonymous and protected routes and
-injects credentials through the same client assembly path. The protected
-`/api/v1/framework-auth-contract` probe distinguishes a missing credential as
-`401` with `WWW-Authenticate` from a rejected credential as `403`; its default
-authorized local token is `local-framework-contract`, while the valid but
-denied fixture token is `local-framework-forbidden`. These non-secret fixture
-values may be replaced through `YYDRA_AUTH_CONTRACT_TOKEN` and
-`YYDRA_AUTH_CONTRACT_FORBIDDEN_TOKEN`. This bounded probe is not an Identity
-system. Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` to a stable secret of at
-least 32 bytes before starting the server; rotating it intentionally invalidates
+The Authentication Capability validates product sessions before protected routes
+run. The `/api/v1/framework-auth-contract` probe requires the same authenticated
+principal as Reading Queue; missing access returns `401` with `WWW-Authenticate`.
+Browser mutations require the configured origin and session CSRF token, returning
+`403` when those checks fail. Production routes accept no fixed test token.
+Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` to a stable secret of at least
+32 bytes before starting the server; rotating it intentionally invalidates
 previous cursors. Do not place that value in source or logs.
 
 ## Environment diagnostics and validation
@@ -334,12 +346,19 @@ restores URL state against the real Axum and PostgreSQL service. It verifies
 cursor traversal/termination, tamper and context rejection, stable request,
 transition, and authentication Problems. Run the transaction, constraint, and
 keyset-order database fixtures separately with the `reading_queue_postgres`
-Cargo command above against a disposable database. Start the backend in one terminal:
+Cargo command above against a disposable database. Start the controlled OAuth
+fixture server in one terminal. This explicit feature and its non-secret
+credentials are for disposable local validation only:
 
 ```console
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
 YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=<at-least-32-byte-secret> \
-  cargo run --locked --bin server
+  YYDRA_AUTH_DEVELOPMENT=true \
+  YYDRA_PUBLIC_API_URL=http://127.0.0.1:4000 \
+  YYDRA_AUTH_WEB_RETURN=http://127.0.0.1:8081 \
+  YYDRA_AUTH_FIXTURE_PROVIDER=http://127.0.0.1:4000 \
+  GITHUB_CLIENT_ID=fixture-client GITHUB_CLIENT_SECRET=fixture-secret \
+  cargo run --locked --features auth-fixture --bin server
 ```
 
 Install Playwright Chromium explicitly with `npm --prefix frontend exec -- playwright install chromium`.
@@ -353,3 +372,61 @@ EXPO_PUBLIC_API_URL=http://127.0.0.1:4000 npm --prefix frontend run test:e2e
 Add `--message-format=json` before any supported Yydra subcommand for versioned
 JSON Lines diagnostics. Cargo, npm, Expo, and Playwright output is forwarded as
 diagnostic detail rather than becoming a second supported interface.
+
+## GitHub sign-in
+
+The template enables the reusable Authentication Capability for H5 and Android.
+GitHub verifies identity and the product creates an account on first successful
+login. Product sessions are independent across products, support multiple devices,
+and expire seven days after login by default. Sign-out revokes the current session;
+other devices remain signed in. Revoking GitHub authorization does not immediately
+revoke an existing product session.
+
+Create a GitHub App and configure its user authorization callback as
+`<YYDRA_PUBLIC_API_URL>/auth/github/callback`. User authorization does not require
+installing the app. Do not request repository or private-email permissions for
+sign-in. Set these **server runtime** inputs:
+
+| Variable | Meaning |
+| --- | --- |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App credentials; never put the secret in an `EXPO_PUBLIC_*` variable |
+| `YYDRA_PUBLIC_API_URL` | Externally reachable backend origin |
+| `YYDRA_AUTH_WEB_RETURN` | Exact H5 return URL; its origin is the credentialed CORS allowlist |
+| `YYDRA_AUTH_NATIVE_RETURN` | Exact Android return, default `__PRODUCT_ID__://auth/callback` |
+| `YYDRA_AUTH_SESSION_SECONDS` | Optional absolute session lifetime, default `604800` |
+| `YYDRA_AUTH_DEVELOPMENT` | Explicit `true` for local HTTP; production uses HTTPS and Secure cookies |
+
+Missing GitHub credentials leave protected access closed; `/health` remains usable.
+Production H5 and API hosts must be same-site and served through HTTPS. Compose
+accepts these runtime inputs but does not provide a TLS proxy or host the H5 export.
+`yydra dev` explicitly enables local HTTP; its defaults use API `http://127.0.0.1:4000`
+and H5 `http://127.0.0.1:8081`. Register that backend callback for a development App.
+
+Set frontend `EXPO_PUBLIC_API_URL` before bundling. For an Android device, use a
+reachable backend address, or use `adb reverse tcp:4000 tcp:4000` for local testing
+with the loopback API. Native builds contain only the public API address and app
+return scheme. Android uses the system browser, a verifier-bound one-time handoff,
+and SecureStore; callback URLs never contain reusable product credentials.
+Use a development build or installed APK for this flow, not Expo Go.
+
+The local Expo config plugin permits release-build HTTP only for `127.0.0.1`
+and `localhost`, supporting the documented `adb reverse` setup. Other release
+API hosts require HTTPS. Debug builds retain Expo's Metro/LAN HTTP behavior.
+This uses Android's [network security configuration](https://developer.android.com/privacy-and-security/security-config)
+without adding certificate authorities or disabling certificate verification.
+
+Authentication libraries are installed as exact development package versions
+from the local Yydra registries (Cargo on 127.0.0.1:18081, npm on 127.0.0.1:4873).
+Before `yydra setup`, start and seed them from the matching Yydra checkout with
+`python3 scripts/local-packages.py up` and `python3 scripts/local-packages.py publish`.
+`doctor` verifies package declarations and locked identities. For a Linux
+server container build, use `docker compose -f compose.yaml -f compose.local-registry.yaml up --build`
+so the build can reach the same registries. See the Yydra repository
+`dev/local-packages/README.md` for credentials, persistence and version updates.
+Product pages and resource ownership rules remain ordinary editable product code.
+Forward migrations install the shared authentication tables and per-account
+Reading Queue ownership. An existing product with anonymous entries needs an
+explicit ownership migration; it must not assign them to the first login.
+
+Use a disposable provider fixture for automated login tests. A fixture result
+is not evidence that a real GitHub App's registration or consent flow was tested.

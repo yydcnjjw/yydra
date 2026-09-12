@@ -97,6 +97,18 @@ _Avoid_: crate, package, infrastructure module, Product Domain
 A Capability-owned reusable UI and interaction module that presents application semantics through the Supported Golden Stack Surface without owning general UI primitives or product-distinguishing rules.
 _Avoid_: UI kit, Product Presentation, Product Domain
 
+**Authentication Capability**:
+A selectable Capability that provides identity verification through supported external identity providers and manages product sessions. Product-specific authorization and profile rules remain owned by the product.
+_Avoid_: password login, permission management, Product Domain
+
+**Product Account**:
+A product-owned identity for a user whose access and resources are scoped to that Product Workspace. An external identity can establish a Product Account without making it a shared account across products.
+_Avoid_: GitHub username, email address, shared account center
+
+**Product Session**:
+A product-owned, revocable period of authenticated access associated with one Product Account. Its lifetime is separate from the user's login state at an external identity provider or another product.
+_Avoid_: GitHub login, provider access token, cross-product session
+
 **Product Domain**:
 The product-specific concepts, rules, and state transitions that distinguish one Product Workspace from another and remain expressed as normal source code.
 _Avoid_: Capability, infrastructure, application code

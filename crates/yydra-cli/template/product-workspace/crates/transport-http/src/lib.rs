@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use product_application::{
     ChangeReadingEntryStateCommand, ChangeReadingEntryStateError, CreateReadingEntryCommand,
     CreateReadingEntryError, HealthService, ListReadingEntriesError, ListReadingEntriesQuery,
@@ -22,6 +22,7 @@ use utoipa::openapi::{Info, OpenApi, Paths, RefOr};
 use utoipa::{IntoParams, PartialSchema, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use yydra_auth::Principal;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -196,127 +197,21 @@ pub struct FrameworkProtectedContract {
     pub access: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RouteAccess {
-    Anonymous,
-    Protected,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AuthenticationDecision {
-    Authorized,
-    MissingCredentials,
-    Forbidden,
-}
-
-pub trait Authentication: Send + Sync {
-    fn authenticate(&self, headers: &HeaderMap) -> AuthenticationDecision;
-}
-
-#[derive(Clone)]
-pub struct BearerAuthentication {
-    authorized: Arc<str>,
-    forbidden: Arc<str>,
-}
-
-impl BearerAuthentication {
-    pub fn new(
-        authorized: impl Into<String>,
-        forbidden: impl Into<String>,
-    ) -> Result<Self, AuthenticationConfigurationError> {
-        let authorized = authorized.into();
-        let forbidden = forbidden.into();
-        if authorized.is_empty()
-            || authorized.chars().any(char::is_whitespace)
-            || forbidden.is_empty()
-            || forbidden.chars().any(char::is_whitespace)
-            || authorized == forbidden
-        {
-            return Err(AuthenticationConfigurationError);
-        }
-        Ok(Self {
-            authorized: Arc::from(authorized),
-            forbidden: Arc::from(forbidden),
-        })
-    }
-}
-
-impl Authentication for BearerAuthentication {
-    fn authenticate(&self, headers: &HeaderMap) -> AuthenticationDecision {
-        let Some(value) = headers.get(header::AUTHORIZATION) else {
-            return AuthenticationDecision::MissingCredentials;
-        };
-        let Ok(value) = value.to_str() else {
-            return AuthenticationDecision::MissingCredentials;
-        };
-        let Some(token) = value.strip_prefix("Bearer ") else {
-            return AuthenticationDecision::MissingCredentials;
-        };
-        if token == self.authorized.as_ref() {
-            AuthenticationDecision::Authorized
-        } else if token == self.forbidden.as_ref() {
-            AuthenticationDecision::Forbidden
-        } else {
-            AuthenticationDecision::MissingCredentials
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct AuthenticationConfigurationError;
-
-impl std::fmt::Display for AuthenticationConfigurationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(
-            "authentication fixture credentials must be distinct and non-empty without whitespace",
-        )
-    }
-}
-
-impl std::error::Error for AuthenticationConfigurationError {}
-
-const READING_QUEUE_ACCESS: RouteAccess = RouteAccess::Anonymous;
-const FRAMEWORK_PROTECTED_ACCESS: RouteAccess = RouteAccess::Protected;
-
 #[derive(Clone)]
 pub struct ReadingQueueHttpState {
     application: Arc<dyn ReadingQueueApplication>,
-    authentication: Arc<dyn Authentication>,
 }
-
 impl ReadingQueueHttpState {
-    pub fn new(
-        application: impl ReadingQueueApplication + 'static,
-        authentication: impl Authentication + 'static,
-    ) -> Self {
+    pub fn new(application: impl ReadingQueueApplication + 'static) -> Self {
         Self {
             application: Arc::new(application),
-            authentication: Arc::new(authentication),
-        }
-    }
-
-    fn authorize(
-        &self,
-        access: RouteAccess,
-        headers: &HeaderMap,
-    ) -> Result<AuthorizationContext, ProblemResponse> {
-        if access == RouteAccess::Anonymous {
-            return Ok(AuthorizationContext {
-                cursor_scope: "anonymous",
-            });
-        }
-        match self.authentication.authenticate(headers) {
-            AuthenticationDecision::Authorized => Ok(AuthorizationContext {
-                cursor_scope: "protected-contract",
-            }),
-            AuthenticationDecision::MissingCredentials => Err(ProblemResponse::unauthorized()),
-            AuthenticationDecision::Forbidden => Err(ProblemResponse::forbidden()),
         }
     }
 }
-
-struct AuthorizationContext {
-    cursor_scope: &'static str,
+fn authorize(principal: Option<Extension<Principal>>) -> Result<String, ProblemResponse> {
+    principal
+        .map(|Extension(p)| p.account_id)
+        .ok_or_else(ProblemResponse::unauthorized)
 }
 
 struct ProblemResponse {
@@ -416,19 +311,6 @@ impl ProblemResponse {
         }
     }
 
-    fn forbidden() -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/access-forbidden".to_owned(),
-                title: "Access forbidden".to_owned(),
-                status: StatusCode::FORBIDDEN.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
-    }
-
     fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -502,15 +384,15 @@ async fn get_framework_contract_profile() -> Json<FrameworkContractProfile> {
     tag = "framework",
     responses(
         (status = 200, description = "Protected authentication-contract fixture", body = FrameworkProtectedContract, content_type = "application/json"),
+        (status = 503, description = "Authentication service unavailable", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 401, description = "Missing credentials", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 403, description = "Credentials lack access", body = ProblemDetails, content_type = "application/problem+json")
     )
 )]
 async fn get_framework_protected_contract(
-    State(state): State<ReadingQueueHttpState>,
-    headers: HeaderMap,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<FrameworkProtectedContract>, ProblemResponse> {
-    state.authorize(FRAMEWORK_PROTECTED_ACCESS, &headers)?;
+    authorize(principal)?;
     Ok(Json(FrameworkProtectedContract {
         access: "granted".to_owned(),
     }))
@@ -523,6 +405,9 @@ async fn get_framework_protected_contract(
     tag = "readingQueue",
     request_body(content = CreateReadingEntryRequest, content_type = "application/json"),
     responses(
+        (status = 503, description = "Authentication service unavailable", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 401, description = "Authentication required", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 403, description = "CSRF verification failed", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 201, description = "Reading entry created", body = ReadingQueueEntryResponse, content_type = "application/json"),
         (status = 400, description = "Invalid JSON or unknown request field", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 422, description = "Invalid reading entry", body = ProblemDetails, content_type = "application/problem+json"),
@@ -531,14 +416,15 @@ async fn get_framework_protected_contract(
 )]
 async fn create_reading_queue_entry(
     State(state): State<ReadingQueueHttpState>,
-    headers: HeaderMap,
+    principal: Option<Extension<Principal>>,
     payload: Result<Json<CreateReadingEntryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ReadingQueueEntryResponse>), ProblemResponse> {
-    state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let account_id = authorize(principal)?;
     let Json(payload) = payload.map_err(|_| ProblemResponse::invalid_json())?;
     let entry = state
         .application
         .create(CreateReadingEntryCommand {
+            account_id,
             title: payload.title,
             source_url: payload.source_url,
         })
@@ -558,6 +444,9 @@ async fn create_reading_queue_entry(
     operation_id = "listReadingQueueEntries",
     tag = "readingQueue",
     responses(
+        (status = 503, description = "Authentication service unavailable", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 401, description = "Authentication required", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 403, description = "CSRF verification failed", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 200, description = "Reading queue", body = ReadingQueueResponse, content_type = "application/json"),
         (status = 400, description = "Invalid query or cursor", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 500, description = "Storage failure", body = ProblemDetails, content_type = "application/problem+json")
@@ -566,10 +455,10 @@ async fn create_reading_queue_entry(
 )]
 async fn list_reading_queue_entries(
     State(state): State<ReadingQueueHttpState>,
-    headers: HeaderMap,
+    principal: Option<Extension<Principal>>,
     query: Result<Query<ListReadingQueueEntriesQuery>, QueryRejection>,
 ) -> Result<Json<ReadingQueueResponse>, ProblemResponse> {
-    let authorization = state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let account_id = authorize(principal)?;
     let Query(query) = query.map_err(|_| ProblemResponse::invalid_reading_queue_query())?;
     let page = state
         .application
@@ -578,7 +467,7 @@ async fn list_reading_queue_entries(
             sort: query.sort.map(|sort| sort.as_str().to_owned()),
             limit: query.limit,
             cursor: query.cursor,
-            authorization_scope: authorization.cursor_scope.to_owned(),
+            authorization_scope: account_id,
         })
         .await
         .map_err(|error| match error {
@@ -606,6 +495,9 @@ async fn list_reading_queue_entries(
     ),
     request_body(content = ChangeReadingEntryStateRequest, content_type = "application/json"),
     responses(
+        (status = 503, description = "Authentication service unavailable", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 401, description = "Authentication required", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 403, description = "CSRF verification failed", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 200, description = "Reading entry state changed", body = ReadingQueueEntryResponse, content_type = "application/json"),
         (status = 400, description = "Invalid JSON or unknown request field", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Reading entry not found", body = ProblemDetails, content_type = "application/problem+json"),
@@ -617,10 +509,10 @@ async fn list_reading_queue_entries(
 async fn change_reading_queue_entry_state(
     State(state): State<ReadingQueueHttpState>,
     Path(entry_id): Path<String>,
-    headers: HeaderMap,
+    principal: Option<Extension<Principal>>,
     payload: Result<Json<ChangeReadingEntryStateRequest>, JsonRejection>,
 ) -> Result<Json<ReadingQueueEntryResponse>, ProblemResponse> {
-    state.authorize(READING_QUEUE_ACCESS, &headers)?;
+    let account_id = authorize(principal)?;
     let Json(payload) = payload.map_err(|_| ProblemResponse::invalid_json())?;
     let target = match payload.state {
         ReadingQueueEntryState::Queued => ApplicationReadingQueueEntryState::Queued,
@@ -629,6 +521,7 @@ async fn change_reading_queue_entry_state(
     let entry = state
         .application
         .change(ChangeReadingEntryStateCommand {
+            account_id,
             id: entry_id,
             target,
         })
@@ -646,7 +539,8 @@ async fn change_reading_queue_entry_state(
 
 /// The only registration seam for routes consumed by the Generated Client.
 pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
-    let openapi = OpenApi::new(Info::new("Yydra Product Public API", "1.0.0"), Paths::new());
+    let mut openapi = OpenApi::new(Info::new("Yydra Product Public API", "1.0.0"), Paths::new());
+    openapi.merge(yydra_auth::openapi());
     let mut router = OpenApiRouter::with_openapi(openapi)
         .routes(routes!(get_framework_contract_profile))
         .routes(routes!(get_framework_protected_contract))
@@ -699,13 +593,9 @@ pub fn normalized_openapi_json() -> Result<String, serde_json::Error> {
     })
 }
 
-pub fn router(
-    service: HealthService,
-    reading_queue: ReadingQueueService,
-    authentication: BearerAuthentication,
-) -> Router {
+pub fn router(service: HealthService, reading_queue: ReadingQueueService) -> Router {
     let public_router: Router = public_routes()
-        .with_state(ReadingQueueHttpState::new(reading_queue, authentication))
+        .with_state(ReadingQueueHttpState::new(reading_queue))
         .into();
     Router::new()
         .route("/health", get(health))

@@ -11,6 +11,7 @@ name = "product_transport_http"
 path = "src/lib.rs"
 
 [dependencies]
+yydra-auth.workspace = true
 axum.workspace = true
 product-application = { package = "__PRODUCT_ID__-application", path = "../application" }
 serde.workspace = true
@@ -19,5 +20,6 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 
 [dev-dependencies]
+yydra-auth = { workspace = true, features = ["test-provider"] }
 tokio.workspace = true
 tower.workspace = true

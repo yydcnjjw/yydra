@@ -2,12 +2,12 @@
 
 import { Stack } from "expo-router";
 
-import { FrameworkRuntime } from "@/framework/runtime";
+import { ProductAuthentication } from "@/product-presentation/auth/runtime";
 
 export default function RootLayout() {
   return (
-    <FrameworkRuntime>
+    <ProductAuthentication>
       <Stack screenOptions={{ headerShown: false }} />
-    </FrameworkRuntime>
+    </ProductAuthentication>
   );
 }

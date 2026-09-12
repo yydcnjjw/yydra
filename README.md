@@ -13,10 +13,12 @@ for these terms and the framework's ownership boundaries.
 
 ## Current status
 
-This checkout contains Distribution **0.5.0**, an unpublished development
+This checkout contains Distribution **0.6.0**, an unpublished development
 candidate. Start with the [CLI guide](crates/yydra-cli/README.md) for its
 exact-version package installation, prerequisites, and supported commands.
 Rust support uses the rolling nightly channel.
+
+Development products obtain authentication packages from [local Cargo/npm registries](dev/local-packages/README.md). Start and publish these packages before running product dependency setup.
 
 The latest published Distribution is
 [0.1.0](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0).
@@ -37,6 +39,7 @@ iOS is outside the current validation scope.
 | --- | --- |
 | [yydra-cli](crates/yydra-cli/README.md) | Installs the `yydra` command to create, set up, diagnose, develop, and build Product Workspaces. |
 | [yydra-build](crates/yydra-build/README.md) | Validates Rust-derived OpenAPI and generates and validates the TypeScript client through the product's API build package. |
+| [yydra-auth](crates/yydra-auth/README.md) and [@yydra/auth](packages/auth/README.md) | Provide GitHub sign-in and independent product sessions for H5 and Android; product code owns resource authorization. |
 | [Product Workspace template](crates/yydra-cli/template/product-workspace/README.md) | Supplies the product-owned Rust backend, Expo frontend, database migrations, and build configuration copied by `yydra new`. |
 
 New Workspaces also receive exact-Distribution Baseline Skills for product

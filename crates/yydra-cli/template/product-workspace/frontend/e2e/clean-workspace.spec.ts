@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { expect, test } from "@playwright/test";
+import {
+  installAuthFixtureFetch,
+  signIn,
+  verifyAccountIsolation,
+} from "./auth-fixture";
 
 test("production H5 reaches Axum and PostgreSQL through Framework Runtime after refresh", async ({
   page,
@@ -20,7 +25,8 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
       );
     }
   });
-  await page.goto("/");
+  await installAuthFixtureFetch(page);
+  await signIn(page);
   await expect(
     page.getByRole("heading", { name: __PRODUCT_NAME_JSON__ }),
   ).toBeVisible();
@@ -28,7 +34,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   expect(apiUrl).toBeTruthy();
   const directBrowserHealth = await page.evaluate(async (baseUrl) => {
     try {
-      const response = await fetch(`${baseUrl}/health`);
+      const response = await authFixtureFetch(`${baseUrl}/health`);
       return { body: await response.text(), status: response.status };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
@@ -52,7 +58,9 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   await expect(page.getByText("State: queued", { exact: true })).toBeVisible();
 
   const persistedQueue = await page.evaluate(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`);
+    const response = await authFixtureFetch(
+      `${baseUrl}/api/v1/reading-queue/entries`,
+    );
     return { body: await response.json(), status: response.status };
   }, apiUrl);
   expect(persistedQueue.status).toBe(200);
@@ -70,7 +78,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
 
   const directComplete = await page.evaluate(
     async ({ baseUrl, id }) => {
-      const response = await fetch(
+      const response = await authFixtureFetch(
         `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`,
         {
           method: "PATCH",
@@ -105,17 +113,17 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   const requestProblems = await page.evaluate(
     async ({ baseUrl, id }) => {
       const transitionUrl = `${baseUrl}/api/v1/reading-queue/entries/${encodeURIComponent(id)}`;
-      const unknown = await fetch(transitionUrl, {
+      const unknown = await authFixtureFetch(transitionUrl, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ state: "queued", unknown: true }),
       });
-      const malformed = await fetch(transitionUrl, {
+      const malformed = await authFixtureFetch(transitionUrl, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: "{",
       });
-      const missing = await fetch(
+      const missing = await authFixtureFetch(
         `${baseUrl}/api/v1/reading-queue/entries/missing-opaque-entry`,
         {
           method: "PATCH",
@@ -123,7 +131,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
           body: JSON.stringify({ state: "completed" }),
         },
       );
-      const validation = await fetch(
+      const validation = await authFixtureFetch(
         `${baseUrl}/api/v1/reading-queue/entries`,
         {
           method: "POST",
@@ -164,54 +172,54 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   });
 
   const authentication = await page.evaluate(async (baseUrl) => {
-    const missing = await fetch(`${baseUrl}/api/v1/framework-auth-contract`);
-    const forbidden = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
-      headers: { authorization: "Bearer local-framework-forbidden" },
+    const missing = await fetch(`${baseUrl}/api/v1/framework-auth-contract`, {
+      credentials: "omit",
+    });
+    const forbidden = await fetch(`${baseUrl}/api/v1/auth/logout`, {
+      method: "POST",
+      credentials: "include",
     });
     const authorized = await fetch(
       `${baseUrl}/api/v1/framework-auth-contract`,
-      { headers: { authorization: "Bearer local-framework-contract" } },
+      { credentials: "include" },
     );
     return {
-      authorized: {
-        body: await authorized.json(),
-        status: authorized.status,
-      },
-      forbidden: {
-        body: await forbidden.json(),
-        status: forbidden.status,
-      },
       missing: {
-        body: await missing.json(),
-        challenge: missing.headers.get("www-authenticate"),
         status: missing.status,
+        challenge: missing.headers.get("www-authenticate"),
+        body: await missing.json(),
       },
+      forbidden: { status: forbidden.status, body: await forbidden.json() },
+      authorized: { status: authorized.status, body: await authorized.json() },
     };
   }, apiUrl);
   expect(authentication.missing).toMatchObject({
-    body: { type: "https://yydra.dev/problems/authentication-required" },
-    challenge: expect.stringContaining("Bearer"),
     status: 401,
+    challenge: expect.stringContaining("Bearer"),
+    body: { type: "https://yydra.dev/problems/authentication-required" },
   });
   expect(authentication.forbidden).toMatchObject({
-    body: { type: "https://yydra.dev/problems/access-forbidden" },
     status: 403,
+    body: { type: "https://yydra.dev/problems/csrf-verification-failed" },
   });
   expect(authentication.authorized).toEqual({
-    body: { access: "granted" },
     status: 200,
+    body: { access: "granted" },
   });
 
   const pagination = await page.evaluate(async (baseUrl) => {
     for (let index = 1; index <= 11; index += 1) {
-      const response = await fetch(`${baseUrl}/api/v1/reading-queue/entries`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          title: `Paging entry ${String(index).padStart(2, "0")}`,
-          sourceUrl: `https://example.test/paging-${index}`,
-        }),
-      });
+      const response = await authFixtureFetch(
+        `${baseUrl}/api/v1/reading-queue/entries`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: `Paging entry ${String(index).padStart(2, "0")}`,
+            sourceUrl: `https://example.test/paging-${index}`,
+          }),
+        },
+      );
       if (response.status !== 201) {
         throw new Error(
           `pagination fixture create returned ${response.status}`,
@@ -227,7 +235,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
     ) => {
       const query = new URLSearchParams({ status, sort, limit: String(limit) });
       if (cursor) query.set("cursor", cursor);
-      const response = await fetch(
+      const response = await authFixtureFetch(
         `${baseUrl}/api/v1/reading-queue/entries?${query}`,
       );
       return { body: await response.json(), status: response.status };
@@ -246,7 +254,7 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
       tamperedBytes.join(""),
     );
     const mismatch = await requestPage("completed", "oldest", 3, firstCursor);
-    const unknown = await fetch(
+    const unknown = await authFixtureFetch(
       `${baseUrl}/api/v1/reading-queue/entries?unknown=true`,
     );
 
@@ -348,4 +356,5 @@ test("production H5 reaches Axum and PostgreSQL through Framework Runtime after 
   await expect(
     page.getByText("State: completed", { exact: true }),
   ).toBeVisible();
+  await verifyAccountIsolation(page, entryTitle);
 });

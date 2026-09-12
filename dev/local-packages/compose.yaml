@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+services:
+  cargo:
+    image: ghcr.io/kellnr/kellnr-minimal:6.8.0@sha256:755c0d17fc30b864127cbcb8f67d6588332310b2fd7c68671bca2b4834413455
+    ports: ["127.0.0.1:18081:8000"]
+    environment:
+      KELLNR_LOCAL__IP: 0.0.0.0
+      KELLNR_LOCAL__PORT: "8000"
+      KELLNR_ORIGIN__HOSTNAME: 127.0.0.1
+      KELLNR_ORIGIN__PORT: "18081"
+      KELLNR_ORIGIN__PROTOCOL: http
+      KELLNR_REGISTRY__DATA_DIR: /var/lib/kellnr
+      KELLNR_REGISTRY__AUTH_REQUIRED: "false"
+      KELLNR_DOCS__ENABLED: "false"
+      KELLNR_PROXY__ENABLED: "false"
+      KELLNR_SETUP__ADMIN_PWD: ${YYDRA_REGISTRY_PASSWORD:?run scripts/local-packages.py up}
+      KELLNR_SETUP__ADMIN_TOKEN: ${YYDRA_REGISTRY_TOKEN:?run scripts/local-packages.py up}
+    volumes: ["cargo-data:/var/lib/kellnr"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  npm:
+    image: verdaccio/verdaccio:6.10.3@sha256:7b067a47ae51fb9dff3dcdce60ec0a2cbd7650c208cb4b9f6d37cb1b09b39d43
+    ports: ["127.0.0.1:4873:4873"]
+    volumes:
+      - ./verdaccio.yaml:/verdaccio/conf/config.yaml:ro
+      - npm-data:/verdaccio/storage
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4873/-/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  cargo-data:
+  npm-data:

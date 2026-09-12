@@ -9,6 +9,9 @@
     "newArchEnabled": true,
     "plugins": [
       "expo-router",
+      "expo-secure-store",
+      "expo-web-browser",
+      "./modules/yydra-auth/app.plugin.js",
       "./modules/yydra-android-dependencies/app.plugin.js"
     ],
     "android": {

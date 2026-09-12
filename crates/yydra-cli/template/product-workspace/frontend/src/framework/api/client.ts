@@ -240,7 +240,7 @@ export function createPublicApiClient({
       return execute<ReadingQueueResponse>({
         name: "listReadingQueueEntries",
         successStatus: 200,
-        problemStatuses: [400, 500],
+        problemStatuses: [400, 401, 403, 500, 503],
         options,
         invoke: (runtimeFetch) =>
           listReadingQueueEntries(
@@ -261,7 +261,7 @@ export function createPublicApiClient({
       return execute<ReadingQueueEntryResponse>({
         name: "createReadingQueueEntry",
         successStatus: 201,
-        problemStatuses: [400, 422, 500],
+        problemStatuses: [400, 401, 403, 422, 500, 503],
         options,
         invoke: (runtimeFetch) =>
           createReadingQueueEntry(
@@ -286,7 +286,7 @@ export function createPublicApiClient({
       return execute<ReadingQueueEntryResponse>({
         name: "changeReadingQueueEntryState",
         successStatus: 200,
-        problemStatuses: [400, 404, 409, 422, 500],
+        problemStatuses: [400, 401, 403, 404, 409, 422, 500, 503],
         options,
         invoke: (runtimeFetch) =>
           changeReadingQueueEntryState(

@@ -11,6 +11,7 @@ import {
   ReadingQueueSort,
   ReadingQueueStatusFilter,
 } from "@/product-presentation/reading-queue/queries";
+import { ProductAuthGate } from "@/product-presentation/auth/runtime";
 import { ReadingQueueScreen } from "@/product-presentation/reading-queue/screen";
 
 function firstSearchValue(
@@ -40,17 +41,19 @@ export default function IndexRoute() {
   const sort = sortFromUrl(search.sort);
 
   return (
-    <ReadingQueueScreen
-      onRouteStateChange={(nextStatus, nextSort) =>
-        router.setParams({
-          sort: nextSort,
-          status: nextStatus,
-        })
-      }
-      productName={__PRODUCT_NAME_JSON__}
-      sort={sort}
-      status={status}
-    />
+    <ProductAuthGate>
+      <ReadingQueueScreen
+        onRouteStateChange={(nextStatus, nextSort) =>
+          router.setParams({
+            sort: nextSort,
+            status: nextStatus,
+          })
+        }
+        productName={__PRODUCT_NAME_JSON__}
+        sort={sort}
+        status={status}
+      />
+    </ProductAuthGate>
   );
 }
 

@@ -21,6 +21,7 @@
 - [Store research and validation in the Wiki](./docs/adr/0007-store-research-and-validation-in-wiki.md): accepted documentation-storage decision; current rules remain in this repository; Wiki published and independently verified
 
 - [Provide server containers with Compose](./docs/adr/0008-provide-server-containers-with-compose.md): accepted; Product-owned server image and persistent single-host Compose deployment, separate from the temporary development database
+- [Provide reusable authentication with GitHub sign-in](./docs/adr/0010-provide-github-authentication-capability.md): accepted; independent product accounts/sessions, GitHub auto-provisioning, H5/Android template integration, and per-account Reading Queue data; implemented with published dependencies and SQLx 0.8.6; selected PostgreSQL, H5, Android build and emulator acceptance passed; live GitHub and full release conformance not claimed
 
 - [Consolidate diagnostics in doctor](./docs/adr/0009-consolidate-diagnostics-in-doctor.md): accepted; removes the quality-check graph and evidence protocol, extends doctor with environment diagnostics, and uses explicit project validation
 

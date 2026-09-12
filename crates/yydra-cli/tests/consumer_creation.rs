@@ -66,7 +66,7 @@ fn creates_workspace_from_the_normalized_flag_model() {
 
     let origin = fs::read_to_string(destination.join(".yydra/origin.toml"))
         .expect("read Workspace Origin Record");
-    assert!(origin.contains("distribution_version = \"0.5.0\""));
+    assert!(origin.contains("distribution_version = \"0.6.0\""));
     assert!(origin.contains("template_identity = \"yydra-v0-product-workspace\""));
     assert!(origin.contains("product_name = \"Acme Reader\""));
     assert!(origin.contains("product_id = \"acme-reader\""));
@@ -89,6 +89,10 @@ fn materializes_the_public_api_authority_chain() {
         "migrations/0003_reading_entry_transitions.sql",
         "migrations/0004_reading_queue_pagination.sql",
         "migrations/0005_reading_progress.sql",
+        "migrations/0006_authentication.sql",
+        "migrations/0007_reading_queue_accounts.sql",
+        ".cargo/config.toml",
+        "compose.local-registry.yaml",
         "frontend/orval.config.mjs",
         "frontend/src/framework/api/client.ts",
         "frontend/src/framework/api/client.test.ts",
@@ -108,8 +112,9 @@ fn materializes_the_public_api_authority_chain() {
     assert!(transport.contains("operation_id = \"listReadingQueueEntries\""));
     assert!(transport.contains("operation_id = \"changeReadingQueueEntryState\""));
     assert!(transport.contains("operation_id = \"getFrameworkProtectedContract\""));
-    assert!(transport.contains("RouteAccess::Anonymous"));
-    assert!(transport.contains("RouteAccess::Protected"));
+    assert!(transport.contains("use yydra_auth::Principal"));
+    assert!(transport.contains("authorize(principal)?"));
+    assert!(!transport.contains("BearerAuthentication"));
 
     let domain = fs::read_to_string(workspace.join("crates/domain/src/lib.rs"))
         .expect("read Product Domain source");
@@ -441,7 +446,7 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     )
     .expect("parse Distribution inventory");
     assert_eq!(inventory["schema_version"], 1);
-    assert_eq!(inventory["distribution_version"], "0.5.0");
+    assert_eq!(inventory["distribution_version"], "0.6.0");
     assert_eq!(
         inventory["lifecycles"],
         serde_json::json!([
@@ -1030,7 +1035,7 @@ fn migration_add_creates_the_next_product_owned_sql_file_without_applying_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(workspace.join("migrations/0001_baseline.sql").is_file());
-    let added = workspace.join("migrations/0006_add_reading_notes.sql");
+    let added = workspace.join("migrations/0008_add_reading_notes.sql");
     let contents = fs::read_to_string(&added).expect("read migration stub");
     assert!(contents.starts_with("-- SPDX-License-Identifier: Apache-2.0\n"));
     assert!(contents.contains("-- Add migration SQL here."));
@@ -1921,6 +1926,124 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
 }
 
 #[test]
+fn doctor_checks_authentication_package_versions_sources_and_checksums() {
+    let sandbox = tempdir().unwrap();
+    for case in [
+        "rust-version",
+        "rust-override",
+        "rust-checksum",
+        "npm-version",
+        "npm-integrity",
+        "npm-registry",
+    ] {
+        let workspace = sandbox.path().join(case);
+        create_with_flags(&workspace, "Package Reader", "package-reader");
+        assert!(!workspace.join(".yydra/auth-support").exists());
+        assert!(!workspace.join(".yydra/auth-client").exists());
+        match case {
+            "rust-version" => {
+                let path = workspace.join("Cargo.toml");
+                let mut value: toml::Value =
+                    toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                value["workspace"]["dependencies"]["yydra-auth"]["version"] =
+                    "=0.6.0-dev.999".into();
+                fs::write(path, toml::to_string(&value).unwrap()).unwrap();
+            }
+            "rust-override" => {
+                let path = workspace.join("Cargo.toml");
+                let mut source = fs::read_to_string(&path).unwrap();
+                source.push_str(
+                    "\n[patch.crates-io]\nyydra-auth = { path = \"/unreviewed/auth\" }\n",
+                );
+                fs::write(path, source).unwrap();
+            }
+            "rust-checksum" => {
+                let path = workspace.join("Cargo.lock");
+                let mut lock: toml::Value =
+                    toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                let auth = lock["package"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
+                    .unwrap();
+                auth["checksum"] = "0".repeat(64).into();
+                fs::write(path, toml::to_string(&lock).unwrap()).unwrap();
+            }
+            "npm-version" | "npm-integrity" => {
+                let file = if case == "npm-version" {
+                    "package.json"
+                } else {
+                    "package-lock.json"
+                };
+                let path = workspace.join("frontend").join(file);
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if case == "npm-version" {
+                    value["dependencies"]["@yydra/auth"] = "0.6.0-dev.999".into();
+                } else {
+                    value["packages"]["node_modules/@yydra/auth"]["integrity"] =
+                        "sha512-Zg==".into();
+                }
+                fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+            "npm-registry" => {
+                let path = workspace.join("frontend/.npmrc");
+                let source = fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("127.0.0.1:4873", "127.0.0.1:4874");
+                fs::write(path, source).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = byte_inventory(&workspace);
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("doctor")
+            .arg(&workspace)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "doctor accepted {case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("authentication package drift"),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(before, byte_inventory(&workspace));
+    }
+}
+
+#[test]
+fn doctor_allows_equivalent_auth_lock_dependency_references() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("qualified-reference");
+    create_with_flags(&workspace, "Package Reader", "package-reader");
+    let path = workspace.join("Cargo.lock");
+    let mut lock: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let auth = lock["package"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
+        .unwrap();
+    for dependency in auth["dependencies"].as_array_mut().unwrap() {
+        if dependency.as_str() == Some("axum") {
+            *dependency = "axum 0.8.9".into();
+        }
+    }
+    fs::write(path, toml::to_string(&lock).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .arg("doctor")
+        .arg(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn doctor_rejects_additional_build_support_source() {
     let sandbox = tempdir().unwrap();
     let workspace = sandbox.path().join("additional-build-script");
@@ -2071,7 +2194,7 @@ fn doctor_fails_closed_on_distribution_mismatch_without_mutating_the_workspace()
     fs::write(
         &origin_path,
         origin.replace(
-            "distribution_version = \"0.5.0\"",
+            "distribution_version = \"0.6.0\"",
             "distribution_version = \"9.8.7\"",
         ),
     )
@@ -2129,10 +2252,10 @@ fn doctor_fails_closed_on_template_digest_mismatch_without_mutation() {
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains("cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked")
+        stderr.contains("cargo +nightly install yydra-cli@0.6.0 --path ./yydra-cli-0.6.0 --locked")
     );
-    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.5.0"));
-    assert!(stderr.contains("sha256sum --check yydra-cli-0.5.0.crate.sha256"));
+    assert!(stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.6.0"));
+    assert!(stderr.contains("sha256sum --check yydra-cli-0.6.0.crate.sha256"));
     assert_eq!(before, byte_inventory(&workspace));
 }
 
@@ -2379,14 +2502,14 @@ fn doctor_rejects_origin_schema_and_template_identity_mismatch() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.5.0")
+            stderr.contains("https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.6.0")
         );
         assert!(
             stderr.contains(
-                "cargo +nightly install yydra-cli@0.5.0 --path ./yydra-cli-0.5.0 --locked"
+                "cargo +nightly install yydra-cli@0.6.0 --path ./yydra-cli-0.6.0 --locked"
             )
         );
-        assert!(stderr.contains("sha256sum --check yydra-cli-0.5.0.crate.sha256"));
+        assert!(stderr.contains("sha256sum --check yydra-cli-0.6.0.crate.sha256"));
         assert_eq!(before, byte_inventory(&workspace));
     }
 }
@@ -2444,7 +2567,7 @@ fn fn_append_malformed_table(mut origin: String) -> String {
 
 fn fn_replace_with_non_semver(origin: String) -> String {
     origin.replace(
-        "distribution_version = \"0.5.0\"",
+        "distribution_version = \"0.6.0\"",
         "distribution_version = \"not-semver\"",
     )
 }

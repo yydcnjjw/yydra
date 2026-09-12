@@ -55,6 +55,10 @@ impl Database {
         .await
     }
 
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+
     pub async fn begin(&self) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
         self.pool.begin().await
     }
@@ -62,18 +66,22 @@ impl Database {
 
 pub async fn insert_reading_entry(
     connection: &mut PgConnection,
+    account_id: &str,
     title: &ReadingEntryTitle,
     source_url: &SourceUrl,
 ) -> Result<ReadingEntry, PersistenceError> {
+    sqlx::query("INSERT INTO reading_progress (account_id, completed_entries) VALUES ($1::uuid, 0) ON CONFLICT (account_id) DO NOTHING")
+        .bind(account_id).execute(&mut *connection).await?;
     let row = sqlx::query_as::<_, ReadingEntryRow>(
         r#"
-        INSERT INTO reading_queue_entries (title, source_url)
-        VALUES ($1, $2)
+        INSERT INTO reading_queue_entries (title, source_url, account_id)
+        VALUES ($1, $2, $3::uuid)
         RETURNING id::text AS id, title, source_url, state
         "#,
     )
     .bind(title.as_str())
     .bind(source_url.as_str())
+    .bind(account_id)
     .fetch_one(connection)
     .await?;
     row.try_into()
@@ -92,6 +100,7 @@ pub struct ReadingEntryPageItem {
 
 pub async fn list_reading_entries_page(
     connection: &mut PgConnection,
+    account_id: &str,
     status: ReadingEntryStatusFilter,
     order: ReadingEntryOrder,
     after: Option<&ReadingEntryPagePosition>,
@@ -114,7 +123,7 @@ pub async fn list_reading_entries_page(
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
                     ) AS created_at_cursor
                 FROM reading_queue_entries
-                WHERE ($1::text IS NULL OR state = $1)
+                WHERE account_id = $5::uuid AND ($1::text IS NULL OR state = $1)
                   AND (
                     $2::timestamptz IS NULL
                     OR (created_at, id) > ($2::timestamptz, $3::uuid)
@@ -127,6 +136,7 @@ pub async fn list_reading_entries_page(
             .bind(after_created_at)
             .bind(after_id)
             .bind(i64::from(fetch_limit))
+            .bind(account_id)
             .fetch_all(connection)
             .await?
         }
@@ -143,7 +153,7 @@ pub async fn list_reading_entries_page(
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
                     ) AS created_at_cursor
                 FROM reading_queue_entries
-                WHERE ($1::text IS NULL OR state = $1)
+                WHERE account_id = $5::uuid AND ($1::text IS NULL OR state = $1)
                   AND (
                     $2::timestamptz IS NULL
                     OR (created_at, id) < ($2::timestamptz, $3::uuid)
@@ -156,6 +166,7 @@ pub async fn list_reading_entries_page(
             .bind(after_created_at)
             .bind(after_id)
             .bind(i64::from(fetch_limit))
+            .bind(account_id)
             .fetch_all(connection)
             .await?
         }
@@ -165,17 +176,19 @@ pub async fn list_reading_entries_page(
 
 pub async fn lock_reading_entry_for_update(
     connection: &mut PgConnection,
+    account_id: &str,
     id: &ReadingEntryId,
 ) -> Result<Option<ReadingEntry>, PersistenceError> {
     sqlx::query_as::<_, ReadingEntryRow>(
         r#"
         SELECT id::text AS id, title, source_url, state
         FROM reading_queue_entries
-        WHERE id::text = $1
+        WHERE id::text = $1 AND account_id = $2::uuid
         FOR UPDATE
         "#,
     )
     .bind(id.as_str())
+    .bind(account_id)
     .fetch_optional(connection)
     .await?
     .map(TryInto::try_into)
@@ -184,17 +197,19 @@ pub async fn lock_reading_entry_for_update(
 
 pub async fn update_reading_entry_state(
     connection: &mut PgConnection,
+    account_id: &str,
     entry: &ReadingEntry,
 ) -> Result<(), PersistenceError> {
     let updated = sqlx::query(
         r#"
         UPDATE reading_queue_entries
         SET state = $2
-        WHERE id::text = $1
+        WHERE id::text = $1 AND account_id = $3::uuid
         "#,
     )
     .bind(entry.id().as_str())
     .bind(entry.state().as_str())
+    .bind(account_id)
     .execute(connection)
     .await?;
     if updated.rows_affected() != 1 {
@@ -205,31 +220,42 @@ pub async fn update_reading_entry_state(
 
 pub async fn load_reading_progress(
     connection: &mut PgConnection,
+    account_id: &str,
 ) -> Result<ReadingProgress, PersistenceError> {
-    let completed_entries = sqlx::query_scalar::<_, i64>(
-        "SELECT completed_entries FROM reading_progress WHERE singleton",
+    let (completed_entries, has_entries) = sqlx::query_as::<_, (Option<i64>, bool)>(
+        "SELECT (SELECT completed_entries FROM reading_progress WHERE account_id = $1::uuid),
+                EXISTS (SELECT 1 FROM reading_queue_entries WHERE account_id = $1::uuid)",
     )
-    .fetch_optional(connection)
-    .await?
-    .ok_or(PersistenceError::InvariantUnavailable(
-        "reading progress singleton is missing",
-    ))?;
+    .bind(account_id)
+    .fetch_one(connection)
+    .await?;
+    let completed_entries = match (completed_entries, has_entries) {
+        (Some(value), _) => value,
+        (None, false) => 0,
+        (None, true) => {
+            return Err(PersistenceError::InvariantUnavailable(
+                "reading progress for the account is missing",
+            ));
+        }
+    };
     ReadingProgress::restore(completed_entries).map_err(Into::into)
 }
 
 pub async fn adjust_reading_progress(
     connection: &mut PgConnection,
+    account_id: &str,
     completed_delta: i64,
 ) -> Result<ReadingProgress, PersistenceError> {
     let completed_entries = sqlx::query_scalar::<_, i64>(
         r#"
         UPDATE reading_progress
         SET completed_entries = completed_entries + $1
-        WHERE singleton AND completed_entries + $1 >= 0
+        WHERE account_id = $2::uuid AND completed_entries + $1 >= 0
         RETURNING completed_entries
         "#,
     )
     .bind(completed_delta)
+    .bind(account_id)
     .fetch_optional(connection)
     .await?
     .ok_or(PersistenceError::InvariantUnavailable(
