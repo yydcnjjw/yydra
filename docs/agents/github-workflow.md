@@ -127,9 +127,10 @@ CLI CI builds the release CLI and runs its default unit and command-behavior
 tests on Ubuntu with rolling Rust nightly. Real consumer integration tests are
 retained for explicit invocation under the [local validation workflow](development-workflow.md).
 PRs, pushes to `main`, and manual runs keep the same CI scope. This narrows
-routine CI coverage; it no longer runs clean/Reading Queue complete checks or
-aggregates Product Workspace Conformance Evidence. Release validation retains
-its full requirements, including Android.
+routine CI coverage. [ADR 0009](../adr/0009-consolidate-diagnostics-in-doctor.md)
+retires the quality graph and aggregate manifests. Release validation uses
+packaged consumers and explicit real tests/builds, including Android, under
+the local validation workflow.
 
 ## Merge and finish
 

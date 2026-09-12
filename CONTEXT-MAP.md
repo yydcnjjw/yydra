@@ -22,6 +22,8 @@
 
 - [Provide server containers with Compose](./docs/adr/0008-provide-server-containers-with-compose.md): accepted; Product-owned server image and persistent single-host Compose deployment, separate from the temporary development database
 
+- [Consolidate diagnostics in doctor](./docs/adr/0009-consolidate-diagnostics-in-doctor.md): accepted; removes the quality-check graph and evidence protocol, extends doctor with environment diagnostics, and uses explicit project validation
+
 ## Historical research and validation
 
 - [Wiki home](https://github.com/yydcnjjw/yydra/wiki/Home): research and dated validation records; current context and ADR authority remains above

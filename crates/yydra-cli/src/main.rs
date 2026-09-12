@@ -22,7 +22,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
-mod check_graph;
+mod android_build;
+mod doctor;
+mod process;
 mod product_build;
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -55,10 +57,13 @@ enum Command {
         #[arg(long)]
         product_source_license: Option<String>,
     },
-    /// Diagnose an exact Product Workspace without mutating it.
+    /// Diagnose Workspace identity and the selected development environment.
     Doctor {
         #[arg(default_value = ".")]
         workspace: PathBuf,
+        /// Diagnose one application target; defaults to server and H5.
+        #[arg(long, value_enum)]
+        target: Option<product_build::BuildTarget>,
     },
     /// Install Cargo and npm dependencies strictly from committed locks.
     Setup {
@@ -69,26 +74,6 @@ enum Command {
     Dev {
         #[arg(default_value = ".")]
         workspace: PathBuf,
-    },
-    /// Evaluate the read-only Mechanical Quality Contract.
-    Check {
-        #[arg(default_value = ".")]
-        workspace: PathBuf,
-        /// Write evidence outside the Workspace at a path with no symlink ancestor.
-        #[arg(long)]
-        evidence_dir: Option<PathBuf>,
-        /// Git revision whose existing migrations must remain byte-for-byte append-only.
-        #[arg(long)]
-        comparison_base: Option<String>,
-        /// Run only these diagnostic nodes and their prerequisites.
-        #[arg(long = "node")]
-        nodes: Vec<String>,
-        /// Require an exact catalog-owned fixture identity for later aggregation.
-        #[arg(long, value_enum, default_value_t = CheckFixture::Unclassified)]
-        fixture: CheckFixture,
-        /// Verify uploaded complete fixture manifests and produce aggregate conformance.
-        #[arg(long = "aggregate-evidence", value_name = "MANIFEST")]
-        aggregate_evidence: Vec<PathBuf>,
     },
     /// Build backend and H5 production artifacts, or one selected application target.
     Build {
@@ -153,47 +138,9 @@ fn main() -> Result<()> {
                 || create_workspace(&destination, &input),
             )
         }
-        Command::Doctor { workspace } => doctor(&workspace, &reporter),
+        Command::Doctor { workspace, target } => doctor::diagnose(&workspace, target, &reporter),
         Command::Setup { workspace } => setup(&workspace, &reporter),
         Command::Dev { workspace } => dev(&workspace, &reporter),
-        Command::Check {
-            workspace,
-            evidence_dir,
-            comparison_base,
-            nodes,
-            fixture,
-            aggregate_evidence,
-        } => {
-            if aggregate_evidence.is_empty() {
-                check_graph::check(
-                    check_graph::CheckRequest {
-                        workspace,
-                        evidence_dir,
-                        comparison_base,
-                        selected_nodes: nodes,
-                        fixture: fixture.as_str().to_owned(),
-                    },
-                    cli.message_format,
-                )
-            } else {
-                if comparison_base.is_some()
-                    || !nodes.is_empty()
-                    || fixture != CheckFixture::Unclassified
-                    || workspace.as_path() != Path::new(".")
-                {
-                    bail!(
-                        "--aggregate-evidence cannot be combined with a Workspace argument, --comparison-base, --node, or --fixture"
-                    );
-                }
-                check_graph::aggregate(
-                    check_graph::AggregateRequest {
-                        evidence_dir,
-                        manifests: aggregate_evidence,
-                    },
-                    cli.message_format,
-                )
-            }
-        }
         Command::Build { workspace, target } => product_build::build(&workspace, target, &reporter),
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
@@ -210,28 +157,6 @@ fn main() -> Result<()> {
 pub(crate) enum MessageFormat {
     Human,
     Json,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-enum CheckFixture {
-    #[default]
-    Unclassified,
-    Clean,
-    ReadingQueue,
-}
-
-impl CheckFixture {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Unclassified => "unclassified",
-            Self::Clean => "clean",
-            Self::ReadingQueue => "reading-queue",
-        }
-    }
-}
-
-struct Reporter {
-    format: MessageFormat,
 }
 
 #[derive(serde::Serialize)]
@@ -255,6 +180,10 @@ struct Diagnostic<'a> {
     message: &'a str,
     location: Option<&'a Path>,
     remediation: Option<&'a str>,
+}
+
+struct Reporter {
+    format: MessageFormat,
 }
 
 impl Reporter {
@@ -324,7 +253,7 @@ impl Reporter {
                 "{}",
                 serde_json::to_string(&event).expect("diagnostic event is JSON-encodable")
             );
-        } else if diagnostic.severity == "error" {
+        } else if matches!(diagnostic.severity, "error" | "warning") {
             let location = diagnostic
                 .location
                 .map(|path| format!(" location={}", path.display()))
@@ -908,16 +837,6 @@ fn collect_files<'a>(directory: &'a Dir<'a>, files: &mut Vec<&'a File<'a>>) {
     }
 }
 
-fn doctor(workspace: &Path, reporter: &Reporter) -> Result<()> {
-    reporter.phase(
-        "doctor.verify",
-        "DOCTOR_WORKSPACE_VERIFY",
-        Some(workspace),
-        Some("restore the reported authority or install the exact Distribution version named by the Workspace Origin Record"),
-        || verify_workspace(workspace).map(|_| ()),
-    )
-}
-
 pub(crate) fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOriginRecord)> {
     let verified = verify_workspace_origin_details(workspace)?;
     verify_snapshot_authorities_with_origin(
@@ -927,21 +846,6 @@ pub(crate) fn verify_workspace(workspace: &Path) -> Result<(PathBuf, WorkspaceOr
         &verified.expected_template,
     )?;
     Ok((verified.root, verified.origin))
-}
-
-pub(crate) fn verify_origin_authority(workspace: &Path) -> Result<()> {
-    verify_workspace_origin_details(workspace).map(|_| ())
-}
-
-pub(crate) fn verify_snapshot_authorities(root: &Path) -> Result<()> {
-    let origin = read_workspace_origin_record(root)?;
-    let normalized = NormalizedInput::new(
-        &origin.product_name,
-        &origin.product_id,
-        &origin.product_source_license,
-    )
-    .context("Workspace Origin Record has invalid normalized creation inputs")?;
-    verify_snapshot_authorities_with_origin(root, &origin, &normalized, &template_digest())
 }
 
 struct VerifiedWorkspaceOrigin {

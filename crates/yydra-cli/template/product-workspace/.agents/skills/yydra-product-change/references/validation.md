@@ -1,24 +1,21 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Supported validation
+# Project validation
 
-Use the cheapest discriminating check first, then widen only after it passes.
+Use the cheapest discriminating test first and expand coverage for affected behavior.
 
-1. Run the new or changed unit test at its owning Rust or frontend surface.
-2. Run the affected integration or Public API contract test.
-3. Run `yydra build . --target h5` when the Public API or Generated Client is
-   involved.
-4. Use `yydra --message-format=json check . --node <stable-id>` to diagnose the
-   smallest affected Mechanical Quality node.
-5. Finish with the supported `yydra check .` entrypoint and retain its structured
-   result and evidence. Native package-manager, Cargo, npm, Expo, and Gradle
-   commands are useful diagnostics, but they are not a substitute for the final
-   Yydra quality path.
+1. Run the changed unit test at its owning Rust or frontend surface.
+2. Run affected integration and Public API contract tests with Cargo/npm.
+3. Run formatters, linters, TypeScript checks, and affected application builds.
+4. For PostgreSQL tests, prepare a fresh disposable database, migrate it, and
+   run `cargo test --locked --test reading_queue_postgres -- --ignored --test-threads=1`.
+5. For H5 tests, start a migrated backend, install Playwright Chromium explicitly,
+   set `EXPO_PUBLIC_API_URL`, and run `npm --prefix frontend run test:e2e` or
+   `npm --prefix frontend run test:product-semantics`.
+6. Changes affecting native inputs or Android build tooling need
+   `yydra build . --target android`. Keep its actual APK and relevant build log.
 
-A focused node records an incomplete run. Do not present it as aggregate or
-complete conformance. A local full pass does not prove native runtime,
-physical-device behavior, native accessibility, macOS/iOS behavior, Agent
-performance, Agent Eval success, or Baseline Skill effect.
-
-Do not weaken a required node, edit an exception authority, change a fixture to
-fit the implementation, or hand-edit generated or exact-Distribution snapshot
-bytes to make validation pass.
+Use `yydra doctor .` to diagnose environments; it does not replace any test or
+build. The Workspace README provides commands and disposable-database cleanup.
+Report the commands actually run, their outcomes, and missing coverage. A build
+alone does not prove native runtime, device behavior, accessibility, or Agent
+performance. Preserve test expectations and generated/source ownership.

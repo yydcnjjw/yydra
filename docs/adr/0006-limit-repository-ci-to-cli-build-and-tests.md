@@ -109,3 +109,10 @@ no push, PR, ruleset update, or merge has been performed for this task.
 Wiki while retaining its original claims and code-repository history. It
 changes the storage location, not the outcomes or raw evidence described
 by this decision.
+
+## Subsequent diagnostic and validation scope
+
+[ADR 0009](0009-consolidate-diagnostics-in-doctor.md) retires `yydra check`,
+the quality graph, and aggregate evidence. Current environment diagnostics use
+`doctor`; project validation uses explicit Cargo/npm tests and builds. The
+original decision and dated validation above retain their historical scope.
