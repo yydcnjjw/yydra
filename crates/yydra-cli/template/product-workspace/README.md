@@ -27,19 +27,32 @@ no upgrade, no compatibility-range selection, and no Distribution-version overri
 
 ## Run the server with Docker Compose
 
-On a machine with Docker Engine and the Compose plugin, run from this Product
-Workspace (the directory containing this README):
+This development template requires the local authentication package registries
+before dependency installation or container builds. On the same Linux machine,
+start and seed them from the matching Yydra checkout:
 
 ```console
-docker compose up --build --wait
+python3 scripts/local-packages.py up
+python3 scripts/local-packages.py publish
+```
+
+Registry preparation needs Docker Engine with Compose, Python 3.11+, Rust nightly,
+and Node/npm. See the Yydra repository's `dev/local-packages/README.md` for setup
+and persistence. Then run from this Product Workspace:
+
+```console
+docker compose -f compose.yaml -f compose.local-registry.yaml up --build --wait
 curl --fail http://127.0.0.1:4000/health
 ```
 
 The multi-stage Dockerfile compiles the release `server` and `migrate` binaries
 with Rust nightly inside the builder. The runtime image contains the binaries,
-entrypoint, and runtime dependencies. Host Rust, Node, npm, and the Yydra CLI
-are not required for this path; Docker needs access to the image, Rust, and
-Cargo download services during the initial build. H5 and Android are separate
+entrypoint, and runtime dependencies. Once the registries have been seeded,
+the server build needs only Docker and access to the local registries, image,
+Rust, and Cargo download services. The Linux override gives the build stage
+access to host loopback; runtime containers retain their normal network.
+Running a prebuilt image needs neither the registries nor host language tools.
+H5 and Android are separate
 build targets and are not included in this server image.
 
 Compose initializes random database and cursor-signing credentials once in the
@@ -62,20 +75,23 @@ docker compose logs --tail 100 server migrate
 docker compose stop
 docker compose start --wait
 docker compose down
-docker compose up --build --wait
+docker compose -f compose.yaml -f compose.local-registry.yaml up --build --wait
 ```
 
 `stop`, `down`, container replacement, and rebuilding the image preserve the
 named volumes. Keep both volumes together when backing up or moving a deployment;
 losing credentials is not automatic database-password recovery. `down --volumes`
 explicitly deletes credentials and database records. Do not use it for ordinary
-updates. After pulling a source change, run `up --build --wait` to rebuild and
-apply forward migrations. This is a single-host deployment with possible downtime,
+updates. After pulling a source change, rerun the build/start command above,
+including the local registry override, to rebuild and apply forward migrations.
+This is a single-host deployment with possible downtime,
 not an atomic upgrade or an automatic rollback of application or database changes.
 Migration failure on an update may leave the previous server running or unhealthy;
 inspect the migration logs and repair forward before rerunning the command.
 
-For image-only packaging use `docker compose build server`. The image defaults to
+For image-only packaging use
+`docker compose -f compose.yaml -f compose.local-registry.yaml build server`.
+The image defaults to
 `__PRODUCT_ID__-server:local`; `YYDRA_SERVER_IMAGE` overrides its local tag. To use
 the image independently of Compose, provide `DATABASE_URL` and
 `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` at runtime, run its `migrate` command
@@ -465,8 +481,14 @@ API hosts require HTTPS. Debug builds retain Expo's Metro/LAN HTTP behavior.
 This uses Android's [network security configuration](https://developer.android.com/privacy-and-security/security-config)
 without adding certificate authorities or disabling certificate verification.
 
-Canonical authentication libraries are bundled under `.yydra/auth-support` and
-`.yydra/auth-client`; their exact source is verified by `doctor` and `check`.
+Authentication libraries are installed as exact development package versions
+from the local Yydra registries (Cargo on 127.0.0.1:18081, npm on 127.0.0.1:4873).
+Before `yydra setup`, start and seed them from the matching Yydra checkout with
+`python3 scripts/local-packages.py up` and `python3 scripts/local-packages.py publish`.
+`doctor` and `check` verify package declarations and locked identities. For a Linux
+server container build, use `docker compose -f compose.yaml -f compose.local-registry.yaml up --build`
+so the build can reach the same registries. See the Yydra repository
+`dev/local-packages/README.md` for credentials, persistence and version updates.
 Product pages and resource ownership rules remain ordinary editable product code.
 Forward migrations install the shared authentication tables and per-account
 Reading Queue ownership. An existing product with anonymous entries needs an

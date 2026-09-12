@@ -22,6 +22,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
+mod auth_packages;
 mod check_graph;
 mod product_build;
 
@@ -820,6 +821,7 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                 path_patterns: &[
                     "Cargo.toml",
                     "Cargo.lock",
+                    ".cargo/config.toml",
                     "Dockerfile",
                     ".dockerignore",
                     "compose*.yaml",
@@ -848,8 +850,6 @@ fn distribution_inventory_json() -> Result<Vec<u8>> {
                     "LICENSE-*",
                     ".agents/skills/yydra-*/**",
                     ".yydra/build-support/**",
-                    ".yydra/auth-support/**",
-                    ".yydra/auth-client/**",
                 ],
                 lifecycle: "exact-distribution-snapshot",
                 priority: 400,
@@ -1074,6 +1074,7 @@ fn verify_snapshot_authorities_with_origin(
         })
         .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
     verify_build_support_snapshot(root, &expected)?;
+    auth_packages::verify(root)?;
     let expected_policy = render_template(policy_source, &render)?;
     let policy_path = root.join(policy_relative);
     let actual_policy = fs::read_to_string(&policy_path).with_context(|| {
@@ -1094,13 +1095,9 @@ fn verify_snapshot_authorities_with_origin(
 }
 
 fn is_library_snapshot(path: &str) -> bool {
-    [
-        ".yydra/build-support/",
-        ".yydra/auth-support/",
-        ".yydra/auth-client/",
-    ]
-    .iter()
-    .any(|prefix| path.starts_with(prefix))
+    [".yydra/build-support/"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
 }
 
 fn verify_build_support_snapshot(
@@ -1108,15 +1105,11 @@ fn verify_build_support_snapshot(
     expected: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<()> {
     let mut actual = std::collections::BTreeMap::new();
-    let mut pending = [
-        ".yydra/build-support",
-        ".yydra/auth-support",
-        ".yydra/auth-client",
-    ]
-    .into_iter()
-    .filter(|root| expected.keys().any(|file| file.starts_with(root)))
-    .map(PathBuf::from)
-    .collect::<Vec<_>>();
+    let mut pending = [".yydra/build-support"]
+        .into_iter()
+        .filter(|root| expected.keys().any(|file| file.starts_with(root)))
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
     while let Some(relative) = pending.pop() {
         let path = root.join(&relative);
         let metadata = fs::symlink_metadata(&path)
@@ -1136,7 +1129,7 @@ fn verify_build_support_snapshot(
     }
     if &actual != expected {
         bail!(
-            "exact Distribution snapshot drift at '.yydra/build-support', '.yydra/auth-support' or '.yydra/auth-client'; restore the complete reviewed library sources"
+            "exact Distribution snapshot drift at '.yydra/build-support'; restore the complete reviewed library sources"
         );
     }
     Ok(())

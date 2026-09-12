@@ -1,1 +1,0 @@
-../../../../../../yydra-auth/migrations/0001_auth.sql

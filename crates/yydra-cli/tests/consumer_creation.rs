@@ -91,8 +91,8 @@ fn materializes_the_public_api_authority_chain() {
         "migrations/0005_reading_progress.sql",
         "migrations/0006_authentication.sql",
         "migrations/0007_reading_queue_accounts.sql",
-        ".yydra/auth-support/src/lib.rs",
-        ".yydra/auth-client/src/controller.ts",
+        ".cargo/config.toml",
+        "compose.local-registry.yaml",
         "frontend/orval.config.mjs",
         "frontend/src/framework/api/client.ts",
         "frontend/src/framework/api/client.test.ts",
@@ -1906,16 +1906,6 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
             "exact Distribution snapshot drift",
         ),
         (
-            "auth-support-drift",
-            ".yydra/auth-support/src/lib.rs",
-            "exact Distribution snapshot drift",
-        ),
-        (
-            "auth-client-drift",
-            ".yydra/auth-client/src/controller.ts",
-            "exact Distribution snapshot drift",
-        ),
-        (
             "generated-drift",
             ".yydra/distribution-inventory.json",
             "committed generated inventory drift",
@@ -1947,6 +1937,124 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
         );
         assert_eq!(before, byte_inventory(&workspace));
     }
+}
+
+#[test]
+fn doctor_checks_authentication_package_versions_sources_and_checksums() {
+    let sandbox = tempdir().unwrap();
+    for case in [
+        "rust-version",
+        "rust-override",
+        "rust-checksum",
+        "npm-version",
+        "npm-integrity",
+        "npm-registry",
+    ] {
+        let workspace = sandbox.path().join(case);
+        create_with_flags(&workspace, "Package Reader", "package-reader");
+        assert!(!workspace.join(".yydra/auth-support").exists());
+        assert!(!workspace.join(".yydra/auth-client").exists());
+        match case {
+            "rust-version" => {
+                let path = workspace.join("Cargo.toml");
+                let mut value: toml::Value =
+                    toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                value["workspace"]["dependencies"]["yydra-auth"]["version"] =
+                    "=0.6.0-dev.999".into();
+                fs::write(path, toml::to_string(&value).unwrap()).unwrap();
+            }
+            "rust-override" => {
+                let path = workspace.join("Cargo.toml");
+                let mut source = fs::read_to_string(&path).unwrap();
+                source.push_str(
+                    "\n[patch.crates-io]\nyydra-auth = { path = \"/unreviewed/auth\" }\n",
+                );
+                fs::write(path, source).unwrap();
+            }
+            "rust-checksum" => {
+                let path = workspace.join("Cargo.lock");
+                let mut lock: toml::Value =
+                    toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                let auth = lock["package"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
+                    .unwrap();
+                auth["checksum"] = "0".repeat(64).into();
+                fs::write(path, toml::to_string(&lock).unwrap()).unwrap();
+            }
+            "npm-version" | "npm-integrity" => {
+                let file = if case == "npm-version" {
+                    "package.json"
+                } else {
+                    "package-lock.json"
+                };
+                let path = workspace.join("frontend").join(file);
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if case == "npm-version" {
+                    value["dependencies"]["@yydra/auth-client"] = "0.6.0-dev.999".into();
+                } else {
+                    value["packages"]["node_modules/@yydra/auth-client"]["integrity"] =
+                        "sha512-Zg==".into();
+                }
+                fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+            "npm-registry" => {
+                let path = workspace.join("frontend/.npmrc");
+                let source = fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("127.0.0.1:4873", "127.0.0.1:4874");
+                fs::write(path, source).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = byte_inventory(&workspace);
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("doctor")
+            .arg(&workspace)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "doctor accepted {case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("authentication package drift"),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(before, byte_inventory(&workspace));
+    }
+}
+
+#[test]
+fn doctor_allows_equivalent_auth_lock_dependency_references() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("qualified-reference");
+    create_with_flags(&workspace, "Package Reader", "package-reader");
+    let path = workspace.join("Cargo.lock");
+    let mut lock: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let auth = lock["package"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
+        .unwrap();
+    for dependency in auth["dependencies"].as_array_mut().unwrap() {
+        if dependency.as_str() == Some("axum") {
+            *dependency = "axum 0.8.9".into();
+        }
+    }
+    fs::write(path, toml::to_string(&lock).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .arg("doctor")
+        .arg(&workspace)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

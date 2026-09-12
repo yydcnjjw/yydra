@@ -11,8 +11,8 @@
 !.yydra/
 !.yydra/build-support/
 !.yydra/build-support/**
-!.yydra/auth-support/
-!.yydra/auth-support/**
+!.cargo/
+!.cargo/config.toml
 !container/
 !container/**
 !LICENSE-APACHE

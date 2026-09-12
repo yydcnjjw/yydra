@@ -4498,24 +4498,13 @@ fn check_android_generation_inputs(root: &Path) -> std::result::Result<(), NodeF
                     format!("frontend dependency {name} has a non-string authority"),
                 )
             })?;
-            let bundled_auth =
-                name == "@yydra/auth-client" && authority == "file:../.yydra/auth-client";
-            if bundled_auth {
-                verify_snapshot_authorities(root).map_err(|error| {
-                    NodeFailure::fail(
-                        "NATIVE_GENERATION_INPUT_POLICY_FAILED",
-                        format!("shared authentication snapshot is not exact: {error:#}"),
-                    )
-                })?;
-            }
             if semver::Version::parse(authority).is_err()
                 && !valid_local_module_authority(&frontend, authority)
-                && !bundled_auth
             {
                 return Err(NodeFailure::fail(
                     "NATIVE_GENERATION_INPUT_POLICY_FAILED",
                     format!(
-                        "frontend dependency {name} must use an exact version, committed file:./modules path, or exact bundled authentication snapshot, found {authority:?}"
+                        "frontend dependency {name} must use an exact version or committed file:./modules path, found {authority:?}"
                     ),
                 ));
             }

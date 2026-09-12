@@ -18,6 +18,8 @@ candidate. Start with the [CLI guide](crates/yydra-cli/README.md) for its
 exact-version package installation, prerequisites, and supported commands.
 Rust support uses the rolling nightly channel.
 
+Development products obtain authentication packages from [local Cargo/npm registries](dev/local-packages/README.md). Start and publish these packages before running product dependency setup.
+
 The latest published Distribution is
 [0.1.0](https://github.com/yydcnjjw/yydra/releases/tag/distribution-v0.1.0).
 Its [release notes](docs/releases/0.1.0.md) describe that version's contract.

@@ -9,7 +9,7 @@ members = [
   "crates/domain",
   "crates/persistence-postgres",
 ]
-exclude = [".yydra/build-support", ".yydra/auth-support"]
+exclude = [".yydra/build-support"]
 resolver = "3"
 
 [workspace.package]
@@ -33,4 +33,4 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 utoipa = "=5.5.0"
 utoipa-axum = "=0.2.0"
 
-yydra-auth = { version = "=0.6.0", path = ".yydra/auth-support" }
+yydra-auth = { version = "=0.6.0-dev.1", registry = "yydra-local" }

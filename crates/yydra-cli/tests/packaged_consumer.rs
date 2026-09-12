@@ -88,43 +88,19 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             path.display()
         );
     }
-    for (directory, files) in [
-        (
-            "auth-support",
-            &[
-                "Cargo.toml.tmpl",
-                "src/lib.rs",
-                "src/config.rs",
-                "src/test_provider.rs",
-                "migrations/0001_auth.sql",
-                "LICENSE-MIT",
-                "LICENSE-APACHE",
-            ][..],
-        ),
-        (
-            "auth-client",
-            &[
-                "package.json",
-                "src/index.ts",
-                "src/controller.ts",
-                "src/platform.native.ts",
-                "LICENSE-MIT",
-                "LICENSE-APACHE",
-            ][..],
-        ),
-    ] {
-        for file in files {
-            let path = extracted
+    for removed in ["auth-support", "auth-client"] {
+        assert!(
+            !extracted
                 .join("template/product-workspace/.yydra")
-                .join(directory)
-                .join(file);
-            assert!(
-                fs::symlink_metadata(&path).unwrap().is_file(),
-                "shared library snapshot must be a regular file: {}",
-                path.display()
-            );
-        }
+                .join(removed)
+                .exists()
+        );
     }
+    assert!(
+        extracted
+            .join("template/product-workspace/.cargo/config.toml")
+            .is_file()
+    );
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));

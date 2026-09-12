@@ -3021,7 +3021,9 @@ dependencies = [
 
 [[package]]
 name = "yydra-auth"
-version = "0.6.0"
+version = "0.6.0-dev.1"
+source = "sparse+http://127.0.0.1:18081/api/v1/crates/"
+checksum = "10f47dfbd6d85a7806f9252ccbb58d3e9e85899e8704a855729d889e5b97a8b2"
 dependencies = [
  "axum",
  "axum-login",

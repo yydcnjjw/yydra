@@ -46,16 +46,35 @@ sessions, and H5/native credential transport. The frontend package integrates
 session state, credential access, and login/logout lifecycle with Expo. Product
 pages, navigation, and Reading Queue ownership rules stay in the template.
 
-Deliver exact library source snapshots with the Distribution, following the
-[yydra-build delivery pattern](0004-provide-yydra-build.md). Generated products
-reference these packages through explicit local dependencies. Their canonical
-sources are maintained once; product teams do not edit bundled library internals.
-Distribution packaging, license inventory, `doctor`, and `check` verify the
-snapshot and allow only the intended public dependency edges. All external Rust
-dependencies come from crates.io; no upstream Git revision or patch is required.
-Registry publication of Yydra's own packages is not a prerequisite for this local
-implementation. Library updates are explicit; an automatic product upgrade or
-general plugin resolver is outside this change.
+Amended on 2026-09-12 after the maintainer selected package dependencies and then
+local registries for the development phase. Maintain the canonical packages in
+this repository and publish `yydra-auth` to a local Kellnr registry and
+`@yydra/auth-client` to a local Verdaccio registry. Generated products use exact
+development versions and ordinary Cargo/npm resolution. Authentication library
+source files are no longer embedded in the CLI or copied into product templates.
+The earlier source-snapshot implementation is retained in the historical
+2026-09-11 acceptance evidence; `yydra-build` keeps its existing snapshot delivery.
+
+Reuse the standard registry servers and `cargo publish`/`npm publish` clients.
+Registry containers bind only to the host loopback interface. Only Yydra-owned
+packages use these registries; external Rust dependencies still come from
+crates.io, and other npm packages retain the selected public mirror. Credentials
+and persistent server data are local development state, outside product source
+and source control. A stopped registry retains its packages for the next start.
+
+Each changed publication needs a new `-dev.N` package version. Products lock the
+specific versions and package checksums supported by their Distribution.
+`doctor` and `check` verify those declarations and locked identities, replacing
+the former authentication snapshot-byte checks. Explicit package updates also
+update the template locks and undergo consumer validation; automatic product
+upgrades and a general plugin resolver remain outside this change.
+
+Local registry addresses are part of the development dependency sources. Linux
+container builds use the documented local-registry Compose override to reach the
+same loopback URLs through BuildKit's host network. Registry availability is a
+dependency-fetch/build prerequisite, not a product runtime service. Public
+crates.io/npm publication is a later explicit release action; switching to those
+sources requires regenerated locks and consumer validation.
 
 Use the following exact initial Rust dependency combination:
 

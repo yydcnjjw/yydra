@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.native.json"
   },
   "dependencies": {
-    "@yydra/auth-client": "file:../.yydra/auth-client",
+    "@yydra/auth-client": "0.6.0-dev.1",
     "expo-crypto": "57.0.2",
     "expo-secure-store": "57.0.3",
     "expo-web-browser": "57.0.2",

@@ -62,9 +62,16 @@ version, compatibility resolver, upgrade path, or lifecycle, and their presence
 does not establish identical client activation, tools, permissions, behavior,
 Agent performance, Agent Eval success, or Skill effect.
 
+Before product setup or container builds, start and seed the local authentication
+registries from the matching Yydra checkout with
+`python3 scripts/local-packages.py up` and `python3 scripts/local-packages.py publish`.
+This preparation needs Linux, Docker with Compose, Python 3.11+, Rust nightly and
+Node/npm; see [local package setup](../../dev/local-packages/README.md).
 To build and run only the server and a persistent PostgreSQL database, enter the
-new Workspace and run `docker compose up --build --wait`. Its Dockerfile compiles
-inside Docker; this deployment path needs no host Rust, Node, or Yydra installation.
+new Workspace on the same host and run
+`docker compose -f compose.yaml -f compose.local-registry.yaml up --build --wait`.
+Its Dockerfile compiles inside Docker, using the host's local Cargo registry.
+Running an already built image needs no registries or host language tools.
 See the generated README's **Run the server with Docker Compose** section for
 ports, data retention, credentials, updates, and image-only builds.
 
@@ -88,8 +95,11 @@ GitHub App and its server-side credentials and return URLs using the generated
 README's **GitHub sign-in** section. Missing credentials keep protected access
 closed while health checks remain available. Accounts, sessions, entries, and
 progress are independent per product; sign-out revokes only the current session.
-The reusable Rust/frontend sources are bundled under `.yydra/auth-support` and
-`.yydra/auth-client`, with snapshot integrity checked by `doctor` and `check`.
+The authentication libraries are exact-version dependencies from the local
+Cargo/npm development registries. Start and seed them from the matching Yydra
+checkout with `python3 scripts/local-packages.py up` and
+`python3 scripts/local-packages.py publish` before product setup.
+`doctor` and `check` verify the package declarations and locked identities.
 Controlled automated checks use an explicitly enabled local provider fixture;
 they require no GitHub credentials and do not prove live GitHub authorization.
 

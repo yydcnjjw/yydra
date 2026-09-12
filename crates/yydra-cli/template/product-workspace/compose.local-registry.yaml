@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Linux development: BuildKit shares the host loopback registry address.
+services:
+  server:
+    build:
+      context: .
+      network: host
