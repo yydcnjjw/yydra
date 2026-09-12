@@ -108,8 +108,8 @@ def main():
     staging = state / "staging"
     staging.mkdir(exist_ok=True)
     cargo = staging / "yydra-auth"
-    npm = staging / "auth-client"
-    for source, destination in [(ROOT / "crates/yydra-auth", cargo), (ROOT / "packages/auth-client", npm)]:
+    npm = staging / "auth"
+    for source, destination in [(ROOT / "crates/yydra-auth", cargo), (ROOT / "packages/auth", npm)]:
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(source, destination, ignore=shutil.ignore_patterns("target", "node_modules", ".git"))
@@ -121,7 +121,7 @@ def main():
     # Check the two independent package versions against this template's pins.
     template = ROOT / "crates/yydra-cli/template/product-workspace"
     rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"]["yydra-auth"]["version"]
-    npm_pin = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '"MIT"'))["dependencies"]["@yydra/auth-client"]
+    npm_pin = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '"MIT"'))["dependencies"]["@yydra/auth"]
     if rust_pin != "=" + rust_version or npm_pin != npm_version:
         raise RuntimeError("package versions and Product Workspace template pins disagree")
     archives = state / "archives"
@@ -146,18 +146,18 @@ def main():
     write_private(npmrc, f"registry={NPM_URL}/\n//127.0.0.1:4873/:_authToken={credentials['npm_token']}\n")
     env["NPM_CONFIG_USERCONFIG"] = str(npmrc)
     packed = json.loads(run(["npm", "pack", "--json", "--pack-destination", str(archives)], cwd=npm, env=env, capture=True))
-    package_info = packed[0] if isinstance(packed, list) else packed["@yydra/auth-client"]
+    package_info = packed[0] if isinstance(packed, list) else packed["@yydra/auth"]
     tarball = archives / package_info["filename"]
     integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
-    metadata_bytes = request(NPM_URL + "/@yydra%2fauth-client")
+    metadata_bytes = request(NPM_URL + "/@yydra%2fauth")
     metadata = json.loads(metadata_bytes) if metadata_bytes else {}
     published = metadata.get("versions", {}).get(npm_version)
     if published and published["dist"]["integrity"] != integrity:
-        raise RuntimeError("auth-client version already has different bytes; choose a new dev version")
+        raise RuntimeError("auth version already has different bytes; choose a new dev version")
     if not published:
         run(["npm", "publish", str(tarball), "--registry", NPM_URL, "--tag", "dev", "--access", "public"], cwd=npm, env=env)
     result = {"yydra-auth": {"version": rust_version, "sha256": crate_sha},
-              "@yydra/auth-client": {"version": npm_version, "integrity": integrity}}
+              "@yydra/auth": {"version": npm_version, "integrity": integrity}}
     (archives / "packages.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 

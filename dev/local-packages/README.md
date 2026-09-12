@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Local development packages
 
-This development Distribution consumes `yydra-auth` and `@yydra/auth-client`
+This development Distribution consumes `yydra-auth` and `@yydra/auth`
 through local package registries. Source remains in `crates/yydra-auth` and
-`packages/auth-client`. `yydra-build` retains its bundled source snapshot.
+`packages/auth`. `yydra-build` retains its bundled source snapshot.
 
 Prerequisites: Linux, Docker Engine with Compose, Python 3.11+, the repository's
 Rust toolchain and Node/npm. Run from the Yydra checkout:

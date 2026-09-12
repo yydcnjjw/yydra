@@ -1994,9 +1994,9 @@ fn doctor_checks_authentication_package_versions_sources_and_checksums() {
                 let mut value: serde_json::Value =
                     serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
                 if case == "npm-version" {
-                    value["dependencies"]["@yydra/auth-client"] = "0.6.0-dev.999".into();
+                    value["dependencies"]["@yydra/auth"] = "0.6.0-dev.999".into();
                 } else {
-                    value["packages"]["node_modules/@yydra/auth-client"]["integrity"] =
+                    value["packages"]["node_modules/@yydra/auth"]["integrity"] =
                         "sha512-Zg==".into();
                 }
                 fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();

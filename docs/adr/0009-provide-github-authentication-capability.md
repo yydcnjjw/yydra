@@ -49,9 +49,12 @@ pages, navigation, and Reading Queue ownership rules stay in the template.
 Amended on 2026-09-12 after the maintainer selected package dependencies and then
 local registries for the development phase. Maintain the canonical packages in
 this repository and publish `yydra-auth` to a local Kellnr registry and
-`@yydra/auth-client` to a local Verdaccio registry. Generated products use exact
+`@yydra/auth` to a local Verdaccio registry. Generated products use exact
 development versions and ordinary Cargo/npm resolution. Authentication library
 source files are no longer embedded in the CLI or copied into product templates.
+The npm package is named `@yydra/auth` and lives in `packages/auth`, aligning
+with the `yydra-auth` crate by capability rather than a client suffix. Its README
+states the supported Expo H5/Android scope.
 The earlier source-snapshot implementation is retained in the historical
 2026-09-11 acceptance evidence; `yydra-build` keeps its existing snapshot delivery.
 

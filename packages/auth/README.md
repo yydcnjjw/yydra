@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# @yydra/auth-client
+# @yydra/auth
 
 Headless authentication lifecycle for Expo H5 and Android. Products supply the
 generated API adapter and own their screens and navigation. Subscribe to the

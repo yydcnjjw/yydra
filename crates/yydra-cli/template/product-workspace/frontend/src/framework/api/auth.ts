@@ -4,7 +4,7 @@ import {
   logoutProductSession,
   exchangeNativeHandoff,
 } from "@yydra/generated-api/fetch/client";
-import type { AuthApi, ProductSession } from "@yydra/auth-client";
+import type { AuthApi, ProductSession } from "@yydra/auth";
 
 function session(value: unknown): ProductSession {
   if (typeof value !== "object" || value === null)

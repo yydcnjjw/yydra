@@ -100,10 +100,8 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         &template_text("frontend/package.json")
             .replace("__PRODUCT_SOURCE_LICENSE_TOML__", "\"MIT\""),
     )?;
-    if package["dependencies"]["@yydra/auth-client"]
-        != expected_package["dependencies"]["@yydra/auth-client"]
-    {
-        bail!("authentication package drift: restore the exact @yydra/auth-client version");
+    if package["dependencies"]["@yydra/auth"] != expected_package["dependencies"]["@yydra/auth"] {
+        bail!("authentication package drift: restore the exact @yydra/auth version");
     }
     let npmrc = fs::read_to_string(root.join("frontend/.npmrc"))?;
     let scopes = |text: &str| {
@@ -122,19 +120,17 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         &template_text("frontend/package-lock.json")
             .replace("__PRODUCT_SOURCE_LICENSE_TOML__", "\"MIT\""),
     )?;
-    let entry = &npm_lock["packages"]["node_modules/@yydra/auth-client"];
-    let expected_entry = &expected_npm_lock["packages"]["node_modules/@yydra/auth-client"];
+    let entry = &npm_lock["packages"]["node_modules/@yydra/auth"];
+    let expected_entry = &expected_npm_lock["packages"]["node_modules/@yydra/auth"];
     if entry.is_null()
         || ["version", "resolved", "integrity"]
             .iter()
             .any(|key| entry[*key] != expected_entry[*key])
         || entry["link"] == true
-        || npm_lock["packages"][""]["dependencies"]["@yydra/auth-client"]
-            != expected_package["dependencies"]["@yydra/auth-client"]
+        || npm_lock["packages"][""]["dependencies"]["@yydra/auth"]
+            != expected_package["dependencies"]["@yydra/auth"]
     {
-        bail!(
-            "authentication package drift: restore the locked @yydra/auth-client package and integrity"
-        );
+        bail!("authentication package drift: restore the locked @yydra/auth package and integrity");
     }
     Ok(())
 }

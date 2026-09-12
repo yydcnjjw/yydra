@@ -3,7 +3,7 @@ import {
   AuthController,
   createAuthPlatform,
   type AuthSnapshot,
-} from "@yydra/auth-client";
+} from "@yydra/auth";
 import {
   createContext,
   PropsWithChildren,

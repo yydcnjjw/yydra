@@ -1,5 +1,5 @@
 {
-  "name": "@yydra/auth-client",
+  "name": "@yydra/auth",
   "version": "0.6.0-dev.1",
   "license": "MIT OR Apache-2.0",
   "main": "src/index.ts",
@@ -21,6 +21,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/yydcnjjw/yydra.git",
-    "directory": "packages/auth-client"
+    "directory": "packages/auth"
   }
 }

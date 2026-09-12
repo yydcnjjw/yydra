@@ -7,7 +7,7 @@ import {
   type AuthApi,
   type AuthPlatform,
   type ProductSession,
-} from "@yydra/auth-client";
+} from "@yydra/auth";
 
 const account = (id: string): ProductSession => ({
   accountId: id,
