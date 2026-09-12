@@ -31,7 +31,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "12.0.1",
     "@tanstack/react-query": "5.102.8",
-    "@yydra/client-settings": "file:./modules/yydra-client-settings",
+    "@yydra/client-settings": "0.6.0-dev.1",
     "expo": "57.0.19",
     "expo-constants": "57.0.17",
     "expo-linking": "57.0.9",

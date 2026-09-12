@@ -2,7 +2,6 @@
 
 /target/
 /frontend/node_modules/
-/frontend/modules/yydra-client-settings/node_modules/
 /frontend/.expo/
 /frontend/dist/
 /frontend/test-results/

@@ -839,7 +839,6 @@ fn excluded_input(relative: &Path) -> bool {
     relative.starts_with(".git")
         || relative.starts_with("target")
         || relative.starts_with("frontend/node_modules")
-        || relative.starts_with("frontend/modules/yydra-client-settings/node_modules")
         || relative.starts_with("frontend/.expo")
         || relative.starts_with("frontend/dist")
         || relative.starts_with("frontend/test-results")

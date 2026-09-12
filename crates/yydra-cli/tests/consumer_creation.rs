@@ -489,35 +489,6 @@ fn emits_a_sorted_inventory_with_all_five_lifecycles_and_yydra_provenance() {
     }
     assert!(paths.contains(&"LICENSE-MIT"));
     assert!(paths.contains(&"LICENSE-APACHE"));
-    for relative in [
-        "package.json",
-        "src/index.ts",
-        "src/react.ts",
-        "README.md",
-        "LICENSE-MIT",
-        "LICENSE-APACHE",
-    ] {
-        let path = format!("frontend/modules/yydra-client-settings/{relative}");
-        let artifact = artifacts
-            .iter()
-            .find(|artifact| artifact["path"] == path)
-            .unwrap_or_else(|| panic!("missing client settings artifact {path}"));
-        assert_eq!(artifact["lifecycle"], "exact-distribution-snapshot");
-        assert_eq!(artifact["hand_editable_after_creation"], false);
-        let target = destination.join(&path);
-        assert!(fs::symlink_metadata(&target).unwrap().is_file());
-        assert_eq!(
-            artifact["source_sha256"],
-            hex::encode(Sha256::digest(fs::read(target).unwrap()))
-        );
-    }
-    let package: serde_json::Value =
-        serde_json::from_slice(&fs::read(destination.join("frontend/package.json")).unwrap())
-            .unwrap();
-    assert_eq!(
-        package["dependencies"]["@yydra/client-settings"],
-        "file:./modules/yydra-client-settings"
-    );
     assert!(paths.contains(&".yydra/origin.toml"));
     assert!(!paths.contains(&".yydra/supply-chain-policy.json"));
     assert!(!paths.contains(&".yydra/supply-chain-exceptions.json"));
@@ -1921,11 +1892,6 @@ fn doctor_rejects_hand_edits_to_snapshot_and_generated_authorities_without_mutat
             "exact Distribution snapshot drift",
         ),
         (
-            "client-settings-drift",
-            "frontend/modules/yydra-client-settings/src/index.ts",
-            "exact Distribution snapshot drift",
-        ),
-        (
             "generated-drift",
             ".yydra/distribution-inventory.json",
             "committed generated inventory drift",
@@ -2047,6 +2013,61 @@ fn doctor_checks_authentication_package_versions_sources_and_checksums() {
 }
 
 #[test]
+fn doctor_checks_client_settings_package_identity_without_mutation() {
+    let sandbox = tempdir().unwrap();
+    for case in [
+        "declaration",
+        "root-version",
+        "version",
+        "resolved",
+        "integrity",
+        "link",
+        "missing",
+    ] {
+        let workspace = sandbox.path().join(case);
+        create_with_flags(&workspace, "Settings Reader", "settings-reader");
+        assert!(
+            !workspace
+                .join("frontend/modules/yydra-client-settings")
+                .exists()
+        );
+        let filename = if case == "declaration" {
+            "package.json"
+        } else {
+            "package-lock.json"
+        };
+        let path = workspace.join("frontend").join(filename);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let name = "@yydra/client-settings";
+        let entry = "node_modules/@yydra/client-settings";
+        match case {
+            "declaration" => value["dependencies"][name] = "0.6.0-dev.999".into(),
+            "root-version" => value["packages"][""]["dependencies"][name] = "0.6.0-dev.999".into(),
+            "link" => value["packages"][entry]["link"] = true.into(),
+            "missing" => {
+                value["packages"].as_object_mut().unwrap().remove(entry);
+            }
+            field => value["packages"][entry][field] = "unreviewed".into(),
+        }
+        fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let before = byte_inventory(&workspace);
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("doctor")
+            .arg(&workspace)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "doctor accepted {case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("client settings package drift"),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(before, byte_inventory(&workspace));
+    }
+}
+
+#[test]
 fn doctor_allows_equivalent_auth_lock_dependency_references() {
     let sandbox = tempdir().unwrap();
     let workspace = sandbox.path().join("qualified-reference");
@@ -2099,58 +2120,6 @@ fn doctor_rejects_additional_build_support_source() {
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("exact Distribution snapshot drift"));
     assert_eq!(before, byte_inventory(&workspace));
-}
-
-#[test]
-fn doctor_accepts_client_settings_installed_dependencies_without_mutation() {
-    let sandbox = tempdir().unwrap();
-    let workspace = sandbox.path().join("installed-settings");
-    create_with_flags(&workspace, "Settings Reader", "settings-reader");
-    let dependency = workspace.join("frontend/modules/yydra-client-settings/node_modules/example");
-    fs::create_dir_all(&dependency).unwrap();
-    fs::write(dependency.join("index.js"), "module.exports = {};\n").unwrap();
-    let before = byte_inventory(&workspace);
-    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .arg("doctor")
-        .arg(&workspace)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(before, byte_inventory(&workspace));
-}
-
-#[test]
-fn doctor_rejects_missing_and_added_client_settings_files_without_mutation() {
-    let sandbox = tempdir().unwrap();
-    for missing in [false, true] {
-        let workspace = sandbox.path().join(if missing {
-            "missing-settings"
-        } else {
-            "added-settings"
-        });
-        create_with_flags(&workspace, "Settings Reader", "settings-reader");
-        let package = workspace.join("frontend/modules/yydra-client-settings");
-        if missing {
-            fs::remove_file(package.join("src/react.ts")).unwrap();
-        } else {
-            fs::write(package.join("src/extra.ts"), "export const extra = true;\n").unwrap();
-        }
-        let before = byte_inventory(&workspace);
-        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-            .arg("doctor")
-            .arg(&workspace)
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("exact Distribution snapshot drift")
-        );
-        assert_eq!(before, byte_inventory(&workspace));
-    }
 }
 
 #[test]

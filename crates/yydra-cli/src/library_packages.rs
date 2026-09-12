@@ -100,9 +100,6 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         &template_text("frontend/package.json")
             .replace("__PRODUCT_SOURCE_LICENSE_TOML__", "\"MIT\""),
     )?;
-    if package["dependencies"]["@yydra/auth"] != expected_package["dependencies"]["@yydra/auth"] {
-        bail!("authentication package drift: restore the exact @yydra/auth version");
-    }
     let npmrc = fs::read_to_string(root.join("frontend/.npmrc"))?;
     let scopes = |text: &str| {
         text.lines()
@@ -120,17 +117,26 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         &template_text("frontend/package-lock.json")
             .replace("__PRODUCT_SOURCE_LICENSE_TOML__", "\"MIT\""),
     )?;
-    let entry = &npm_lock["packages"]["node_modules/@yydra/auth"];
-    let expected_entry = &expected_npm_lock["packages"]["node_modules/@yydra/auth"];
-    if entry.is_null()
-        || ["version", "resolved", "integrity"]
-            .iter()
-            .any(|key| entry[*key] != expected_entry[*key])
-        || entry["link"] == true
-        || npm_lock["packages"][""]["dependencies"]["@yydra/auth"]
-            != expected_package["dependencies"]["@yydra/auth"]
-    {
-        bail!("authentication package drift: restore the locked @yydra/auth package and integrity");
+    for (name, label) in [
+        ("@yydra/auth", "authentication"),
+        ("@yydra/client-settings", "client settings"),
+    ] {
+        if package["dependencies"][name] != expected_package["dependencies"][name] {
+            bail!("{label} package drift: restore the exact {name} version");
+        }
+        let key = format!("node_modules/{name}");
+        let entry = &npm_lock["packages"][&key];
+        let expected_entry = &expected_npm_lock["packages"][&key];
+        if entry.is_null()
+            || ["version", "resolved", "integrity"]
+                .iter()
+                .any(|key| entry[*key] != expected_entry[*key])
+            || entry["link"] == true
+            || npm_lock["packages"][""]["dependencies"][name]
+                != expected_package["dependencies"][name]
+        {
+            bail!("{label} package drift: restore the locked {name} package and integrity");
+        }
     }
     Ok(())
 }

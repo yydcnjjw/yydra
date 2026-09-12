@@ -52,18 +52,23 @@ resolution is added.
 ## Delivery and product integration
 
 Ship TypeScript source entries for TypeScript-aware application toolchains,
-including the supported Expo stack. The package is independently packable; the
-initial delivery does not require publishing it to a registry or creating a
-root npm workspace.
+including the supported Expo stack. The package is independently packable and
+includes both licenses.
 
-New Product Workspaces depend on `file:./modules/yydra-client-settings`. The
-CLI template references the canonical package files individually; packaged
-and materialized Workspaces contain regular files. Verify this package as an
-exact Distribution snapshot, including its complete file set and both licenses.
-The package's `node_modules` directory contains disposable npm installation
-output and is excluded from source snapshot verification by `doctor`.
-Products edit their declarations and assembly in `frontend/src`; the package
-implementation is maintained in Yydra. Existing Workspaces are not rewritten.
+Amended on 2026-09-12: follow the authentication capability's local package
+release workflow. Publish `@yydra/client-settings` to the existing Verdaccio
+registry with `scripts/local-packages.py`; the first development version is
+`0.6.0-dev.1`. Each changed publication needs a new `-dev.N` version. The
+publisher accepts identical archives and rejects changed bytes under an
+existing version. It can publish one selected package or all maintained packages.
+
+Generated products declare an exact npm version and lock its registry source
+and integrity. The CLI no longer embeds the settings library's source.
+`doctor` checks the package declaration and locked identity, using the same
+registry configuration as `@yydra/auth`. Products edit their declarations and
+assembly in `frontend/src`; the reusable implementation stays in Yydra.
+Existing Workspaces are not rewritten. Local registry services are required
+when fetching dependencies, and public npm publication remains a separate action.
 
 The Reading Queue remembers its default sort. A valid explicit URL sort takes
 precedence for the current view. Visiting a link does not save that sort.
@@ -76,8 +81,8 @@ examples of settings a product can define, rather than new presentation features
 - Exercise different product schemas, persistence across store recreation,
   native migration options, and React hydration and update subscriptions.
 - Verify exports using an actual npm package artifact.
-- Verify packaged CLI materialization and rejection of missing, additional,
-  or modified snapshot files. Check licenses and dependency locks.
+- Verify packaged CLI creation and rejection of changed package versions,
+  registry sources, or locked identities. Check licenses and dependency locks.
 - Run affected frontend checks and H5 acceptance for reopening, URL precedence,
   and explicit sort versus filter changes in a fresh Product Workspace.
 - Run an Android release build because AsyncStorage adds a native dependency.

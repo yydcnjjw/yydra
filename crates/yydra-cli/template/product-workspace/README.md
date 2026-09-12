@@ -206,8 +206,9 @@ persist hydration before displaying the application. The Reading Queue remembers
 an explicitly selected sort across reopening; a valid URL sort overrides it
 for that view without changing the preference. A filter change alone does not
 save a sort. Products own defaults, storage keys, and version migrations.
-The shared package under `frontend/modules/yydra-client-settings` is an exact
-Distribution snapshot; see its README for the native Zustand API and scope.
+The shared package is installed from the local npm registry at the exact
+version in `frontend/package.json`, like `@yydra/auth`. Doctor verifies its
+locked identity; product-specific settings remain in `frontend/src`.
 
 The handwritten API facade and anonymous health client share request execution:
 HTTP(S) base URLs resolve from the origin (path, query, and fragment are removed),

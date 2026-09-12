@@ -75,11 +75,16 @@ for the underlying contract.
 
 The package ships TypeScript source entries for TypeScript-aware application
 toolchains such as the supported Expo stack. It is not a precompiled browser
-script. The CLI includes the same source as a protected Distribution snapshot
-under `frontend/modules/yydra-client-settings`; product-specific declarations
-remain editable in `frontend/src`.
-The package's `node_modules` directory, when created by npm, is disposable
-dependency installation output rather than part of that source snapshot.
+script. Like `@yydra/auth`, development releases use Yydra's local Verdaccio
+registry. Generated products install the exact `0.6.0-dev.1` version through
+their committed npm lock. Product-specific declarations remain editable in
+`frontend/src`; the reusable implementation is maintained in this package.
+`doctor` checks the declared version and locked package source and integrity.
+
+From the Yydra checkout, run `python3 scripts/local-packages.py up`, then
+`python3 scripts/local-packages.py --package @yydra/client-settings publish`.
+Choose a new `-dev.N` version for changed package bytes and update the template
+dependency and lock together. Public npm publication is a separate release step.
 
 Run `npm ci`, `npm test`, and `npm run typecheck` in this package. `npm pack`
 produces an independently consumable package containing the source, documentation,

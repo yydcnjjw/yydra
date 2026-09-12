@@ -374,8 +374,8 @@ impl ServerGuard {
                 "YYDRA_AUTH_FIXTURE_PROVIDER",
                 format!("http://127.0.0.1:{port}"),
             )
-            .env_remove("GITHUB_CLIENT_ID")
-            .env_remove("GITHUB_CLIENT_SECRET")
+            .env("GITHUB_CLIENT_ID", "fixture-client")
+            .env("GITHUB_CLIENT_SECRET", "fixture-secret")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);

@@ -12,6 +12,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import urllib.error
 import urllib.request
@@ -59,6 +60,8 @@ def main():
     default_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
     parser.add_argument("--state-dir", type=Path, default=default_data / "yydra/local-packages")
     parser.add_argument("--project", default="yydra-local-packages")
+    parser.add_argument("--package", choices=["all", "yydra-auth", "@yydra/auth", "@yydra/client-settings"], default="all",
+                        help="package to publish (default: all)")
     parser.add_argument("command", choices=["up", "status", "publish", "down"])
     args = parser.parse_args()
     state = args.state_dir.resolve()
@@ -107,59 +110,86 @@ def main():
         raise RuntimeError("state-dir must be outside a Git checkout for reproducible packages")
     staging = state / "staging"
     staging.mkdir(exist_ok=True)
-    cargo = staging / "yydra-auth"
-    npm = staging / "auth"
-    for source, destination in [(ROOT / "crates/yydra-auth", cargo), (ROOT / "packages/auth", npm)]:
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(source, destination, ignore=shutil.ignore_patterns("target", "node_modules", ".git"))
-    shutil.copyfile(ROOT / "Cargo.lock", cargo / "Cargo.lock")
-    rust_version = tomllib.loads((cargo / "Cargo.toml").read_text())["package"]["version"]
-    npm_version = json.loads((npm / "package.json").read_text())["version"]
-    if "-dev." not in rust_version or "-dev." not in npm_version:
-        raise RuntimeError("local publishing requires explicit -dev.N package versions")
-    # Check the two independent package versions against this template's pins.
+    selected = {"yydra-auth", "@yydra/auth", "@yydra/client-settings"} if args.package == "all" else {args.package}
     template = ROOT / "crates/yydra-cli/template/product-workspace"
-    rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"]["yydra-auth"]["version"]
-    npm_pin = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '"MIT"'))["dependencies"]["@yydra/auth"]
-    if rust_pin != "=" + rust_version or npm_pin != npm_version:
-        raise RuntimeError("package versions and Product Workspace template pins disagree")
+    template_npm = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '\"MIT\"'))
+    npm_packages = []
+    for directory in ["auth", "client-settings"]:
+        source = ROOT / "packages" / directory
+        package = json.loads((source / "package.json").read_text())
+        if package["name"] not in selected:
+            continue
+        if "-dev." not in package["version"]:
+            raise RuntimeError("local publishing requires explicit -dev.N package versions")
+        if template_npm["dependencies"][package["name"]] != package["version"]:
+            raise RuntimeError("package versions and Product Workspace template pins disagree")
+        npm = staging / directory
+        if npm.exists():
+            shutil.rmtree(npm)
+        shutil.copytree(source, npm, ignore=shutil.ignore_patterns("node_modules", ".git"))
+        npm_packages.append((npm, package["name"], package["version"]))
+    if "yydra-auth" in selected:
+        cargo = staging / "yydra-auth"
+        if cargo.exists():
+            shutil.rmtree(cargo)
+        shutil.copytree(ROOT / "crates/yydra-auth", cargo, ignore=shutil.ignore_patterns("target", ".git"))
+        shutil.copyfile(ROOT / "Cargo.lock", cargo / "Cargo.lock")
+        rust_version = tomllib.loads((cargo / "Cargo.toml").read_text())["package"]["version"]
+        rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"]["yydra-auth"]["version"]
+        if "-dev." not in rust_version:
+            raise RuntimeError("local publishing requires explicit -dev.N package versions")
+        if rust_pin != "=" + rust_version:
+            raise RuntimeError("package versions and Product Workspace template pins disagree")
     archives = state / "archives"
     archives.mkdir(exist_ok=True)
-    env["CARGO_TARGET_DIR"] = str(state / "cargo-target")
-    env["CARGO_REGISTRIES_YYDRA_LOCAL_TOKEN"] = credentials["cargo_token"]
-    cargo_args = ["--config", str(ROOT / ".cargo/config.toml")]
-    # Prune other workspace members while retaining the root lock's dependency versions.
-    run(["cargo", "+nightly", *cargo_args, "update", "--workspace"], cwd=cargo, env=env)
-    run(["cargo", "+nightly", *cargo_args, "package", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
-    crate = state / "cargo-target/package" / f"yydra-auth-{rust_version}.crate"
-    crate_sha = hashlib.sha256(crate.read_bytes()).hexdigest()
-    index = request(CARGO_URL + "/api/v1/crates/yy/dr/yydra-auth")
-    existing = next((json.loads(line) for line in (index or b"").splitlines()
-                     if json.loads(line)["vers"] == rust_version), None)
-    if existing and existing["cksum"] != crate_sha:
-        raise RuntimeError("yydra-auth version already has different bytes; choose a new dev version")
-    if not existing:
-        run(["cargo", "+nightly", *cargo_args, "publish", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
-    shutil.copyfile(crate, archives / crate.name)
-    npmrc = state / "publish.npmrc"
-    write_private(npmrc, f"registry={NPM_URL}/\n//127.0.0.1:4873/:_authToken={credentials['npm_token']}\n")
-    env["NPM_CONFIG_USERCONFIG"] = str(npmrc)
-    packed = json.loads(run(["npm", "pack", "--json", "--pack-destination", str(archives)], cwd=npm, env=env, capture=True))
-    package_info = packed[0] if isinstance(packed, list) else packed["@yydra/auth"]
-    tarball = archives / package_info["filename"]
-    integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
-    metadata_bytes = request(NPM_URL + "/@yydra%2fauth")
-    metadata = json.loads(metadata_bytes) if metadata_bytes else {}
-    published = metadata.get("versions", {}).get(npm_version)
-    if published and published["dist"]["integrity"] != integrity:
-        raise RuntimeError("auth version already has different bytes; choose a new dev version")
-    if not published:
-        run(["npm", "publish", str(tarball), "--registry", NPM_URL, "--tag", "dev", "--access", "public"], cwd=npm, env=env)
-    result = {"yydra-auth": {"version": rust_version, "sha256": crate_sha},
-              "@yydra/auth": {"version": npm_version, "integrity": integrity}}
-    (archives / "packages.json").write_text(json.dumps(result, indent=2) + "\n")
+    result = {}
+    if "yydra-auth" in selected:
+        env["CARGO_TARGET_DIR"] = str(state / "cargo-target")
+        env["CARGO_REGISTRIES_YYDRA_LOCAL_TOKEN"] = credentials["cargo_token"]
+        cargo_args = ["--config", str(ROOT / ".cargo/config.toml")]
+        # Prune other workspace members while retaining the root lock's dependency versions.
+        run(["cargo", "+nightly", *cargo_args, "update", "--workspace"], cwd=cargo, env=env)
+        run(["cargo", "+nightly", *cargo_args, "package", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
+        crate = state / "cargo-target/package" / f"yydra-auth-{rust_version}.crate"
+        crate_sha = hashlib.sha256(crate.read_bytes()).hexdigest()
+        index = request(CARGO_URL + "/api/v1/crates/yy/dr/yydra-auth")
+        existing = next((json.loads(line) for line in (index or b"").splitlines()
+                         if json.loads(line)["vers"] == rust_version), None)
+        if existing and existing["cksum"] != crate_sha:
+            raise RuntimeError("yydra-auth version already has different bytes; choose a new dev version")
+        if not existing:
+            run(["cargo", "+nightly", *cargo_args, "publish", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
+        shutil.copyfile(crate, archives / crate.name)
+        result["yydra-auth"] = {"version": rust_version, "sha256": crate_sha}
+    if npm_packages:
+        npmrc = state / "publish.npmrc"
+        write_private(npmrc, f"registry={NPM_URL}/\n//127.0.0.1:4873/:_authToken={credentials['npm_token']}\n")
+        env["NPM_CONFIG_USERCONFIG"] = str(npmrc)
+    for npm, name, version in npm_packages:
+        result[name] = publish_npm(npm, name, version, archives, env)
+    # A selected publication must retain the other packages' recorded identities.
+    record = archives / "packages.json"
+    recorded = json.loads(record.read_text()) if record.exists() else {}
+    recorded.update(result)
+    (archives / "packages.json").write_text(json.dumps(recorded, indent=2) + "\n")
     print(json.dumps(result, indent=2))
+
+
+def publish_npm(directory, name, version, archives, env):
+    with tempfile.TemporaryDirectory(prefix="npm-pack-", dir=archives) as packed_dir:
+        packed = json.loads(run(["npm", "pack", "--json", "--pack-destination", packed_dir], cwd=directory, env=env, capture=True))
+        package_info = packed[0] if isinstance(packed, list) else packed[name]
+        tarball = Path(packed_dir) / package_info["filename"]
+        integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
+        metadata_bytes = request(NPM_URL + "/" + name.replace("/", "%2f"))
+        metadata = json.loads(metadata_bytes) if metadata_bytes else {}
+        published = metadata.get("versions", {}).get(version)
+        if published and published["dist"]["integrity"] != integrity:
+            raise RuntimeError(f"{name} version already has different bytes; choose a new dev version")
+        if not published:
+            run(["npm", "publish", str(tarball), "--registry", NPM_URL, "--tag", "dev", "--access", "public"], cwd=directory, env=env)
+        shutil.copyfile(tarball, archives / tarball.name)
+    return {"version": version, "integrity": integrity}
 
 
 if __name__ == "__main__":

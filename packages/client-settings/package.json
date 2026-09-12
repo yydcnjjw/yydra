@@ -1,6 +1,6 @@
 {
   "name": "@yydra/client-settings",
-  "version": "0.5.0",
+  "version": "0.6.0-dev.1",
   "description": "Reusable client settings using Zustand stores and persistence",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -40,5 +40,10 @@
     "react-dom": "19.2.3",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yydcnjjw/yydra.git",
+    "directory": "packages/client-settings"
   }
 }
