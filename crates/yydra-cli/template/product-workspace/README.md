@@ -15,7 +15,7 @@ hand-edited authorities.
 
 Exactly two portable Baseline Skill snapshots are materialized under
 `.agents/skills`: `yydra-product-change` routes an end-to-end Product Domain
-change, and `yydra-diagnose` interprets structured `doctor` and `check` results
+change, and `yydra-diagnose` interprets structured `doctor` results
 for safe focused repair. Their exact Distribution inventory and digests are the
 authority; the Skills have no independent version, compatibility resolver,
 upgrade path, or lifecycle. Client discovery is only a thin integration seam and
@@ -115,10 +115,8 @@ Treat this file as Product-owned configuration alongside the frontend manifests.
 Rust uses the rolling `nightly` channel with rustfmt and Clippy. Refresh a local
 installation explicitly with `rustup update nightly`; builds and checks use the
 installed channel without adding an update step. This Distribution maintains
-nightly-only support and declares no stable MSRV. Checks preserve actual Rust
-tool versions, including build identities, and successful runs from different
-nightly dates may be aggregated. Evidence applies to the versions actually
-validated, while the remaining exact Distribution and tool constraints still apply.
+nightly-only support and declares no stable MSRV. Doctor reports the actual
+installed Rust versions and disables implicit toolchain installation.
 
 Install exact dependency graphs and start the pinned PostgreSQL service:
 
@@ -235,133 +233,70 @@ Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` to a stable secret of at least
 32 bytes before starting the server; rotating it intentionally invalidates
 previous cursors. Do not place that value in source or logs.
 
-The supported quality entrypoint is read-only for authored, snapshot,
-committed-generated, lock, migration, and configuration inputs:
+## Environment diagnostics and validation
 
 ```console
-yydra check .
-yydra check . --comparison-base main --node database.migration-history
-yydra check . --fixture clean --evidence-dir /absolute/external/clean-evidence
+yydra doctor .
+yydra doctor . --target server
+yydra doctor . --target android
 ```
 
-It emits one result model as human output or versioned JSON Lines and writes a
-manifest plus raw node logs to a private, unique system-temporary directory
-outside this Workspace by default. An explicit `--evidence-dir` must also be
-outside the Workspace and have no symlink ancestor. A focused `--node
-<stable-id>` run is diagnostic and records `complete=false`; it is not a
-complete core-graph claim. Every invocation embeds the exact
-Distribution-owned catalog and executor digests, stable diagnostic vocabulary, prerequisite
-graph, result states, retry policy, exception policy, proof boundaries, and
-per-node attempts in its manifest and `artifacts/check-catalog.json`.
-Missing required infrastructure is reported separately from semantic failure,
-and a failed prerequisite skips only its dependent nodes while independent
-nodes continue. Semantic, generation, and conformance nodes never retry;
-Docker and Playwright browser establishment may retry once, with both attempts
-recorded. This Distribution's exception policy is deny-all, so
-`.yydra/check-exceptions.toml`, unknown exceptions, and omitted required nodes
-fail closed.
+Doctor verifies Workspace identity and snapshots and probes installed tools.
+Default diagnosis covers nightly Rust (with Cargo, rustfmt, and Clippy) and
+Node/npm. `--target server` checks backend tools; `--target h5` also checks
+frontend tools. `--target android` adds JDK and SDK component diagnostics.
+Missing frontend installation and optional Docker/Compose are warnings; setup
+owns dependency installation, and external PostgreSQL is supported. Required
+failures cause a nonzero exit. Android requires explicit `ANDROID_HOME` (or
+consistent `ANDROID_SDK_ROOT`) so the account-free build can find the SDK.
+Doctor can run before setup and does not build, test, or install tools.
 
-A full local pass remains `scope=clean-core-local` with
-`aggregateConformance=false`. For aggregate evidence, the Distribution checks
-the Workspace Origin Record against exact catalog-owned inputs: `clean` is
-`Clean Product` / `clean-product` / `Apache-2.0`, and `reading-queue` is
-`Reading Queue` / `reading-queue` / `Apache-2.0`; the option is not a
-caller-trusted label. Aggregate conformance requires exactly one
-complete, unchanged, uploaded evidence tree for each fixture. The same exact
-CLI verifies their catalog, exact executor and Distribution/tool identities, all node and attempt
-results, JSON Lines, raw logs, artifact digests, and absence of exceptions:
+Use the project's own validation commands after setup:
 
 ```console
-yydra check \
-  --aggregate-evidence /uploaded/clean/manifest.json \
-  --aggregate-evidence /uploaded/reading-queue/manifest.json \
-  --evidence-dir /absolute/external/aggregate-evidence
+cargo fmt --all --check
+cargo check --locked --workspace --all-targets --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features --doc
+npm --prefix frontend run format:check
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+npm --prefix frontend test
 ```
 
-Missing, malformed, stale, mismatched, unuploaded, symlinked, failed, skipped,
-or not-run evidence returns non-zero and cannot produce aggregate conformance.
-The repository CI is only an executor of this graph; its complete fixture and
-aggregate evidence directories are retained as artifacts.
+Database integration tests modify database state. Use a fresh disposable
+PostgreSQL database, never a deployment database. For example, run these commands
+in the same terminal with an unused port and a task-specific Compose project:
 
-This Distribution does not evaluate dependency inventories, vulnerabilities or
-vulnerability exceptions, SBOMs, or dependency-material attribution. These are
-outside the Mechanical Quality Contract and are not reported as passing checks.
-The catalog and local/aggregate manifests record this boundary in `notEvaluated`.
-Selecting a removed `supply-chain.*` node fails as an unknown node.
-
-Locked installs, exact dependency/tool versions, existing dependency upgrades,
-LICENSE/NOTICE and source attribution, Workspace Origin Record, generated
-snapshot integrity, and the remaining quality checks stay required. Yydra-owned
-npm installations disable automatic audit while still downloading dependencies.
-The general deny-all `policy.exceptions` check continues to reject waivers of
-remaining quality nodes.
-
-The `yydra-android-dependencies` config plugin retains Gson `2.14.0`, commons-io
-`2.22.0`, and the pinned local Bolts Tasks source replacement. Ordinary Android
-assembly performs its normal dependency resolution without extra dependency-report
-or material-capture tasks. No separate JS bundle/source map analysis material is
-required. Server binaries, actual tested production H5 output, APKs, logs, and
-hashes remain in their build nodes' evidence and are verified by aggregation.
-
-Check evidence schema 2 and this exact Distribution/catalog/executor identity are
-required. Older Workspaces still require their original CLI; no migration or
-version override is provided. Historical supply-chain results retain their old
-scope and cannot establish conformance to this Distribution.
-
-`database.migration-history` rejects edits or deletions to exact-Distribution
-migrations and, when `--comparison-base <git-revision>` is supplied, migrations
-present at that Git base; corrections require a new forward migration.
-`database.runtime-invariants` proves the selected transaction, rollback,
-derived-state, migration, and contention fixtures against real PostgreSQL.
-`runtime.post-commit-executor` proves the bounded lossy lifecycle without
-claiming durable delivery or business-invariant correctness.
-`native.android-generation` runs the reviewed `generate:android` package
-script twice from identical authored inputs, records the complete generated
-path/mode/byte inventories, rejects drift or authored-input mutation, and
-removes the generated hosts. `android.release` repeats clean generation and
-uses only the generated Gradle wrapper to assemble an identified release APK:
-
-```console
-yydra check . --node native.android-generation
-yydra check . --node android.release
+```sh
+export YYDRA_POSTGRES_PORT=55439
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/yydra_product
+docker compose -p yydra-db-tests -f compose.dev.yaml up -d --wait postgres
+cargo run --locked --bin migrate
+cargo test --locked --test reading_queue_postgres -- --ignored --test-threads=1
+docker compose -p yydra-db-tests -f compose.dev.yaml down --volumes
 ```
 
-Both nodes keep raw Expo/Gradle logs and structured inventories or artifact
-identity in external evidence. The check command sanitizes its environment, so
-Expo/EAS credentials are neither visible nor required. `frontend/android` and
-`frontend/ios` are ignored, disposable outputs. Agents may inspect a host with
-`npm --prefix frontend run generate:android`, but every fix belongs in the
-committed `frontend/app.json`, exact dependencies, a declared standard config
-plugin, or a committed local Expo Module; never patch generated Java, Kotlin,
-Gradle, manifest, or resource files as source. A pass proves deterministic
-generation on the current host and an Android release build only—not Android
-runtime, installability on a physical device, native accessibility, store
-signing, or bit-for-bit cross-host reproducibility. The release gate uses one
-Gradle invocation for release assembly.
-It limits Gradle to one worker, compiles Kotlin in the same bounded process,
-and applies one-slot CMake compile and link pools to every generated Android
-module. Cache seeds and retained artifacts have explicit
-file/count/byte limits; do not run multiple Android release checks concurrently
-on a memory-constrained host.
-Ephemeral runners may provide an absolute public dependency-cache seed through
-`YYDRA_GRADLE_DEPENDENCY_CACHE_SEED`. It must contain only a prepared
-`modules-2` tree without symlinks, lock files, or `gc.properties`; the gate
-copies it into the invocation's account-free Gradle home. Never put user
-configuration, credentials, daemon state, or other Gradle home content in the
-seed.
-`h5.product-presentation-accessibility` executes the visible Product-owned
-Playwright role, accessible-name, selected-state, focus, responsive-width, and
-dynamic-heading assertions without retry:
+Always run the final cleanup for that disposable project, including after a test
+failure. Each test applies/verifies migrations as needed; serial execution keeps
+the tests' database fixtures separate. Run H5 tests against a separately prepared
+backend as described below. The CLI no longer owns a quality graph or aggregate
+manifest; diagnosis and individual tests prove only their stated scope.
 
-```console
-yydra check . --node h5.product-presentation-accessibility
-```
+`frontend/android` and `frontend/ios` are disposable generated outputs. Express
+native fixes in app configuration, locked dependencies, plugins, or local Expo
+Modules. `yydra build . --target android` generates a clean host and retains its
+APK and build log. It uses an account-free Expo/Gradle environment with bounded
+parallelism; never patch generated native source as an authority. Android
+diagnosis checks component presence, while the build selects required versions.
+An APK build does not prove device/runtime or accessibility behavior.
 
-The node fails closed for a missing or zero-test specification, focused or
-skipped tests, malformed JSON evidence, assertion failure, and loss of the
-dynamic entry-heading role. It proves only the registered H5 semantics—not
-complete WCAG conformance, native assistive-technology behavior, physical
-device validation, or unregistered Product behavior.
+An optional `YYDRA_GRADLE_DEPENDENCY_CACHE_SEED` must be an absolute directory
+containing a prepared `modules-2` dependency tree, without symlinks, locks, user
+configuration, credentials, or daemon state. It is copied into the isolated
+Gradle home under explicit size/count limits. Shared download caches remain
+reusable; run large Android builds serially on constrained hosts.
 
 Public routes consumed by Generated Client code must be registered through
 `product_transport_http::public_routes`. Rust handlers and `utoipa`
@@ -384,7 +319,7 @@ The dedicated `crates/api-build/build.rs` obtains the derived OpenAPI from
 `transport-http` and calls the public `yydra-build` helper. The helper owns OpenAPI
 validation, pinned Orval Fetch/TypeScript/Zod generation, and generated-client
 TypeScript validation. Its exact Distribution source ships in
-`.yydra/build-support`; `doctor` and `check` verify that snapshot. Targeted backend
+`.yydra/build-support`; `doctor` verifies that snapshot. Targeted backend
 and migration builds do not compile `api-build` or require frontend tools.
 Whole-Workspace Cargo builds include it and require installed frontend tools.
 
@@ -401,21 +336,19 @@ Cargo tracks Rust build dependencies, generator configuration, frontend tool
 metadata, and PATH. Unchanged inputs reuse the previous generation. If required
 outputs are missing, preparation cleans only `api-build` and rebuilds once;
 other dependency caches remain. A missing frontend link is repaired directly.
-Generation failure stops the consumer. There is no API generation lock, staging
-transaction, or compatibility history. Checks validate the current version.
-`yydra check` reuses the preparation script after installing frontend tools and
-sets an isolated scratch Cargo target directory for all child processes.
-Complete Workspace identity and provenance checks belong to `doctor` and the
-appropriate `check` nodes.
+Generation failure stops the consumer. Missing outputs are repaired by the
+owning preparation script. Workspace identity and provenance diagnosis belong
+to `doctor`; application tests remain explicit project commands.
 
 The focused production H5 Application Surface acceptance command exports static web assets, serves
 them locally, creates, completes, reopens, filters, paginates, refreshes, and
 restores URL state against the real Axum and PostgreSQL service. It verifies
 cursor traversal/termination, tamper and context rejection, stable request,
-transition, and authentication Problems, plus the focused transaction,
-constraint, and keyset-order fixtures. Start the
-controlled OAuth fixture server in one terminal. This explicit feature and its
-non-secret credentials are for disposable local validation only:
+transition, and authentication Problems. Run the transaction, constraint, and
+keyset-order database fixtures separately with the `reading_queue_postgres`
+Cargo command above against a disposable database. Start the controlled OAuth
+fixture server in one terminal. This explicit feature and its non-secret
+credentials are for disposable local validation only:
 
 ```console
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product \
@@ -428,7 +361,8 @@ YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=<at-least-32-byte-secret> \
   cargo run --locked --features auth-fixture --bin server
 ```
 
-Then run the H5 acceptance in a second terminal; do not run it alongside the
+Install Playwright Chromium explicitly with `npm --prefix frontend exec -- playwright install chromium`.
+Then run H5 acceptance in a second terminal; do not run it alongside the
 Expo development server because both use port 8081:
 
 ```console
@@ -485,7 +419,7 @@ Authentication libraries are installed as exact development package versions
 from the local Yydra registries (Cargo on 127.0.0.1:18081, npm on 127.0.0.1:4873).
 Before `yydra setup`, start and seed them from the matching Yydra checkout with
 `python3 scripts/local-packages.py up` and `python3 scripts/local-packages.py publish`.
-`doctor` and `check` verify package declarations and locked identities. For a Linux
+`doctor` verifies package declarations and locked identities. For a Linux
 server container build, use `docker compose -f compose.yaml -f compose.local-registry.yaml up --build`
 so the build can reach the same registries. See the Yydra repository
 `dev/local-packages/README.md` for credentials, persistence and version updates.

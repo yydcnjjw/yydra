@@ -105,7 +105,7 @@ or mutating Distribution `0.1.0`.
 
 These are inspected locations, not a prescribed line-by-line patch:
 
-- [check_graph.rs](../../crates/yydra-cli/src/check_graph.rs): four node entries,
+- [check_graph.rs](https://github.com/yydcnjjw/yydra/blob/d8d69ebc56e3959d73bf7e0d8d16d1b90f2ddf24/crates/yydra-cli/src/check_graph.rs): four node entries,
   dispatch and wrappers; Android task/material coupling; generic artifact and
   aggregate verification. Remaining nodes do not depend on the four removed nodes.
 - [main.rs](../../crates/yydra-cli/src/main.rs): module import, inventory lifecycle,
@@ -179,7 +179,7 @@ the observed results; source inspection alone does not count as running tests.
 
 Existing regression seams are
 [consumer_creation.rs](../../crates/yydra-cli/tests/consumer_creation.rs),
-[check_contract.rs](../../crates/yydra-cli/tests/check_contract.rs),
+[check_contract.rs](https://github.com/yydcnjjw/yydra/blob/d8d69ebc56e3959d73bf7e0d8d16d1b90f2ddf24/crates/yydra-cli/tests/check_contract.rs),
 [licensing_policy.rs](../../crates/yydra-cli/tests/licensing_policy.rs),
 [packaged_consumer.rs](../../crates/yydra-cli/tests/packaged_consumer.rs), and the
 template's frontend/plugin tests. Remove only obsolete supply-chain cases from
@@ -209,3 +209,10 @@ a future Distribution is also outside this implementation acceptance scope.
 Wiki while retaining its original claims and code-repository history. It
 changes the storage location, not the outcomes or raw evidence described
 by this decision.
+
+## Subsequent diagnostic and validation scope
+
+[ADR 0009](0009-consolidate-diagnostics-in-doctor.md) retires `yydra check`,
+the quality graph, and aggregate evidence. Current environment diagnostics use
+`doctor`; project validation uses explicit Cargo/npm tests and builds. The
+original decision and dated validation above retain their historical scope.

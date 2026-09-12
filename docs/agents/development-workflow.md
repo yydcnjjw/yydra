@@ -1,13 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Local development workflow
 
-Status: active — 2026-09-10.
-Decision: [ADR 0005](../adr/0005-select-local-validation-by-change.md).
+Status: active — 2026-09-12.
+Decisions: [ADR 0005](../adr/0005-select-local-validation-by-change.md) and
+[ADR 0009](../adr/0009-consolidate-diagnostics-in-doctor.md).
 
 This workflow applies to agents developing the Yydra repository locally.
 It selects validation for a development task. Repository CI separately builds
 and tests the CLI under [ADR 0006](../adr/0006-limit-repository-ci-to-cli-build-and-tests.md).
-The Product Workspace Mechanical Quality Contract retains its requirements.
+The retired quality graph and evidence protocol are replaced by explicit project
+tests and builds. Doctor diagnoses Workspace identity and environments.
 An explicitly agreed task-specific acceptance condition still applies; this
 default does not silently amend an existing task or ADR requiring full validation.
 
@@ -47,7 +49,7 @@ not mandate a full Android build.
 | Android build/check implementation or tooling used by that path | Relevant runner/tooling regressions and native generation/build checks | Yes |
 
 Judge the actual change and affected dependency graph. An edit to
-`check_graph.rs` does not automatically affect Android, and a frontend lockfile
+a diagnostic/reporting change does not automatically affect Android, and a frontend lockfile
 edit must be inspected for changes to native dependencies or build tooling.
 A Rust-only dependency or formatter change is not itself an Android trigger.
 
@@ -78,51 +80,52 @@ Use `--test <target> <test-name> -- --ignored` for a particular integration test
 requests the complete Rust test collection, including real consumer acceptance;
 it requires the corresponding tools, caches, Docker image, and browser setup.
 An ignored test is unrun, not passing. Neither the default CLI suite nor the
-complete Rust collection replaces candidate-specific aggregate release evidence.
+complete Rust collection replaces the release candidate's actual validation records.
 
-## Use the existing focused check entrypoint
+## Validate Product Workspaces explicitly
 
-Use a CLI built from the relevant candidate, with the matching Product
-Workspace. Select all applicable nodes in one invocation so shared
-prerequisites execute once. The paths below are illustrative external consumer
-Workspace paths, not this repository's root.
+Use the candidate's packaged CLI and a matching fresh Product Workspace when
+creation, templates, packaging, or bundled build support change. `yydra doctor`
+reports environment and Workspace problems; it does not run validation.
+Run `yydra setup` explicitly before consumers of frontend dependencies.
 
-For example, API and frontend changes can use the following selected checks;
-add affected runtime, database, H5, or repository tests as the change requires:
-
-```console
-yydra check /path/to/consumer \
-  --node api.runtime-conformance \
-  --node api.client-contract \
-  --node frontend.test
-```
-
-When Android is triggered, select `android.release`; its prerequisites already
-include repeated native generation and API generation:
+Select the affected commands from the Product Workspace:
 
 ```console
-yydra check /path/to/consumer --node android.release
+cargo fmt --all --check
+cargo check --locked --workspace --all-targets --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features --doc
+npm --prefix frontend run format:check
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+npm --prefix frontend test
+yydra build . --target h5
 ```
 
-Additional affected nodes can join that invocation. Default `yydra build`
-produces backend/H5 artifacts. It is useful when those artifacts are needed;
-it does not replace the selected tests or establish full conformance.
+Use a Cargo test target/filter or the frontend runner's test filter when it
+covers the changed behavior. Database integration requires a fresh disposable
+PostgreSQL database, `DATABASE_URL`, migration, and explicit `--ignored`;
+run the `reading_queue_postgres` test target serially. H5 tests require a
+running migrated backend, Playwright Chromium, and `EXPO_PUBLIC_API_URL`.
+The generated README documents the commands and cleanup; never use deployment
+data for destructive test fixtures. Existing isolated repository consumer
+integration tests may also supply those prerequisites.
+
+When Android is triggered, use `yydra build <consumer> --target android` and
+relevant generation/build regressions. Preserve the actual APK and build log.
+Where a representative architecture is selected, record it and its coverage
+limit explicitly. The build checks generation input integrity and produces an
+APK; it does not establish repeated-generation or cross-host reproducibility.
 
 ## Avoid repeated expensive validation
 
-Run faster relevant repository checks before starting an Android release build. For a
-given final set of relevant inputs, use one required Android validation run.
-Do not routinely follow a successful `android.release` check with a separate
-`yydra build --target android` or a full `yydra check`. Testing a changed public
-build entrypoint or an explicitly required repeated-build scenario can justify
-additional runs; explain that purpose.
-
-After a successful run, repeat it only when relevant inputs, executor, or
-configuration changed, a failure needs verification after repair, or a new
-finding invalidates its coverage. Record which run supports the current
-result. Local reuse does not convert selected evidence into release evidence.
-Keep valid caches and preflight disk space for heavy builds; follow the
-existing supported cache and resource limits.
+Run faster repository regressions first. For a final set of relevant inputs,
+use one required Android build. Repeat only if inputs, executor, or configuration
+change, a failure needs confirmation after repair, or another explicit
+acceptance scenario requires it. Explain any additional build's purpose.
+Preserve supported dependency caches and preflight disk/temporary space.
 
 ## Finish a development task and validate a release
 
@@ -130,9 +133,9 @@ A local task can finish when its agreed change is implemented and reviewed,
 the checks required for that change have passed, and its local cryptographically
 signed commits carry author-matching DCO sign-offs under the worktree workflow.
 Report what ran, its result, and material coverage limits. When Android was not
-triggered, say that it was not run under the change scope. A selected check result remains
-`pass-selected`, `complete: false`; do not describe it as full or aggregate
-Conformance Evidence or relabel an unrun node as passing.
+triggered, say it was not run under the change scope. Keep each result bounded
+to the actual tests, inputs, and platforms used; do not relabel an unrun test
+as passing or describe diagnostic success as application validation.
 
 Put new standalone validation records in the
 [Yydra Wiki](https://github.com/yydcnjjw/yydra/wiki/Home), following
@@ -149,9 +152,10 @@ gate: DCO and CLI build/test CI must succeed before merging.
 Local completion, including a documentation-only task that did not trigger
 Android locally, does not waive that gate or authorize external actions.
 
-Before publishing a Distribution, require the existing complete clean and
-Reading Queue validation and aggregate evidence for the release candidate,
-including Android. A local version bump or package test is not by itself a
-publication step. CLI CI does not supply this complete release evidence.
-Respect any stronger explicit acceptance conditions of the current task.
-Validation does not authorize publication.
+Before publishing a Distribution, validate the candidate's packaged CLI and
+fresh Product Workspaces through creation/setup/doctor, relevant Rust/API and
+frontend tests, PostgreSQL integration, production H5 flows, and a real Android
+build. Use disposable integration services and retain actual commands, versions,
+logs, and artifacts needed by the report. The CLI no longer grants aggregate
+conformance. A local version bump or passing CLI CI alone is not release
+acceptance. Honor stronger explicit task acceptance and publication authorization.

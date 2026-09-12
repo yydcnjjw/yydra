@@ -19,6 +19,10 @@ Product Workspace 是创建后由产品团队独立维护的产品代码库，
 该能力需要包含容器配置的新 Product Workspace；本教程固定的旧提交不包含它，
 下文命令仍按旧快照保留。
 
+当前主线已按 [ADR 0009](../adr/0009-consolidate-diagnostics-in-doctor.md)
+移除 `check` 并扩展 `doctor` 的环境诊断。本教程固定旧提交中的 `check`
+命令仍按当时行为保留；使用当前源码时请遵循[当前 CLI 指南](../../crates/yydra-cli/README.md)。
+
 ## 1. 准备终端和工具
 
 准备一台能够访问 Cargo、npm、GitHub 和容器镜像仓库的 Linux 主机，

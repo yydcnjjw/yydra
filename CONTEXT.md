@@ -78,11 +78,11 @@ The committed, non-resolving record of the exact Yydra Distribution, template id
 _Avoid_: dependency lockfile, upgrade manifest, template synchronization state
 
 **Mechanical Quality Contract**:
-The Yydra Distribution-owned, versioned contract of required checks, outcomes, exceptions, and evidence through which a Product Workspace demonstrates conformance to that Distribution.
+The historical Yydra Distribution-owned contract of required checks, outcomes, exceptions, and evidence through which a Product Workspace demonstrated conformance to that Distribution. Current Workspaces use environment diagnostics and explicit project validation instead.
 _Avoid_: CI pipeline, lint configuration, test suite
 
 **Conformance Evidence**:
-The recorded inputs, execution identity, outcomes, logs, and retained artifacts that support a Product Workspace's conformance claim under one exact Distribution's Mechanical Quality Contract. Its claim is bounded by the checks that were required and performed; removing a requirement does not establish a passing result for it.
+The recorded inputs, execution identity, outcomes, logs, and retained artifacts supporting a historical Product Workspace claim under one exact Distribution's Mechanical Quality Contract. Retiring that contract does not expand or rewrite a historical claim.
 _Avoid_: universal quality certificate, supply-chain approval, build success
 
 **Reference Product**:

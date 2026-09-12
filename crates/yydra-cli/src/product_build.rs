@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{Diagnostic, Reporter, find_workspace_root, npm_program};
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum BuildTarget {
     Server,
     H5,
@@ -50,7 +50,7 @@ pub(crate) fn build(
                         &["run", "typecheck"],
                         "BUILD_FRONTEND_TYPECHECK_FAILED",
                     )?;
-                    crate::check_graph::build_android_artifact(&root)
+                    crate::android_build::build_android_artifact(&root)
                 }
             },
         )?;

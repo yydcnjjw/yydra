@@ -67,7 +67,7 @@ and source control. A stopped registry retains its packages for the next start.
 
 Each changed publication needs a new `-dev.N` package version. Products lock the
 specific versions and package checksums supported by their Distribution.
-`doctor` and `check` verify those declarations and locked identities, replacing
+`doctor` verifies those declarations and locked identities, replacing
 the former authentication snapshot-byte checks. Explicit package updates also
 update the template locks and undergo consumer validation; automatic product
 upgrades and a general plugin resolver remain outside this change.
@@ -186,6 +186,8 @@ API/client contracts, and the following observable behavior:
 Use controlled provider fixtures for reproducible automated checks and keep
 them distinct from a live GitHub smoke test. A live test requires a configured
 GitHub application and user authorization; do not claim it ran without evidence.
-Report missing live/runtime evidence explicitly. Selected checks retain
-`pass-selected` / `complete: false` semantics and do not substitute for the full
+Report missing live/runtime evidence explicitly. Historical graph results retain
+`pass-selected` / `complete: false` semantics. After ADR 0009 retired the graph,
+run the explicit Cargo/npm integration tests and builds; doctor only diagnoses
+Workspace identity and environments. Selected results do not substitute for the
 release validation required by the repository workflow.

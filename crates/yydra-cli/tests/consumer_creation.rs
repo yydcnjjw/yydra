@@ -339,7 +339,7 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
         "build outputs",
         "Product Presentation",
         "accessibility",
-        "yydra check",
+        "yydra doctor",
     ] {
         assert!(
             product_change.contains(required),
@@ -364,13 +364,7 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
     let diagnostic_contract =
         fs::read_to_string(skills_root.join("yydra-diagnose/references/diagnostic-contract.md"))
             .expect("read structured diagnostic reference");
-    for required in [
-        "cause.code",
-        "infrastructure-error",
-        "CHECK_PREREQUISITE_FAILED",
-        "CHECK_NOT_SELECTED",
-        "incomplete diagnostic evidence",
-    ] {
+    for required in ["`phase`", "`code`", "`warning`", "`fail`", "doctor.summary"] {
         assert!(
             diagnostic_contract.contains(required),
             "diagnose Skill must interpret {required}"
@@ -380,7 +374,7 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
         fs::read_to_string(skills_root.join("yydra-diagnose/references/repair-routes.md"))
             .expect("read safe repair routes");
     let install_route = repair_routes
-        .split_once("- `FRONTEND_LOCK_INSTALL_FAILED`:")
+        .split_once("- `SETUP_NPM_CI`:")
         .expect("installation failures have their own repair route")
         .1
         .split("\n- ")
@@ -399,22 +393,14 @@ fn materializes_exact_distribution_baseline_skills_with_portable_metadata_and_di
     }
     for required in [
         "DOCTOR_WORKSPACE_VERIFY",
-        "Do not edit those",
-        "authorities into agreement",
-        "API_CLIENT_TOOL_VERSION_INVALID",
-        "Do not change",
-        "Public API source to disguise a missing or wrong tool",
-        "ACCESSIBILITY_POSTGRES_UNAVAILABLE",
-        "Do not edit Product Presentation",
-        "disguise availability",
-        "ACCESSIBILITY_MIGRATION_FAILED",
-        "Do not change Product Presentation for a migration failure",
-        "An unlisted API code follows the global safe-stop rule",
-        "DB_MIGRATION_COMPARISON_BASE_INVALID",
-        "Do not edit migrations to repair comparison infrastructure",
+        "Do not edit those authorities into agreement",
+        "DOCTOR_RUST_TOOL",
+        "DOCTOR_FRONTEND_TOOL",
+        "DOCTOR_ANDROID_SDK",
+        "DOCTOR_CANCELLED",
         "NATIVE_GENERATION_CLEANUP_FAILED",
         "Do not edit authored Expo inputs for a cleanup failure",
-        "shared prefixes are not default routes",
+        "shared prefixes are not",
         "rather than guessing",
     ] {
         assert!(

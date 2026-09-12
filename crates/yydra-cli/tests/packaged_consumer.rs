@@ -39,7 +39,12 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     let extracted = package_target.join("package/yydra-cli-0.6.0");
     assert!(extracted.join("Cargo.lock").is_file());
     assert!(extracted.join("third-party/bolts-source.json").is_file());
-    for removed in ["supply-chain", "src/supply_chain.rs", "build.rs"] {
+    for removed in [
+        "supply-chain",
+        "src/supply_chain.rs",
+        "src/check_graph.rs",
+        "build.rs",
+    ] {
         assert!(
             !extracted.join(removed).exists(),
             "packaged obsolete input {removed}"
@@ -266,22 +271,25 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             fs::read(package_root.join(license)).expect("read crate license")
         );
     }
-    let evidence = sandbox.path().join("skill-evidence");
-    let skill_check = Command::new(&executable)
-        .args([
-            "--message-format=json",
-            "check",
-            workspace.to_str().expect("UTF-8 workspace"),
-            "--evidence-dir",
-            evidence.to_str().expect("UTF-8 evidence path"),
-            "--node",
-            "ownership.baseline-skills",
-        ])
-        .output()
-        .expect("check exact packaged Baseline Skill inventory");
-    assert!(
-        skill_check.status.success(),
-        "packaged Skill check stderr: {}",
-        String::from_utf8_lossy(&skill_check.stderr)
-    );
+    // Packaging must still preserve Baseline Skill bytes after retiring the
+    // graph-only ownership node; compare the actual consumer to the package.
+    for relative in [
+        "yydra-product-change/SKILL.md",
+        "yydra-product-change/references/product-change-path.md",
+        "yydra-product-change/references/validation.md",
+        "yydra-diagnose/SKILL.md",
+        "yydra-diagnose/references/diagnostic-contract.md",
+        "yydra-diagnose/references/repair-routes.md",
+    ] {
+        assert_eq!(
+            fs::read(workspace.join(".agents/skills").join(relative)).unwrap(),
+            fs::read(
+                extracted
+                    .join("template/product-workspace/.agents/skills")
+                    .join(relative)
+            )
+            .unwrap(),
+            "packaged Skill bytes differ: {relative}",
+        );
+    }
 }
