@@ -75,7 +75,7 @@ chmod +x android/gradlew
         let mut paths = vec![bin];
         paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
-            .arg("build")
+            .args(["internal", "build"])
             .arg(&root)
             .args(["--target", "android"])
             .env("PATH", std::env::join_paths(paths).unwrap())
@@ -137,7 +137,7 @@ chmod +x android/gradlew
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     for _ in 0..2 {
         let built = Command::new(env!("CARGO_BIN_EXE_yydra"))
-            .args(["--message-format=json", "build"])
+            .args(["--message-format=json", "internal", "build"])
             .arg(&root)
             .args(["--target", "android"])
             .env("PATH", std::env::join_paths(&paths).unwrap())
@@ -217,7 +217,7 @@ else:
     let mut paths = vec![bin];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let selected = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .arg("build")
+        .args(["internal", "build"])
         .arg(&root)
         .args(["--target", "server"])
         .env("PATH", std::env::join_paths(&paths).unwrap())
@@ -226,7 +226,7 @@ else:
     assert!(selected.status.success());
     assert!(!root.join("frontend/typecheck-passed").exists());
     let built = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args(["--message-format=json", "build"])
+        .args(["--message-format=json", "internal", "build"])
         .arg(&root)
         .env("PATH", std::env::join_paths(paths).unwrap())
         .output()
@@ -275,7 +275,7 @@ fn frontend_failure_rejects_stale_artifacts_and_generate_is_not_a_public_command
     let mut paths = vec![bin];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let built = Command::new(env!("CARGO_BIN_EXE_yydra"))
-        .args(["--message-format=json", "build"])
+        .args(["--message-format=json", "internal", "build"])
         .arg(&root)
         .args(["--target", "h5"])
         .env("PATH", std::env::join_paths(paths).unwrap())

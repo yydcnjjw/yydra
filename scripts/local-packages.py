@@ -115,7 +115,7 @@ def main():
     template_npm = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '\"MIT\"'))
     npm_packages = []
     for directory in ["auth", "client-settings"]:
-        source = ROOT / "packages" / directory
+        source = ROOT / "capabilities" / directory / ("expo" if directory == "auth" else "typescript")
         package = json.loads((source / "package.json").read_text())
         if package["name"] not in selected:
             continue
@@ -132,7 +132,7 @@ def main():
         cargo = staging / "yydra-auth"
         if cargo.exists():
             shutil.rmtree(cargo)
-        shutil.copytree(ROOT / "crates/yydra-auth", cargo, ignore=shutil.ignore_patterns("target", ".git"))
+        shutil.copytree(ROOT / "capabilities/auth/rust", cargo, ignore=shutil.ignore_patterns("target", ".git"))
         shutil.copyfile(ROOT / "Cargo.lock", cargo / "Cargo.lock")
         rust_version = tomllib.loads((cargo / "Cargo.toml").read_text())["package"]["version"]
         rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"]["yydra-auth"]["version"]

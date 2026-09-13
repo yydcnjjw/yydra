@@ -33,7 +33,7 @@ only supported orchestration path.
 5. Define the Public API in the Rust Axum and utoipa source authority, including
    stable RFC 9457 Problem behavior. Do not hand-edit OpenAPI or Generated Client
    output.
-6. Run `yydra build . --target h5` to build and validate the current OpenAPI and
+6. Run `moon run product:build-h5` to build and validate the current OpenAPI and
    Generated Client. Failure stops downstream work; rerun after fixing the
    reported input or tool issue. Generated build outputs are disposable.
 7. Implement the Product Presentation through the handwritten Framework client

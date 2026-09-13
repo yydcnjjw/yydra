@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+versionConstraint: '=2.5.4'
+defaultProject: product
+projects:
+  product: '.'
+  frontend: frontend
+pipeline:
+  installDependencies: false
+  syncProjects: false
+  syncWorkspace: false
+telemetry: false

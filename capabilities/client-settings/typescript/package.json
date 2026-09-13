@@ -44,6 +44,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/yydcnjjw/yydra.git",
-    "directory": "packages/client-settings"
+    "directory": "capabilities/client-settings/typescript"
   }
 }

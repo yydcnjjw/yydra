@@ -2,3 +2,6 @@
 /target/
 /.worktree/
 /.task/
+
+/.moon/cache/
+/.moon/docker/

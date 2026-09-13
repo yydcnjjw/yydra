@@ -17,7 +17,16 @@ fn template_text(path: &str) -> &str {
 /// Check the actual package declarations and locked identities, without a network request.
 /// Other product dependencies remain product-owned.
 pub(crate) fn verify(root: &Path) -> Result<()> {
-    let expected: toml::Value = toml::from_str(template_text("Cargo.toml.tmpl"))?;
+    let sources = crate::source_workspace::read(root)?;
+    let mut expected: toml::Value = toml::from_str(template_text("Cargo.toml.tmpl"))?;
+    if let Some(sources) = &sources {
+        let path = sources.rust.to_str().context("UTF-8 auth source path")?;
+        expected["workspace"]["dependencies"]["yydra-auth"] = toml::Value::Table(
+            [("path".to_owned(), toml::Value::String(path.to_owned()))]
+                .into_iter()
+                .collect(),
+        );
+    }
     let actual: toml::Value = toml::from_str(&fs::read_to_string(root.join("Cargo.toml"))?)?;
     if actual
         .get("workspace")
@@ -76,7 +85,25 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         }
     }
     let lock: toml::Value = toml::from_str(&fs::read_to_string(root.join("Cargo.lock"))?)?;
-    let expected_lock: toml::Value = toml::from_str(template_text("Cargo.lock"))?;
+    let mut expected_lock: toml::Value = toml::from_str(template_text("Cargo.lock"))?;
+    if let Some(sources) = &sources {
+        let source: toml::Value =
+            toml::from_str(&fs::read_to_string(sources.rust.join("Cargo.toml"))?)?;
+        if source["package"]["name"].as_str() != Some("yydra-auth") {
+            bail!("source auth package identity mismatch");
+        }
+        for entry in expected_lock["package"]
+            .as_array_mut()
+            .context("template Cargo packages")?
+        {
+            if entry["name"].as_str() == Some("yydra-auth") {
+                entry["version"] = source["package"]["version"].clone();
+                let entry = entry.as_table_mut().context("Cargo package table")?;
+                entry.remove("source");
+                entry.remove("checksum");
+            }
+        }
+    }
     let auth_entries = |lock: &toml::Value| {
         lock.get("package")
             .and_then(toml::Value::as_array)
@@ -121,6 +148,30 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         ("@yydra/auth", "authentication"),
         ("@yydra/client-settings", "client settings"),
     ] {
+        if let Some(sources) = &sources {
+            let source = if name == "@yydra/auth" {
+                &sources.auth
+            } else {
+                &sources.settings
+            };
+            let declaration = format!("file:{}", source.display());
+            let entry = &npm_lock["packages"][format!("node_modules/{name}")];
+            let resolved = entry["resolved"]
+                .as_str()
+                .context("source npm link target missing")?;
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&fs::read(source.join("package.json"))?)?;
+            if package["dependencies"][name] != declaration
+                || npm_lock["packages"][""]["dependencies"][name] != declaration
+                || entry["link"] != true
+                || root.join("frontend").join(resolved).canonicalize()? != *source
+                || metadata["name"] != name
+                || npm_lock["packages"][resolved]["version"] != metadata["version"]
+            {
+                bail!("{label} source dependency drift; regenerate the source Workspace");
+            }
+            continue;
+        }
         if package["dependencies"][name] != expected_package["dependencies"][name] {
             bail!("{label} package drift: restore the exact {name} version");
         }

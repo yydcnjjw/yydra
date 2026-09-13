@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+versionConstraint: '=2.5.4'
+defaultProject: repo
+projects:
+  repo: '.'
+  auth: capabilities/auth
+  auth-expo: capabilities/auth/expo
+  client-settings: capabilities/client-settings/typescript
+pipeline:
+  installDependencies: false
+  syncProjects: false
+  syncWorkspace: false
+telemetry: false

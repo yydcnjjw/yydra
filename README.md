@@ -11,6 +11,27 @@ The product team owns its codebase and expresses its distinguishing business
 rules in ordinary **Product Domain** code. See the [domain glossary](CONTEXT.md)
 for these terms and the framework's ownership boundaries.
 
+Install [moon 2.5.4](https://github.com/moonrepo/moon/releases/tag/v2.5.4) on PATH.
+Use existing Rust nightly and Node/npm tools; moon does not install them implicitly.
+
+```console
+moon run repo:setup
+moon run repo:test auth:check client-settings:test client-settings:typecheck
+moon run repo:source-create -- /var/tmp/yydra-source-reader
+cd /var/tmp/yydra-source-reader
+moon run product:setup
+moon run product:db-up
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product
+export YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY=local-development-only-change-this-key
+moon run product:dev
+```
+
+Source Workspaces are disposable, outside this checkout, and explicitly reference
+its Capability sources. Rebuild/restart for Rust changes; Metro watches frontend
+sources. Regenerate after template or dependency-graph changes. Registry products
+and independently packed libraries are validated separately. See
+[the migration contract](docs/adr/0012-aggregate-capabilities-and-adopt-moon.md).
+
 ## Current status
 
 This checkout contains Distribution **0.6.0**, an unpublished development
@@ -37,10 +58,10 @@ iOS is outside the current validation scope.
 
 | Component | Purpose |
 | --- | --- |
-| [yydra-cli](crates/yydra-cli/README.md) | Installs the `yydra` command to create, set up, diagnose, develop, and build Product Workspaces. |
+| [yydra-cli](crates/yydra-cli/README.md) | Creates and diagnoses Product Workspaces and provides execution primitives for their moon tasks. |
 | [yydra-build](crates/yydra-build/README.md) | Validates Rust-derived OpenAPI and generates and validates the TypeScript client through the product's API build package. |
-| [yydra-auth](crates/yydra-auth/README.md) and [@yydra/auth](packages/auth/README.md) | Provide GitHub sign-in and independent product sessions for H5 and Android; product code owns resource authorization. |
-| [client-settings](packages/client-settings/README.md) | Provides reusable typed local preferences using Zustand stores, persistence, and React subscriptions. |
+| [yydra-auth](capabilities/auth/rust/README.md) and [@yydra/auth](capabilities/auth/expo/README.md) | Provide GitHub sign-in and independent product sessions for H5 and Android; product code owns resource authorization. |
+| [client-settings](capabilities/client-settings/typescript/README.md) | Provides reusable typed local preferences using Zustand stores, persistence, and React subscriptions. |
 | [Product Workspace template](crates/yydra-cli/template/product-workspace/README.md) | Supplies the product-owned Rust backend, Expo frontend, database migrations, and build configuration copied by `yydra new`. |
 
 New Workspaces also receive exact-Distribution Baseline Skills for product

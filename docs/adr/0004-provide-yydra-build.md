@@ -156,3 +156,9 @@ test results, review fixes, retained evidence, and the local acceptance boundary
 the quality graph, and aggregate evidence. Current environment diagnostics use
 `doctor`; project validation uses explicit Cargo/npm tests and builds. The
 original decision and dated validation above retain their historical scope.
+
+## Subsequent Capability and moon migration
+
+[ADR 0012](0012-aggregate-capabilities-and-adopt-moon.md), accepted on 2026-09-13,
+amends the applicable directory, developer-entrypoint, and explicit source-consumer
+contracts. The original decision and its dated validation retain their historical scope.

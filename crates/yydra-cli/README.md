@@ -72,16 +72,21 @@ Running an already built image needs no registries or host language tools.
 See the generated README's **Run the server with Docker Compose** section for
 ports, data retention, credentials, updates, and image-only builds.
 
-For local development, use these distinct commands:
+For local development, install [moon 2.5.4](https://github.com/moonrepo/moon/releases/tag/v2.5.4)
+and run tasks from the new Workspace root:
 
 ```console
-yydra doctor ./reader
-yydra setup ./reader
-yydra doctor ./reader --target android
-yydra dev ./reader
-yydra build ./reader
-yydra build ./reader --target android
+cd reader
+yydra doctor .
+moon run product:setup
+yydra doctor . --target android
+moon run product:dev
+moon run product:build
+moon run product:build-android
 ```
+
+The old public setup/dev/build commands are removed. Moon calls internal execution
+primitives; creation, diagnostics, and database-source commands remain public.
 
 New Workspaces require GitHub sign-in before Reading Queue access. Configure a
 GitHub App and its server-side credentials and return URLs using the generated
@@ -114,15 +119,15 @@ build-tools, Platform-Tools, NDK, and CMake. They do not generate a Gradle wrapp
 or install SDK components. The real build selects the exact required component
 versions; a diagnostic pass alone does not establish a successful APK build.
 
-`setup` installs Cargo/npm dependencies from committed locks. Start PostgreSQL
-explicitly, for example with `docker compose -f compose.dev.yaml up -d --wait
-postgres`, and supply `DATABASE_URL`. Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY`
-to a stable secret of at least 32 bytes before running the backend. `dev`
-applies migrations and starts backend/H5; `db migrate` applies migrations alone.
+`product:setup` installs Cargo/npm dependencies from committed locks. Start
+PostgreSQL explicitly with `moon run product:db-up`, and supply `DATABASE_URL`.
+Set `YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY` to a stable secret of at least 32
+bytes before running the backend. `product:dev` applies migrations and starts
+backend/H5; `product:db-migrate` applies migrations alone.
 
-`build` produces the release backend executable and type-checked H5 static
-artifacts by default. `--target server`, `--target h5`, and `--target android`
-select one artifact. Android uses an account-free environment and retains its
+`product:build` produces the release backend executable and type-checked H5
+static artifacts by default. `product:build-server`, `product:build-h5`, and
+`product:build-android` select one artifact. Android uses an account-free environment and retains its
 APK under `frontend/android/app/build/outputs/apk/release/`; logs are under
 `frontend/.expo/yydra-build/android.log`. A subsequent Android build regenerates
 the host. Fix authored Expo inputs, dependencies, plugins, or local modules;

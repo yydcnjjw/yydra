@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+layer: library
+toolchains:
+  default: system
+tasks:
+  check:
+    deps: ['repo:auth-test', 'auth-expo:test', 'auth-expo:typecheck']
+    options: {cache: false, runInCI: false}
