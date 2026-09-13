@@ -50,3 +50,9 @@ integration, and Android; results are reported with actual commands, versions,
 outputs, and coverage limits instead of aggregate manifests. CLI CI and DCO
 remain unchanged. Historical ADRs, published releases, Wiki evidence, and the
 tutorial pinned to an older commit retain their original scope.
+
+## Subsequent Capability and moon migration
+
+[ADR 0012](0012-aggregate-capabilities-and-adopt-moon.md), accepted on 2026-09-13,
+amends the applicable directory, developer-entrypoint, and explicit source-consumer
+contracts. The original decision and its dated validation retain their historical scope.

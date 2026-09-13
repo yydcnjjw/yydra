@@ -7,7 +7,7 @@ import {
   type AuthApi,
   type AuthPlatform,
   type ProductSession,
-} from "@yydra/auth";
+} from "../src/controller";
 
 const account = (id: string): ProductSession => ({
   accountId: id,
@@ -15,7 +15,12 @@ const account = (id: string): ProductSession => ({
   csrfToken: "csrf-test",
   loginAvailable: true,
 });
-function fixture(fetcher: typeof fetch = vi.fn<typeof fetch>()) {
+type Fetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
+function fixture(fetcher: Fetch = vi.fn<Fetch>()) {
   let current = account("first");
   const saveCredential = vi.fn<(_: string | null) => Promise<void>>(
     async () => undefined,
@@ -60,9 +65,7 @@ describe("product authentication lifecycle", () => {
     const payload = { title: "认证后的中文阅读条目 📚" };
     vi.stubGlobal("Response", NativeResponse);
     const f = fixture(
-      vi.fn<typeof fetch>(
-        async () => new NativeResponse(JSON.stringify(payload)),
-      ),
+      vi.fn<Fetch>(async () => new NativeResponse(JSON.stringify(payload))),
     );
     try {
       await f.auth.initialize();
@@ -86,7 +89,7 @@ describe("product authentication lifecycle", () => {
     f.auth.dispose();
   });
   it("invalidates an old client's credentials when the account changes", async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => new Response("{}"));
+    const fetcher = vi.fn<Fetch>(async () => new Response("{}"));
     const f = fixture(fetcher);
     await f.auth.initialize();
     const oldClient = f.auth.sessionFetch();
@@ -106,7 +109,7 @@ describe("product authentication lifecycle", () => {
         };
       },
     });
-    const f = fixture(vi.fn<typeof fetch>(async () => new Response(body)));
+    const f = fixture(vi.fn<Fetch>(async () => new Response(body)));
     await f.auth.initialize();
     const pending = f.auth.authorizedFetch("/private");
     const rejected = expect(pending).rejects.toThrow("Session changed");
@@ -117,7 +120,7 @@ describe("product authentication lifecycle", () => {
     f.auth.dispose();
   });
   it("never sends credentials to another API origin", async () => {
-    const fetcher = vi.fn<typeof fetch>();
+    const fetcher = vi.fn<Fetch>();
     const f = fixture(fetcher);
     await f.auth.initialize();
     await expect(

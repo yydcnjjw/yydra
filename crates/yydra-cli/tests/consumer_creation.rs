@@ -14,6 +14,36 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[test]
+fn moon_replaces_the_removed_public_execution_commands() {
+    let help = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(!text.contains("  internal"));
+    for removed in ["setup", "dev", "build"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .args([removed, "--help"])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "old public command survived: {removed}"
+        );
+    }
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("moon-reader");
+    create_with_flags(&workspace, "Moon Reader", "moon-reader");
+    for file in [".moon/workspace.yml", "moon.yml", "frontend/moon.yml"] {
+        assert!(
+            workspace.join(file).is_file(),
+            "missing product task configuration {file}"
+        );
+    }
+}
+
+#[test]
 fn new_workspace_needs_no_supply_chain_configuration() {
     let sandbox = tempdir().expect("create sandbox");
     let workspace = sandbox.path().join("without-scanning");
@@ -659,6 +689,7 @@ printf '%s:%s\n' "$PWD" "$*" >> "$YYDRA_TOOL_LOG"
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "setup",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -749,6 +780,7 @@ printf '\nEND-LEAF-OUTPUT\n'
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "setup",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -835,6 +867,7 @@ fn setup_fails_loudly_and_restores_both_committed_locks_after_tool_drift() {
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "setup",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -885,6 +918,7 @@ fn setup_restores_a_lock_even_when_the_mutating_tool_itself_fails() {
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "setup",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -945,6 +979,7 @@ wait
     let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "setup",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -1296,6 +1331,7 @@ exit 17
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "dev",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -1401,6 +1437,7 @@ exit 99
     let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "dev",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -1485,6 +1522,7 @@ fn dev_backend_spawn_failure_uses_the_stable_diagnostic_contract() {
     let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "dev",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -1721,6 +1759,7 @@ exit 17
     let mut child = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "dev",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -1814,6 +1853,7 @@ wait
     let child = Command::new(env!("CARGO_BIN_EXE_yydra"))
         .args([
             "--message-format=json",
+            "internal",
             "dev",
             workspace.to_str().expect("UTF-8 workspace"),
         ])
@@ -2009,6 +2049,121 @@ fn doctor_checks_authentication_package_versions_sources_and_checksums() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(before, byte_inventory(&workspace));
+    }
+}
+
+#[test]
+fn source_workspace_requires_explicit_matching_paths_and_locked_identities() {
+    let sandbox = tempdir().unwrap();
+    let framework = sandbox.path().join("framework-🚀");
+    fs::create_dir(&framework).unwrap();
+    let framework = framework.canonicalize().unwrap();
+    let rust = framework.join("capabilities/auth/rust");
+    fs::create_dir_all(&rust).unwrap();
+    fs::write(
+        rust.join("Cargo.toml"),
+        "[package]\nname = \"yydra-auth\"\nversion = \"0.6.0-dev.1\"\n",
+    )
+    .unwrap();
+    let workspace = sandbox.path().join("source-reader");
+    create_with_flags(&workspace, "Source Reader", "source-reader");
+    let manifest = workspace.join("Cargo.toml");
+    let mut cargo: toml::Value = toml::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+    cargo["workspace"]["dependencies"]["yydra-auth"] = toml::Value::Table(
+        [(
+            "path".to_owned(),
+            toml::Value::String(rust.to_str().unwrap().to_owned()),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    fs::write(&manifest, toml::to_string(&cargo).unwrap()).unwrap();
+    let cargo_lock = workspace.join("Cargo.lock");
+    let mut lock: toml::Value = toml::from_str(&fs::read_to_string(&cargo_lock).unwrap()).unwrap();
+    let auth = lock["package"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
+        .unwrap()
+        .as_table_mut()
+        .unwrap();
+    auth.remove("source");
+    auth.remove("checksum");
+    fs::write(&cargo_lock, toml::to_string(&lock).unwrap()).unwrap();
+    let package = workspace.join("frontend/package.json");
+    let npm_lock = workspace.join("frontend/package-lock.json");
+    let mut npm: serde_json::Value = serde_json::from_slice(&fs::read(&package).unwrap()).unwrap();
+    let mut lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(&npm_lock).unwrap()).unwrap();
+    for (name, relative) in [
+        ("@yydra/auth", "capabilities/auth/expo"),
+        (
+            "@yydra/client-settings",
+            "capabilities/client-settings/typescript",
+        ),
+    ] {
+        let source = framework.join(relative);
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("package.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "name": name, "version": "0.6.0-dev.1"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let declaration = format!("file:{}", source.display());
+        npm["dependencies"][name] = declaration.clone().into();
+        lock["packages"][""]["dependencies"][name] = declaration.into();
+        lock["packages"][format!("node_modules/{name}")] = serde_json::json!({
+            "resolved": source, "link": true
+        });
+        lock["packages"][source.to_str().unwrap()] = serde_json::json!({"version": "0.6.0-dev.1"});
+    }
+    fs::write(&package, serde_json::to_vec(&npm).unwrap()).unwrap();
+    fs::write(&npm_lock, serde_json::to_vec(&lock).unwrap()).unwrap();
+    let record = workspace.join(".yydra/source-workspace.json");
+    fs::write(
+        &record,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1, "distribution_version": "0.6.0", "framework_root": framework
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let doctor = || {
+        Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("doctor")
+            .arg(&workspace)
+            .output()
+            .unwrap()
+    };
+    let output = doctor();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("registry consumption is not verified")
+    );
+    for (label, path, replacement) in [
+        ("missing mode", record.clone(), None),
+        ("unknown mode", record.clone(), Some(b"{\"schema_version\":99,\"distribution_version\":\"0.6.0\",\"framework_root\":\"/wrong\"}".to_vec())),
+        ("Cargo identity", cargo_lock.clone(), Some(fs::read_to_string(&cargo_lock).unwrap().replace(
+            "name = \"yydra-auth\"\nversion = \"0.6.0-dev.1\"", "name = \"yydra-auth\"\nversion = \"0.0.0\"").into_bytes())),
+        ("npm path", package.clone(), Some(fs::read_to_string(&package).unwrap().replace("file:", "file:/wrong/").into_bytes())),
+        ("npm identity", npm_lock.clone(), Some(fs::read_to_string(&npm_lock).unwrap().replace("\"link\":true", "\"link\":false").into_bytes())),
+    ] {
+        let original = fs::read(&path).unwrap();
+        if let Some(bytes) = replacement { assert_ne!(bytes, original); fs::write(&path, bytes).unwrap(); }
+        else { fs::remove_file(&path).unwrap(); }
+        let before = byte_inventory(&workspace);
+        let output = doctor();
+        assert!(!output.status.success(), "source doctor accepted {label}");
+        assert_eq!(before, byte_inventory(&workspace), "doctor mutated {label}");
+        fs::write(&path, original).unwrap();
     }
 }
 

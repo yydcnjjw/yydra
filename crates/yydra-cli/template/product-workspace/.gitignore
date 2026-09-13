@@ -8,3 +8,6 @@
 /frontend/android/
 /frontend/ios/
 .env
+
+/.moon/cache/
+/.moon/docker/

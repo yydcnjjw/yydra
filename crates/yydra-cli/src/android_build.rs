@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Local, account-free Android generation and APK assembly for `yydra build`.
+//! Local, account-free Android generation and APK assembly for moon product build tasks.
 
 use crate::{install_shutdown_handler, npm_program};
 use anyhow::{Context, Result};

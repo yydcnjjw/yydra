@@ -20,7 +20,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install rolling Rust nightly
         run: rustup toolchain install nightly --profile minimal --component rustfmt,clippy
+      - name: Install pinned moon
+        run: |
+          python3 scripts/install-moon.py "$RUNNER_TEMP/moon"
+          echo "$RUNNER_TEMP/moon" >> "$GITHUB_PATH"
       - name: Build yydra-cli
-        run: cargo build --locked --release --package yydra-cli
+        run: moon run repo:ci-build
       - name: Test yydra-cli
-        run: cargo test --locked --package yydra-cli --all-targets
+        run: moon run repo:test

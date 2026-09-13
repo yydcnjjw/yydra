@@ -110,6 +110,7 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         Command::new(&yydra)
             .args([
                 "--message-format=json",
+                "internal",
                 "setup",
                 workspace.to_str().expect("UTF-8 workspace"),
             ])

@@ -25,6 +25,27 @@ performance, Agent Eval success, or Skill effect.
 Creation is a one-shot boundary: there is no template rerun, no template sync,
 no upgrade, no compatibility-range selection, and no Distribution-version override contract.
 
+Install [moon 2.5.4](https://github.com/moonrepo/moon/releases/tag/v2.5.4), the
+matching Yydra CLI, Rust nightly, and Node/npm on PATH. Run the commands below from
+the Product Workspace root. The old public `yydra setup/dev/build` commands have
+been removed; moon tasks use the CLI's internal execution primitives.
+
+```console
+moon run product:setup
+moon run product:doctor
+moon run frontend:typecheck frontend:test
+moon run product:build
+moon run product:build-android
+```
+
+Setup installs locked project dependencies explicitly. It does not install system
+tools or start PostgreSQL. Use `moon run product:db-up` when a local development
+database is needed, export `DATABASE_URL`, then `moon run product:dev`. Stop that
+database explicitly with `moon run product:db-down`. Existing external PostgreSQL
+is also supported. Ctrl-C stops backend/H5 processes, leaving database lifetime
+under your control. Dev runs migration before starting backend/H5; it does not
+wait for backend HTTP readiness before starting the frontend.
+
 ## Run the server with Docker Compose
 
 This development template requires the local authentication package registries
@@ -102,7 +123,7 @@ to the product's deployment environment.
 
 Development uses the separate `compose.dev.yaml` below, with its own default
 Compose project name (`__PRODUCT_ID__-dev`, versus `__PRODUCT_ID__-server`). It deliberately retains
-an ephemeral PostgreSQL instance and the local port expected by `yydra dev` and
+an ephemeral PostgreSQL instance and the local port expected by `moon run product:dev` and
 checks; its data is unrelated to the deployment volumes.
 
 ## Supported local path
@@ -121,7 +142,7 @@ installed Rust versions and disables implicit toolchain installation.
 Install exact dependency graphs and start the pinned PostgreSQL service:
 
 ```console
-yydra setup .
+moon run product:setup
 docker compose -f compose.dev.yaml up -d --wait postgres
 export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/yydra_product
 ```
@@ -135,7 +156,7 @@ yydra db migrate .
 
 Server startup never applies migrations. It fails before listening unless the
 database has exactly the compiled versions and checksums. After migration,
-`yydra dev .` visibly starts the migration, backend, and H5 frontend phases and
+`moon run product:dev` visibly starts the migration, backend, and H5 frontend phases and
 terminates their process groups together on failure or shutdown.
 
 ## Reading Queue slice
@@ -296,7 +317,7 @@ manifest; diagnosis and individual tests prove only their stated scope.
 
 `frontend/android` and `frontend/ios` are disposable generated outputs. Express
 native fixes in app configuration, locked dependencies, plugins, or local Expo
-Modules. `yydra build . --target android` generates a clean host and retains its
+Modules. `moon run product:build-android` generates a clean host and retains its
 APK and build log. It uses an account-free Expo/Gradle environment with bounded
 parallelism; never patch generated native source as an authority. Android
 diagnosis checks component presence, while the build selects required versions.
@@ -313,10 +334,10 @@ Public routes consumed by Generated Client code must be registered through
 declarations are the authored authority. Build application artifacts with:
 
 ```console
-yydra build .
-yydra build . --target server
-yydra build . --target h5
-yydra build . --target android
+moon run product:build
+moon run product:build-server
+moon run product:build-h5
+moon run product:build-android
 ```
 
 The default builds the release backend executable, type-checks the frontend, and
@@ -409,7 +430,7 @@ sign-in. Set these **server runtime** inputs:
 Missing GitHub credentials leave protected access closed; `/health` remains usable.
 Production H5 and API hosts must be same-site and served through HTTPS. Compose
 accepts these runtime inputs but does not provide a TLS proxy or host the H5 export.
-`yydra dev` explicitly enables local HTTP; its defaults use API `http://127.0.0.1:4000`
+`moon run product:dev` explicitly enables local HTTP; its defaults use API `http://127.0.0.1:4000`
 and H5 `http://127.0.0.1:8081`. Register that backend callback for a development App.
 
 Set frontend `EXPO_PUBLIC_API_URL` before bundling. For an Android device, use a
@@ -427,7 +448,7 @@ without adding certificate authorities or disabling certificate verification.
 
 Authentication libraries are installed as exact development package versions
 from the local Yydra registries (Cargo on 127.0.0.1:18081, npm on 127.0.0.1:4873).
-Before `yydra setup`, start and seed them from the matching Yydra checkout with
+Before `moon run product:setup`, start and seed them from the matching Yydra checkout with
 `python3 scripts/local-packages.py up` and `python3 scripts/local-packages.py publish`.
 `doctor` verifies package declarations and locked identities. For a Linux
 server container build, use `docker compose -f compose.yaml -f compose.local-registry.yaml up --build`

@@ -21,7 +21,7 @@ fn distribution_ships_both_complete_license_texts_and_exact_spdx_markers() {
         fs::read(repository.join("crates/yydra-cli/LICENSE-APACHE"))
             .expect("read packaged Apache license")
     );
-    let settings = repository.join("packages/client-settings");
+    let settings = repository.join("capabilities/client-settings/typescript");
     assert_eq!(root_mit, fs::read(settings.join("LICENSE-MIT")).unwrap());
     assert_eq!(
         root_apache,

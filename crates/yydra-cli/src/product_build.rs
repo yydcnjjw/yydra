@@ -39,7 +39,7 @@ pub(crate) fn build(
             phase,
             code,
             Some(&root),
-            Some("fix the reported build input or tool failure and rerun `yydra build`"),
+            Some("fix the reported build input or tool failure and rerun `moon run product:build`"),
             || match target {
                 BuildTarget::Server => build_server(&root),
                 BuildTarget::H5 => build_h5(&root),

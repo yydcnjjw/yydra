@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+layer: library
+toolchains:
+  default: system
+tasks:
+  setup:
+    command: npm ci --no-audit
+    options: {cache: false, runInCI: false}
+  test:
+    command: npm test
+    options: {cache: false, runInCI: false}
+  typecheck:
+    command: npm run typecheck
+    options: {cache: false, runInCI: false}
+  format:
+    command: npm run format:check
+    options: {cache: false, runInCI: false}
+  pack:
+    command: npm pack --pack-destination .
+    options: {cache: false, runInCI: false}

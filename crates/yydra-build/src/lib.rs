@@ -140,7 +140,7 @@ fn generate_client(root: &Path, openapi: &Path, output: &Path) -> Result<()> {
 fn validate_generator_version(root: &Path) -> Result<()> {
     let package = root.join("node_modules/orval/package.json");
     let package: Value = serde_json::from_slice(&fs::read(&package).with_context(
-        || "API_CLIENT_TOOL_VERSION_INVALID: project-local Orval is missing; run `yydra setup`",
+        || "API_CLIENT_TOOL_VERSION_INVALID: project-local Orval is missing; run `moon run product:setup`",
     )?)
     .context(
         "API_CLIENT_TOOL_VERSION_INVALID: project-local Orval package metadata is malformed",
