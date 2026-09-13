@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Local development packages
 
-This development Distribution consumes `yydra-auth` and `@yydra/auth`
-through local package registries. Source remains in `crates/yydra-auth` and
-`packages/auth`. `yydra-build` retains its bundled source snapshot.
+This development Distribution consumes `yydra-auth`, `@yydra/auth`, and
+`@yydra/client-settings` through local package registries. Source remains in
+`crates/yydra-auth`, `packages/auth`, and `packages/client-settings`.
+`yydra-build` retains its bundled source snapshot.
 
 Prerequisites: Linux, Docker Engine with Compose, Python 3.11+, the repository's
 Rust toolchain and Node/npm. Run from the Yydra checkout:
@@ -15,7 +16,15 @@ python3 scripts/local-packages.py status
 ```
 
 The script starts pinned Kellnr and Verdaccio images, initializes a local
-publisher, and publishes the two packages with the standard Cargo/npm clients.
+publisher, and publishes the packages with the standard Cargo/npm clients.
+To publish only one package, select it explicitly, for example:
+
+```sh
+python3 scripts/local-packages.py --package @yydra/client-settings publish
+```
+
+The default `publish` command handles all three packages. A selected publication
+preserves the other packages' recorded identities and staging directories.
 Cargo is at `http://127.0.0.1:18081`; npm is at `http://127.0.0.1:4873`.
 It does not proxy upstream dependencies or publish to public registries.
 Ports are fixed because product lockfiles record these development sources.
@@ -36,7 +45,7 @@ allows resuming after only one registry accepted a publication. For a library
 change, choose a new `0.6.0-dev.N` version in its package manifest and the matching
 Product Workspace template dependency. Update the root Cargo lock, publish, and
 refresh the template's Cargo/npm locks from an isolated generated product before
-building the final CLI candidate. The two libraries may have different versions.
+building the final CLI candidate. The libraries may have different versions.
 Keep tested package archives when retaining evidence or reproducing a candidate.
 
 After publishing, create a product with the candidate CLI and run its normal

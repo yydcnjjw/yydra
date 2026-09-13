@@ -23,8 +23,8 @@ use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
 
 mod android_build;
-mod auth_packages;
 mod doctor;
+mod library_packages;
 mod process;
 mod product_build;
 
@@ -978,7 +978,7 @@ fn verify_snapshot_authorities_with_origin(
         })
         .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
     verify_build_support_snapshot(root, &expected)?;
-    auth_packages::verify(root)?;
+    library_packages::verify(root)?;
     let expected_policy = render_template(policy_source, &render)?;
     let policy_path = root.join(policy_relative);
     let actual_policy = fs::read_to_string(&policy_path).with_context(|| {

@@ -24,6 +24,7 @@
 - [Provide reusable authentication with GitHub sign-in](./docs/adr/0010-provide-github-authentication-capability.md): accepted; independent product accounts/sessions, GitHub auto-provisioning, H5/Android template integration, and per-account Reading Queue data; implemented with published dependencies and SQLx 0.8.6; selected PostgreSQL, H5, Android build and emulator acceptance passed; live GitHub and full release conformance not claimed
 
 - [Consolidate diagnostics in doctor](./docs/adr/0009-consolidate-diagnostics-in-doctor.md): accepted; removes the quality-check graph and evidence protocol, extends doctor with environment diagnostics, and uses explicit project validation
+- [Provide reusable client settings](./docs/adr/0011-provide-reusable-client-settings.md): accepted; native Zustand stores and persistence through a shared TypeScript package, React hydration subscriptions, and product-owned local preferences and migrations
 
 ## Historical research and validation
 

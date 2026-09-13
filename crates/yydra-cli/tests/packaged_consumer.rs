@@ -106,6 +106,21 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
             .join("template/product-workspace/.cargo/config.toml")
             .is_file()
     );
+    assert!(
+        !extracted
+            .join("template/product-workspace/frontend/modules/yydra-client-settings")
+            .exists()
+    );
+    let frontend_package: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(extracted.join("template/product-workspace/frontend/package.json"))
+            .unwrap()
+            .replace("__PRODUCT_SOURCE_LICENSE_TOML__", "\"MIT\""),
+    )
+    .unwrap();
+    assert_eq!(
+        frontend_package["dependencies"]["@yydra/client-settings"],
+        "0.6.0-dev.1"
+    );
     let packaged_manifest = fs::read_to_string(extracted.join("Cargo.toml"))
         .expect("read normalized packaged manifest");
     assert!(!packaged_manifest.contains("path = \"../../"));

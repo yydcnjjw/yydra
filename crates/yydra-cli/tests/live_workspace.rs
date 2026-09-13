@@ -17,6 +17,7 @@ use nix::unistd::Pid;
 use tempfile::tempdir;
 
 const POSTGRES_IMAGE: &str = "postgres:18.6-alpine3.24@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2";
+const CURSOR_SIGNING_KEY: &str = "yydra-live-workspace-cursor-signing-key";
 
 #[test]
 #[ignore = "requires Docker, npm, Playwright Chromium, and the pinned PostgreSQL image"]
@@ -126,7 +127,15 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
     );
     let build = command_output(
         Command::new(&cargo)
-            .args(["build", "--locked", "--offline", "--workspace", "--bins"])
+            .args([
+                "build",
+                "--locked",
+                "--offline",
+                "--workspace",
+                "--bins",
+                "--features",
+                "live-reader-server/auth-fixture",
+            ])
             .current_dir(&workspace),
         "build clean Workspace binaries",
     );
@@ -197,33 +206,51 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
     ));
     assert_success(&restore_checksum, "restore migration checksum fixture");
 
-    let add_unknown = compose.psql(
+    let next_version = compose.psql("SELECT MAX(version) + 1 FROM _sqlx_migrations;");
+    assert_success(&next_version, "select an unused migration version");
+    let unused_version: i64 = String::from_utf8(next_version.stdout)
+        .expect("UTF-8 migration version")
+        .trim()
+        .parse()
+        .expect("integer migration version");
+    let add_unknown = compose.psql(&format!(
         "INSERT INTO _sqlx_migrations \
          (version, description, installed_on, success, checksum, execution_time) \
-         VALUES (2, 'unknown', now(), true, decode('00', 'hex'), 0);",
-    );
+         VALUES ({unused_version}, 'unknown', now(), true, decode('00', 'hex'), 0);",
+    ));
     assert_success(&add_unknown, "add unknown migration fixture");
     let unknown_port = reserve_port();
     let unknown = run_server_failure(&server_binary, &workspace, &database_url, unknown_port);
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown migration"));
     assert_port_closed(unknown_port);
-    let remove_unknown = compose.psql("DELETE FROM _sqlx_migrations WHERE version = 2;");
+    let remove_unknown = compose.psql(&format!(
+        "DELETE FROM _sqlx_migrations WHERE version = {unused_version};"
+    ));
     assert_success(&remove_unknown, "remove unknown migration fixture");
 
-    let make_incompatible =
-        compose.psql("UPDATE _sqlx_migrations SET version = 3 WHERE version = 1;");
+    let make_incompatible = compose.psql(&format!(
+        "UPDATE _sqlx_migrations SET version = {unused_version} WHERE version = 1;"
+    ));
     assert_success(&make_incompatible, "make migration version incompatible");
     let incompatible_port = reserve_port();
     let incompatible =
         run_server_failure(&server_binary, &workspace, &database_url, incompatible_port);
     assert!(String::from_utf8_lossy(&incompatible.stderr).contains("incompatible"));
     assert_port_closed(incompatible_port);
-    let restore_version =
-        compose.psql("UPDATE _sqlx_migrations SET version = 1 WHERE version = 3;");
+    let restore_version = compose.psql(&format!(
+        "UPDATE _sqlx_migrations SET version = 1 WHERE version = {unused_version};"
+    ));
     assert_success(&restore_version, "restore migration version fixture");
 
     let server_port = reserve_port();
-    let mut server = ServerGuard::spawn(&server_binary, &workspace, &database_url, server_port);
+    let h5_port = reserve_port();
+    let mut server = ServerGuard::spawn(
+        &server_binary,
+        &workspace,
+        &database_url,
+        server_port,
+        h5_port,
+    );
     let health = wait_for_health(&mut server.child, server_port);
     assert!(
         health.contains("HTTP/1.1 200 OK"),
@@ -245,7 +272,6 @@ fn packaged_clean_workspace_reaches_real_postgres_axum_and_production_h5() {
         );
         assert_success(&output, label);
     }
-    let h5_port = reserve_port();
     let h5 = command_output(
         Command::new("npm")
             .args(["run", "test:e2e"])
@@ -331,12 +357,25 @@ struct ServerGuard {
 }
 
 impl ServerGuard {
-    fn spawn(binary: &Path, workspace: &Path, database_url: &str, port: u16) -> Self {
+    fn spawn(binary: &Path, workspace: &Path, database_url: &str, port: u16, h5_port: u16) -> Self {
         let mut command = Command::new(binary);
         command
             .current_dir(workspace)
             .env("DATABASE_URL", database_url)
             .env("YYDRA_BIND_ADDRESS", format!("127.0.0.1:{port}"))
+            .env("YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY", CURSOR_SIGNING_KEY)
+            .env("YYDRA_AUTH_DEVELOPMENT", "true")
+            .env("YYDRA_PUBLIC_API_URL", format!("http://127.0.0.1:{port}"))
+            .env(
+                "YYDRA_AUTH_WEB_RETURN",
+                format!("http://127.0.0.1:{h5_port}"),
+            )
+            .env(
+                "YYDRA_AUTH_FIXTURE_PROVIDER",
+                format!("http://127.0.0.1:{port}"),
+            )
+            .env("GITHUB_CLIENT_ID", "fixture-client")
+            .env("GITHUB_CLIENT_SECRET", "fixture-secret")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
@@ -368,6 +407,7 @@ fn run_server_failure(binary: &Path, workspace: &Path, database_url: &str, port:
         .current_dir(workspace)
         .env("DATABASE_URL", database_url)
         .env("YYDRA_BIND_ADDRESS", format!("127.0.0.1:{port}"))
+        .env("YYDRA_READING_QUEUE_CURSOR_SIGNING_KEY", CURSOR_SIGNING_KEY)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
@@ -429,10 +469,16 @@ impl Drop for ProcessGroupGuard {
 fn wait_for_health(child: &mut Child, port: u16) -> String {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        assert!(
-            child.try_wait().expect("poll live server").is_none(),
-            "live server exited before health was ready"
-        );
+        if let Some(status) = child.try_wait().expect("poll live server") {
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .expect("piped server stderr")
+                .read_to_string(&mut stderr)
+                .expect("read failed server stderr");
+            panic!("live server exited before health was ready: {status}\n{stderr}");
+        }
         if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))

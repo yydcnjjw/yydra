@@ -2013,6 +2013,61 @@ fn doctor_checks_authentication_package_versions_sources_and_checksums() {
 }
 
 #[test]
+fn doctor_checks_client_settings_package_identity_without_mutation() {
+    let sandbox = tempdir().unwrap();
+    for case in [
+        "declaration",
+        "root-version",
+        "version",
+        "resolved",
+        "integrity",
+        "link",
+        "missing",
+    ] {
+        let workspace = sandbox.path().join(case);
+        create_with_flags(&workspace, "Settings Reader", "settings-reader");
+        assert!(
+            !workspace
+                .join("frontend/modules/yydra-client-settings")
+                .exists()
+        );
+        let filename = if case == "declaration" {
+            "package.json"
+        } else {
+            "package-lock.json"
+        };
+        let path = workspace.join("frontend").join(filename);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let name = "@yydra/client-settings";
+        let entry = "node_modules/@yydra/client-settings";
+        match case {
+            "declaration" => value["dependencies"][name] = "0.6.0-dev.999".into(),
+            "root-version" => value["packages"][""]["dependencies"][name] = "0.6.0-dev.999".into(),
+            "link" => value["packages"][entry]["link"] = true.into(),
+            "missing" => {
+                value["packages"].as_object_mut().unwrap().remove(entry);
+            }
+            field => value["packages"][entry][field] = "unreviewed".into(),
+        }
+        fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let before = byte_inventory(&workspace);
+        let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+            .arg("doctor")
+            .arg(&workspace)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "doctor accepted {case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("client settings package drift"),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(before, byte_inventory(&workspace));
+    }
+}
+
+#[test]
 fn doctor_allows_equivalent_auth_lock_dependency_references() {
     let sandbox = tempdir().unwrap();
     let workspace = sandbox.path().join("qualified-reference");

@@ -21,6 +21,12 @@ fn distribution_ships_both_complete_license_texts_and_exact_spdx_markers() {
         fs::read(repository.join("crates/yydra-cli/LICENSE-APACHE"))
             .expect("read packaged Apache license")
     );
+    let settings = repository.join("packages/client-settings");
+    assert_eq!(root_mit, fs::read(settings.join("LICENSE-MIT")).unwrap());
+    assert_eq!(
+        root_apache,
+        fs::read(settings.join("LICENSE-APACHE")).unwrap()
+    );
     let mit = String::from_utf8(root_mit).expect("UTF-8 MIT license");
     assert!(mit.starts_with("MIT License\n"));
     assert!(mit.contains("Permission is hereby granted, free of charge"));

@@ -40,6 +40,7 @@ iOS is outside the current validation scope.
 | [yydra-cli](crates/yydra-cli/README.md) | Installs the `yydra` command to create, set up, diagnose, develop, and build Product Workspaces. |
 | [yydra-build](crates/yydra-build/README.md) | Validates Rust-derived OpenAPI and generates and validates the TypeScript client through the product's API build package. |
 | [yydra-auth](crates/yydra-auth/README.md) and [@yydra/auth](packages/auth/README.md) | Provide GitHub sign-in and independent product sessions for H5 and Android; product code owns resource authorization. |
+| [client-settings](packages/client-settings/README.md) | Provides reusable typed local preferences using Zustand stores, persistence, and React subscriptions. |
 | [Product Workspace template](crates/yydra-cli/template/product-workspace/README.md) | Supplies the product-owned Rust backend, Expo frontend, database migrations, and build configuration copied by `yydra new`. |
 
 New Workspaces also receive exact-Distribution Baseline Skills for product
