@@ -18,8 +18,8 @@ fn github_ci_builds_and_tests_only_the_cli() {
         "push:",
         "branches: [main]",
         "workflow_dispatch:",
-        "cargo build --locked --release --package yydra-cli",
-        "cargo test --locked --package yydra-cli --all-targets",
+        "moon run repo:ci-build",
+        "moon run repo:test",
     ] {
         assert!(
             workflow.contains(required),
@@ -40,4 +40,8 @@ fn github_ci_builds_and_tests_only_the_cli() {
         );
     }
     assert!(!workflow.contains("actions/checkout@v"));
+    let tasks = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../moon.yml"))
+        .expect("read repository moon tasks");
+    assert!(tasks.contains("command: cargo build --locked --release --package yydra-cli"));
+    assert!(tasks.contains("command: cargo test --locked --package yydra-cli --all-targets"));
 }

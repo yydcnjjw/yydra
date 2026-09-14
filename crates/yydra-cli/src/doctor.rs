@@ -32,7 +32,11 @@ pub(crate) fn diagnose(
     };
     doctor.report("doctor.verify", "DOCTOR_WORKSPACE_VERIFY", true,
         "restore the reported authority or install the exact CLI version named by the Workspace Origin Record",
-        verify_workspace(&root).map(|_| "Workspace origin and Distribution snapshots match".to_owned()));
+        verify_workspace(&root).and_then(|_| Ok(if crate::source_workspace::read(&root)?.is_some() {
+            "Framework source Workspace; local paths match, registry consumption is not verified".to_owned()
+        } else {
+            "Workspace origin and Distribution snapshots match".to_owned()
+        })));
 
     for (phase, program, arguments, nightly) in [
         ("doctor.rustc", "rustc", &["--version"][..], true),
@@ -76,7 +80,7 @@ pub(crate) fn diagnose(
             "doctor.frontend-dependencies",
             "DOCTOR_FRONTEND_DEPENDENCIES",
             false,
-            "run `yydra setup` before building; doctor can run before dependency installation",
+            "run `moon run product:setup` before building; doctor can run before dependency installation",
             if installed {
                 Ok(
                     "frontend/node_modules exists; dependency installation is owned by setup"
@@ -251,7 +255,7 @@ impl Doctor<'_> {
             ),
         ] {
             self.report(phase, "DOCTOR_ANDROID_COMPONENT", true,
-                "install the Android SDK component required by the locked Expo/React Native build; exact package compatibility is established by `yydra build --target android`",
+                "install the Android SDK component required by the locked Expo/React Native build; exact package compatibility is established by `moon run product:build-android`",
                 installed_components(&sdk.join(directory), marker));
         }
     }

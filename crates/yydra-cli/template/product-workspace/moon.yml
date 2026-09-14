@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+layer: application
+toolchains:
+  default: system
+tasks:
+  setup:
+    command: ["yydra", "internal", "setup", "."]
+    options: {cache: false, runInCI: false, mutex: frontend}
+  dev:
+    command: ["yydra", "internal", "dev", "."]
+    preset: server
+  build:
+    command: ["yydra", "internal", "build", "."]
+    options: {cache: false, mutex: frontend}
+  build-server:
+    command: ["yydra", "internal", "build", ".", "--target", "server"]
+    options: {cache: false}
+  build-h5:
+    command: ["yydra", "internal", "build", ".", "--target", "h5"]
+    options: {cache: false, mutex: frontend}
+  build-android:
+    command: ["yydra", "internal", "build", ".", "--target", "android"]
+    options: {cache: false, mutex: frontend, runInCI: false}
+  test:
+    command: cargo test --locked --workspace --all-targets --all-features
+    options: {cache: false, mutex: frontend}
+  check:
+    command: cargo check --locked --workspace --all-targets --all-features
+    options: {cache: false, mutex: frontend}
+  format:
+    command: cargo fmt --all --check
+    options: {cache: false}
+  lint:
+    command: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    options: {cache: false, mutex: frontend}
+  doctor:
+    command: ["yydra", "doctor", "."]
+    options: {cache: false, runInCI: false}
+  db-up:
+    command: docker compose -f compose.dev.yaml up -d --wait postgres
+    options: {cache: false, runInCI: false}
+  db-down:
+    command: docker compose -f compose.dev.yaml down
+    options: {cache: false, runInCI: false}
+  db-migrate:
+    command: ["yydra", "db", "migrate", "."]
+    options: {cache: false, runInCI: false}

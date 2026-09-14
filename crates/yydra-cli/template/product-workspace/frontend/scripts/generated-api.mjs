@@ -20,11 +20,27 @@ export function linkGeneratedApi(output) {
     if (!existing.isSymbolicLink()) {
       throw new Error(`Generated API package path is occupied: ${packagePath}`);
     }
+    if (
+      path.resolve(path.dirname(packagePath), fs.readlinkSync(packagePath)) ===
+      path.resolve(output)
+    ) {
+      return;
+    }
     fs.unlinkSync(packagePath);
   }
-  fs.symlinkSync(
-    output,
-    packagePath,
-    process.platform === "win32" ? "junction" : "dir",
-  );
+  try {
+    fs.symlinkSync(
+      output,
+      packagePath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    // Another preparation process may have established the same link.
+    if (
+      error.code !== "EEXIST" ||
+      fs.realpathSync(packagePath) !== fs.realpathSync(output)
+    ) {
+      throw error;
+    }
+  }
 }

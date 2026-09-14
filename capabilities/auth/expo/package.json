@@ -21,6 +21,20 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/yydcnjjw/yydra.git",
-    "directory": "packages/auth"
+    "directory": "capabilities/auth/expo"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check src test package.json tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.4",
+    "jsdom": "30.0.1",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "whatwg-fetch": "3.6.20",
+    "@types/node": "22.20.2"
   }
 }

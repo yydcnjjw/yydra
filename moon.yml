@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+layer: tool
+toolchains:
+  default: system
+tasks:
+  setup:
+    command: cargo fetch --locked
+    deps: ['auth-expo:setup', 'client-settings:setup']
+    options: {cache: false, runInCI: false}
+  build:
+    command: cargo build --locked --package yydra-cli
+    options: {cache: false}
+  ci-build:
+    command: cargo build --locked --release --package yydra-cli
+    options: {cache: false}
+  test:
+    command: cargo test --locked --package yydra-cli --all-targets
+    options: {cache: false}
+  format:
+    command: cargo fmt --all --check
+    options: {cache: false}
+  lint:
+    command: cargo clippy --locked --workspace --all-targets -- -D warnings
+    options: {cache: false}
+  auth-test:
+    command: cargo test --locked --package yydra-auth
+    options: {cache: false, runInCI: false}
+  source-create:
+    command: python3 scripts/source-workspace.py
+    options: {cache: false, runInCI: false}

@@ -254,7 +254,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
         String::from_utf8_lossy(&metadata.stderr)
     );
     let setup = Command::new(&executable)
-        .arg("setup")
+        .args(["internal", "setup"])
         .arg(&workspace)
         .env("CARGO_NET_OFFLINE", "true")
         .output()

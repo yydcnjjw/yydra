@@ -93,3 +93,9 @@ and Android checks and report the actual candidate, results, and coverage limits
 Doctor verifies Workspace identity and snapshots; it does not run validation.
 Historical graph evidence retains its original `pass-selected` / `complete: false`
 scope and does not establish validation of a later candidate.
+
+## Subsequent Capability and moon migration
+
+[ADR 0012](0012-aggregate-capabilities-and-adopt-moon.md), accepted on 2026-09-13,
+amends the applicable directory, developer-entrypoint, and explicit source-consumer
+contracts. The original decision and its dated validation retain their historical scope.

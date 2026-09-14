@@ -3,7 +3,7 @@
 
 This development Distribution consumes `yydra-auth`, `@yydra/auth`, and
 `@yydra/client-settings` through local package registries. Source remains in
-`crates/yydra-auth`, `packages/auth`, and `packages/client-settings`.
+`capabilities/auth/rust`, `capabilities/auth/expo`, and `capabilities/client-settings/typescript`.
 `yydra-build` retains its bundled source snapshot.
 
 Prerequisites: Linux, Docker Engine with Compose, Python 3.11+, the repository's
@@ -49,7 +49,7 @@ building the final CLI candidate. The libraries may have different versions.
 Keep tested package archives when retaining evidence or reproducing a candidate.
 
 After publishing, create a product with the candidate CLI and run its normal
-`yydra setup` command. Setup uses locked Cargo/npm installs and does not start
+`moon run product:setup` command. Setup uses locked Cargo/npm installs and does not start
 registry servers or rewrite lockfiles. `doctor` verifies package versions,
 registry declarations and the expected locked package identities.
 

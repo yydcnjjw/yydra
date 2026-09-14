@@ -27,6 +27,7 @@ mod doctor;
 mod library_packages;
 mod process;
 mod product_build;
+mod source_workspace;
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
@@ -66,6 +67,21 @@ enum Command {
         #[arg(long, value_enum)]
         target: Option<product_build::BuildTarget>,
     },
+    /// Execution primitives used by the generated moon tasks.
+    #[command(hide = true)]
+    Internal {
+        #[command(subcommand)]
+        command: InternalCommand,
+    },
+    /// Manage the Product Workspace database explicitly.
+    Db {
+        #[command(subcommand)]
+        command: DbCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum InternalCommand {
     /// Install Cargo and npm dependencies strictly from committed locks.
     Setup {
         #[arg(default_value = ".")]
@@ -82,11 +98,6 @@ enum Command {
         workspace: PathBuf,
         #[arg(long, value_enum)]
         target: Option<product_build::BuildTarget>,
-    },
-    /// Manage the Product Workspace database explicitly.
-    Db {
-        #[command(subcommand)]
-        command: DbCommand,
     },
 }
 
@@ -140,9 +151,13 @@ fn main() -> Result<()> {
             )
         }
         Command::Doctor { workspace, target } => doctor::diagnose(&workspace, target, &reporter),
-        Command::Setup { workspace } => setup(&workspace, &reporter),
-        Command::Dev { workspace } => dev(&workspace, &reporter),
-        Command::Build { workspace, target } => product_build::build(&workspace, target, &reporter),
+        Command::Internal { command } => match command {
+            InternalCommand::Setup { workspace } => setup(&workspace, &reporter),
+            InternalCommand::Dev { workspace } => dev(&workspace, &reporter),
+            InternalCommand::Build { workspace, target } => {
+                product_build::build(&workspace, target, &reporter)
+            }
+        },
         Command::Db { command } => match command {
             DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
             DbCommand::Migration { command } => match command {
@@ -1076,7 +1091,7 @@ fn setup(workspace: &Path, reporter: &Reporter) -> Result<()> {
             "setup.npm",
             "SETUP_NPM_CI",
             Some(&npm_lock),
-            Some("restore frontend/package-lock.json and retry `yydra setup`"),
+            Some("restore frontend/package-lock.json and retry `moon run product:setup`"),
             || {
                 run_process(
                     &root.join("frontend"),
@@ -1480,7 +1495,7 @@ fn spawn_reported_dev_child(
                 message: &message,
                 location: Some(directory),
                 remediation: Some(
-                    "verify the locked tool installation and executable permissions, then rerun `yydra dev`",
+                    "verify the locked tool installation and executable permissions, then rerun `moon run product:dev`",
                 ),
             });
             Err(error)
@@ -1722,7 +1737,7 @@ fn dev_child_exited(
         message: &message,
         location: Some(exit.location),
         remediation: Some(
-            "inspect the forwarded child diagnostics, correct the failure, and rerun `yydra dev`",
+            "inspect the forwarded child diagnostics, correct the failure, and rerun `moon run product:dev`",
         ),
     });
     reporter.emit(Diagnostic {

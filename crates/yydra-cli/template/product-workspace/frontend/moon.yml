@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+layer: application
+toolchains:
+  default: system
+tasks:
+  typecheck:
+    command: npm run typecheck
+    options: {cache: false, mutex: frontend, runInCI: false}
+  test:
+    command: npm test
+    options: {cache: false, mutex: frontend, runInCI: false}
+  format:
+    command: npm run format:check
+    options: {cache: false, mutex: frontend, runInCI: false}
+  lint:
+    command: npm run lint
+    options: {cache: false, mutex: frontend, runInCI: false}
+  test-e2e:
+    command: npm run test:e2e
+    options: {cache: false, mutex: frontend, runInCI: false}
+  test-product:
+    command: npm run test:product-semantics
+    options: {cache: false, mutex: frontend, runInCI: false}

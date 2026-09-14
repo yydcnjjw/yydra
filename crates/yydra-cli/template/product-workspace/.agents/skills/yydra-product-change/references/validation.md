@@ -12,7 +12,7 @@ Use the cheapest discriminating test first and expand coverage for affected beha
    set `EXPO_PUBLIC_API_URL`, and run `npm --prefix frontend run test:e2e` or
    `npm --prefix frontend run test:product-semantics`.
 6. Changes affecting native inputs or Android build tooling need
-   `yydra build . --target android`. Keep its actual APK and relevant build log.
+   `moon run product:build-android`. Keep its actual APK and relevant build log.
 
 Use `yydra doctor .` to diagnose environments; it does not replace any test or
 build. The Workspace README provides commands and disposable-database cleanup.

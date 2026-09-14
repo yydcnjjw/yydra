@@ -87,7 +87,7 @@ complete Rust collection replaces the release candidate's actual validation reco
 Use the candidate's packaged CLI and a matching fresh Product Workspace when
 creation, templates, packaging, or bundled build support change. `yydra doctor`
 reports environment and Workspace problems; it does not run validation.
-Run `yydra setup` explicitly before consumers of frontend dependencies.
+Run `moon run product:setup` explicitly before consumers of frontend dependencies.
 
 Select the affected commands from the Product Workspace:
 
@@ -101,7 +101,7 @@ npm --prefix frontend run format:check
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 npm --prefix frontend test
-yydra build . --target h5
+moon run product:build-h5
 ```
 
 Use a Cargo test target/filter or the frontend runner's test filter when it
@@ -113,7 +113,7 @@ The generated README documents the commands and cleanup; never use deployment
 data for destructive test fixtures. Existing isolated repository consumer
 integration tests may also supply those prerequisites.
 
-When Android is triggered, use `yydra build <consumer> --target android` and
+When Android is triggered, use `moon run product:build-android` and
 relevant generation/build regressions. Preserve the actual APK and build log.
 Where a representative architecture is selected, record it and its coverage
 limit explicitly. The build checks generation input integrity and produces an

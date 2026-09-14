@@ -26,6 +26,8 @@
 - [Consolidate diagnostics in doctor](./docs/adr/0009-consolidate-diagnostics-in-doctor.md): accepted; removes the quality-check graph and evidence protocol, extends doctor with environment diagnostics, and uses explicit project validation
 - [Provide reusable client settings](./docs/adr/0011-provide-reusable-client-settings.md): accepted; native Zustand stores and persistence through a shared TypeScript package, React hydration subscriptions, and product-owned local preferences and migrations
 
+- [Aggregate Capabilities and adopt moon](./docs/adr/0012-aggregate-capabilities-and-adopt-moon.md): accepted; capability directories, moon entrypoints, explicit source consumers, and retained product-owned policies
+
 ## Historical research and validation
 
 - [Wiki home](https://github.com/yydcnjjw/yydra/wiki/Home): research and dated validation records; current context and ADR authority remains above

@@ -11,7 +11,7 @@ default routes. Inspect the actual command output rather than guessing.
   an incompatible toolchain override. Update nightly only explicitly.
 - `DOCTOR_FRONTEND_TOOL`: install working Node/npm compatible with the project's
   dependencies. Do not change Public API source to disguise a missing or wrong tool.
-- `DOCTOR_FRONTEND_DEPENDENCIES`: run `yydra setup` when ready to install; doctor
+- `DOCTOR_FRONTEND_DEPENDENCIES`: run `moon run product:setup` when ready to install; doctor
   is allowed to precede setup.
 - `DOCTOR_OPTIONAL_DOCKER`: start/install Docker and Compose when using local
   containers, or configure an external PostgreSQL database.
