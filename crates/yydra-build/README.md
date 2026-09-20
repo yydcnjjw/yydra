@@ -23,3 +23,9 @@ dependency, so creating and building a candidate does not require publishing
 the library first. `doctor` and `check` verify the snapshot. The library is also
 independently packageable as `yydra-build`; its canonical source is maintained
 in `crates/yydra-build` in the Yydra repository.
+
+Build functions return opaque `yydra_build::Error`. Match its non-exhaustive
+`ErrorKind` or stable `code()` when selecting recovery; do not parse Display text.
+Typed source chains retain I/O, JSON and validation context. Generator exit status
+and bounded tool stdout/stderr are retained for explicit build diagnostics; these
+local tool streams are not the redacted HTTP response/report interface.

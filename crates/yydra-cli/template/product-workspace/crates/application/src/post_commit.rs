@@ -6,9 +6,9 @@
 //! panic, forced shutdown, or process crash can lose the work and never changes the
 //! already committed command result. Business invariants must remain synchronous.
 
+use snafu::Snafu;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -119,10 +119,11 @@ pub enum PostCommitTaskOutcome {
     Panicked,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct PostCommitEvent {
     pub task_name: String,
     pub outcome: PostCommitTaskOutcome,
+    pub failure: Option<Arc<PostCommitExecutionError>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,7 +132,8 @@ pub enum AdmissionFailure {
     Closed,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Snafu)]
+#[snafu(display("post-commit task {task_name} admission was rejected: {reason:?}"))]
 pub struct PostCommitAdmissionError {
     pub task_name: String,
     pub reason: AdmissionFailure,
@@ -182,9 +184,10 @@ impl PostCommitExecutor {
             || config.shutdown_grace.is_zero()
             || config.shutdown_grace > MAX_TASK_DEADLINE
         {
-            return Err(PostCommitConfigurationError);
+            return Err(PostCommitConfigurationError::InvalidBounds);
         }
-        tokio::runtime::Handle::try_current().map_err(|_| PostCommitConfigurationError)?;
+        tokio::runtime::Handle::try_current()
+            .map_err(|source| PostCommitConfigurationError::Runtime { source })?;
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -232,6 +235,7 @@ impl PostCommitExecutor {
                 emit_event(
                     &self.inner.events,
                     PostCommitEvent {
+                        failure: None,
                         task_name: name,
                         outcome: PostCommitTaskOutcome::Admitted,
                     },
@@ -256,6 +260,7 @@ impl PostCommitExecutor {
         emit_event(
             &self.inner.events,
             PostCommitEvent {
+                failure: None,
                 task_name: task.name.clone(),
                 outcome: PostCommitTaskOutcome::AdmissionRejected,
             },
@@ -350,9 +355,9 @@ async fn run_manager(
             joined = active.join_next_with_id(), if !active.is_empty() => {
                 if let Some(joined) = joined {
                     match joined {
-                        Ok((id, outcome)) => {
+                        Ok((id, (outcome, failure))) => {
                             if let Some(name) = active_names.remove(&id) {
-                                terminal_event(&events, &metrics, name, outcome);
+                                terminal_failure_event(&events, &metrics, name, outcome, failure);
                             }
                         }
                         Err(error) => {
@@ -362,7 +367,7 @@ async fn run_manager(
                                 } else {
                                     PostCommitTaskOutcome::Cancelled
                                 };
-                                terminal_event(&events, &metrics, name, outcome);
+                                terminal_failure_event(&events, &metrics, name, outcome, Some(PostCommitExecutionError::Join { source: error }));
                             }
                         }
                     }
@@ -387,7 +392,7 @@ async fn run_manager(
                         emit_event(
                             &events,
                             PostCommitEvent {
-                                task_name: name.clone(),
+                                failure: None,                                task_name: name.clone(),
                                 outcome: PostCommitTaskOutcome::Started,
                             },
                         );
@@ -405,15 +410,12 @@ async fn run_manager(
                         );
                         let handle = active.spawn(async move {
                             let result = timeout_at(task_deadline, work(cancellation)).await;
-                            if cancellation_observer.is_cancelled() {
-                                PostCommitTaskOutcome::Cancelled
-                            } else {
-                                match result {
-                                    Ok(Ok(())) => PostCommitTaskOutcome::Completed,
-                                    Ok(Err(_)) => PostCommitTaskOutcome::Failed,
-                                    Err(_) => PostCommitTaskOutcome::TimedOut,
-                                }
-                            }
+                            let (outcome, failure) = match result {
+                                Ok(Ok(())) => (PostCommitTaskOutcome::Completed, None),
+                                Ok(Err(source)) => (PostCommitTaskOutcome::Failed, Some(PostCommitExecutionError::Task { source })),
+                                Err(source) => (PostCommitTaskOutcome::TimedOut, Some(PostCommitExecutionError::Deadline { source })),
+                            };
+                            (if cancellation_observer.is_cancelled() { PostCommitTaskOutcome::Cancelled } else { outcome }, failure)
                         }.instrument(task_span));
                         active_names.insert(handle.id(), name);
                     }
@@ -455,6 +457,17 @@ fn terminal_event(
     task_name: String,
     outcome: PostCommitTaskOutcome,
 ) {
+    terminal_failure_event(events, metrics, task_name, outcome, None);
+}
+
+fn terminal_failure_event(
+    events: &broadcast::Sender<PostCommitEvent>,
+    metrics: &PostCommitMetrics,
+    task_name: String,
+    outcome: PostCommitTaskOutcome,
+    failure: Option<PostCommitExecutionError>,
+) {
+    let failure = failure.map(Arc::new);
     match outcome {
         PostCommitTaskOutcome::Completed => &metrics.completed,
         PostCommitTaskOutcome::Failed => &metrics.failed,
@@ -464,12 +477,26 @@ fn terminal_event(
         PostCommitTaskOutcome::Admitted
         | PostCommitTaskOutcome::AdmissionRejected
         | PostCommitTaskOutcome::Started => {
-            emit_event(events, PostCommitEvent { task_name, outcome });
+            emit_event(
+                events,
+                PostCommitEvent {
+                    task_name,
+                    outcome,
+                    failure,
+                },
+            );
             return;
         }
     }
     .fetch_add(1, Ordering::SeqCst);
-    emit_event(events, PostCommitEvent { task_name, outcome });
+    emit_event(
+        events,
+        PostCommitEvent {
+            task_name,
+            outcome,
+            failure,
+        },
+    );
 }
 
 fn emit_event(events: &broadcast::Sender<PostCommitEvent>, event: PostCommitEvent) {
@@ -482,6 +509,7 @@ fn emit_event(events: &broadcast::Sender<PostCommitEvent>, event: PostCommitEven
             target: "yydra::post_commit",
             task_name = %event.task_name,
             outcome = ?event.outcome,
+            has_source = event.failure.is_some(),
             lossy = true,
             retry = false,
             "post-commit task lifecycle"
@@ -490,6 +518,7 @@ fn emit_event(events: &broadcast::Sender<PostCommitEvent>, event: PostCommitEven
             target: "yydra::post_commit",
             task_name = %event.task_name,
             outcome = ?event.outcome,
+            has_source = event.failure.is_some(),
             lossy = true,
             retry = false,
             "post-commit task lifecycle"
@@ -523,28 +552,32 @@ impl PostCommitMetrics {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
+#[snafu(display(
+    "post-commit task name or deadline is invalid; use a stable lowercase name and a bounded non-zero deadline"
+))]
 pub struct PostCommitTaskBuildError;
 
-impl fmt::Display for PostCommitTaskBuildError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            "post-commit task name or deadline is invalid; use a stable lowercase name and a bounded non-zero deadline",
-        )
-    }
+#[derive(Debug, Snafu)]
+#[snafu(context(suffix(PostCommitConfigContext)))]
+pub enum PostCommitConfigurationError {
+    #[snafu(display(
+        "post-commit executor requires positive capacity, concurrency and bounded shutdown grace"
+    ))]
+    InvalidBounds,
+    #[snafu(display("post-commit executor requires an active Tokio runtime"))]
+    Runtime {
+        source: tokio::runtime::TryCurrentError,
+    },
 }
 
-impl Error for PostCommitTaskBuildError {}
-
-#[derive(Debug)]
-pub struct PostCommitConfigurationError;
-
-impl fmt::Display for PostCommitConfigurationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            "post-commit executor requires bounded positive capacity, concurrency, shutdown grace, and an active Tokio runtime",
-        )
-    }
+#[derive(Debug, Snafu)]
+#[snafu(context(suffix(PostCommitExecutionContext)))]
+pub enum PostCommitExecutionError {
+    #[snafu(display("post-commit callback failed"))]
+    Task { source: BoxTaskError },
+    #[snafu(display("post-commit task did not complete"))]
+    Join { source: tokio::task::JoinError },
+    #[snafu(display("post-commit task exceeded its deadline"))]
+    Deadline { source: tokio::time::error::Elapsed },
 }
-
-impl Error for PostCommitConfigurationError {}

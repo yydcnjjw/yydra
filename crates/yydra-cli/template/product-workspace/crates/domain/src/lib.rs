@@ -6,8 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::error::Error;
-use std::fmt;
+use snafu::Snafu;
 
 const MAX_READING_ENTRY_ID_LENGTH: usize = 128;
 const MAX_READING_ENTRY_TITLE_LENGTH: usize = 200;
@@ -24,10 +23,7 @@ impl ReadingEntryId {
             || value.chars().any(char::is_whitespace)
             || value.chars().any(char::is_control)
         {
-            return Err(DomainValidationError::new(
-                "id",
-                "must be a non-empty opaque identifier without whitespace",
-            ));
+            return Err(DomainValidationError::InvalidId);
         }
         Ok(Self(value))
     }
@@ -45,19 +41,13 @@ impl ReadingEntryTitle {
         let value = value.into();
         let normalized = value.trim();
         if normalized.is_empty() {
-            return Err(DomainValidationError::new("title", "must not be empty"));
+            return Err(DomainValidationError::EmptyTitle);
         }
         if normalized.chars().count() > MAX_READING_ENTRY_TITLE_LENGTH {
-            return Err(DomainValidationError::new(
-                "title",
-                "must contain at most 200 characters",
-            ));
+            return Err(DomainValidationError::TitleTooLong);
         }
         if normalized.chars().any(char::is_control) {
-            return Err(DomainValidationError::new(
-                "title",
-                "must not contain control characters",
-            ));
+            return Err(DomainValidationError::TitleControlCharacter);
         }
         Ok(Self(normalized.to_owned()))
     }
@@ -75,33 +65,22 @@ impl SourceUrl {
         let value = value.into();
         let normalized = value.trim();
         if normalized.chars().count() > MAX_SOURCE_URL_LENGTH {
-            return Err(DomainValidationError::new(
-                "sourceUrl",
-                "must contain at most 2048 characters",
-            ));
+            return Err(DomainValidationError::SourceUrlTooLong);
         }
         if normalized.chars().any(char::is_whitespace) || normalized.chars().any(char::is_control) {
-            return Err(DomainValidationError::new(
-                "sourceUrl",
-                "must not contain whitespace or control characters",
-            ));
+            return Err(DomainValidationError::SourceUrlCharacters);
         }
         let remainder = normalized
             .strip_prefix("https://")
             .or_else(|| normalized.strip_prefix("http://"))
-            .ok_or_else(|| {
-                DomainValidationError::new("sourceUrl", "must use the http or https scheme")
-            })?;
+            .ok_or(DomainValidationError::SourceUrlScheme)?;
         let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.is_empty()
             || !authority
                 .chars()
                 .any(|character| character.is_ascii_alphanumeric())
         {
-            return Err(DomainValidationError::new(
-                "sourceUrl",
-                "must contain a host",
-            ));
+            return Err(DomainValidationError::SourceUrlHost);
         }
         Ok(Self(normalized.to_owned()))
     }
@@ -122,10 +101,7 @@ impl ReadingEntryState {
         match value {
             "queued" => Ok(Self::Queued),
             "completed" => Ok(Self::Completed),
-            _ => Err(DomainValidationError::new(
-                "state",
-                "contains an unknown persisted reading-entry state",
-            )),
+            _ => Err(DomainValidationError::UnknownState),
         }
     }
 
@@ -150,10 +126,7 @@ impl ReadingEntryStatusFilter {
             "all" => Ok(Self::All),
             "queued" => Ok(Self::Queued),
             "completed" => Ok(Self::Completed),
-            _ => Err(DomainValidationError::new(
-                "status",
-                "must be all, queued, or completed",
-            )),
+            _ => Err(DomainValidationError::InvalidStatus),
         }
     }
 
@@ -185,10 +158,7 @@ impl ReadingEntryOrder {
         match value.unwrap_or("oldest") {
             "oldest" => Ok(Self::OldestFirst),
             "newest" => Ok(Self::NewestFirst),
-            _ => Err(DomainValidationError::new(
-                "sort",
-                "must be oldest or newest",
-            )),
+            _ => Err(DomainValidationError::InvalidOrder),
         }
     }
 
@@ -208,12 +178,8 @@ pub struct ReadingProgress {
 impl ReadingProgress {
     pub fn restore(completed_entries: i64) -> Result<Self, DomainValidationError> {
         Ok(Self {
-            completed_entries: u64::try_from(completed_entries).map_err(|_| {
-                DomainValidationError::new(
-                    "completedEntries",
-                    "must be a non-negative persisted count",
-                )
-            })?,
+            completed_entries: u64::try_from(completed_entries)
+                .map_err(|_| DomainValidationError::NegativeProgress)?,
         })
     }
 
@@ -285,7 +251,8 @@ impl ReadingEntry {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(display("cannot transition reading entry from {} to {}", current.as_str(), requested.as_str()))]
 pub struct DomainTransitionError {
     current: ReadingEntryState,
     requested: ReadingEntryState,
@@ -301,46 +268,85 @@ impl DomainTransitionError {
     }
 }
 
-impl fmt::Display for DomainTransitionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "cannot transition reading entry from {} to {}",
-            self.current.as_str(),
-            self.requested.as_str()
-        )
-    }
-}
-
-impl Error for DomainTransitionError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DomainValidationError {
-    field: &'static str,
-    message: &'static str,
+/// A product rule, independent of how the candidate state reached the domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+pub enum DomainValidationError {
+    #[snafu(display("id must be a non-empty opaque identifier without whitespace"))]
+    InvalidId,
+    #[snafu(display("title must not be empty"))]
+    EmptyTitle,
+    #[snafu(display("title must contain at most 200 characters"))]
+    TitleTooLong,
+    #[snafu(display("title must not contain control characters"))]
+    TitleControlCharacter,
+    #[snafu(display("sourceUrl must contain at most 2048 characters"))]
+    SourceUrlTooLong,
+    #[snafu(display("sourceUrl must not contain whitespace or control characters"))]
+    SourceUrlCharacters,
+    #[snafu(display("sourceUrl must use the http or https scheme"))]
+    SourceUrlScheme,
+    #[snafu(display("sourceUrl must contain a host"))]
+    SourceUrlHost,
+    #[snafu(display("state contains an unknown persisted reading-entry state"))]
+    UnknownState,
+    #[snafu(display("status must be all, queued, or completed"))]
+    InvalidStatus,
+    #[snafu(display("sort must be oldest or newest"))]
+    InvalidOrder,
+    #[snafu(display("completedEntries must be a non-negative persisted count"))]
+    NegativeProgress,
 }
 
 impl DomainValidationError {
-    const fn new(field: &'static str, message: &'static str) -> Self {
-        Self { field, message }
+    pub const fn field(&self) -> &'static str {
+        match self {
+            Self::InvalidId => "id",
+            Self::EmptyTitle => "title",
+            Self::TitleTooLong => "title",
+            Self::TitleControlCharacter => "title",
+            Self::SourceUrlTooLong => "sourceUrl",
+            Self::SourceUrlCharacters => "sourceUrl",
+            Self::SourceUrlScheme => "sourceUrl",
+            Self::SourceUrlHost => "sourceUrl",
+            Self::UnknownState => "state",
+            Self::InvalidStatus => "status",
+            Self::InvalidOrder => "sort",
+            Self::NegativeProgress => "completedEntries",
+        }
     }
-
-    pub fn field(&self) -> &'static str {
-        self.field
+    pub const fn message(&self) -> &'static str {
+        match self {
+            Self::InvalidId => "must be a non-empty opaque identifier without whitespace",
+            Self::EmptyTitle => "must not be empty",
+            Self::TitleTooLong => "must contain at most 200 characters",
+            Self::TitleControlCharacter => "must not contain control characters",
+            Self::SourceUrlTooLong => "must contain at most 2048 characters",
+            Self::SourceUrlCharacters => "must not contain whitespace or control characters",
+            Self::SourceUrlScheme => "must use the http or https scheme",
+            Self::SourceUrlHost => "must contain a host",
+            Self::UnknownState => "contains an unknown persisted reading-entry state",
+            Self::InvalidStatus => "must be all, queued, or completed",
+            Self::InvalidOrder => "must be oldest or newest",
+            Self::NegativeProgress => "must be a non-negative persisted count",
+        }
     }
-
-    pub fn message(&self) -> &'static str {
-        self.message
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidId => "invalid_id",
+            Self::EmptyTitle => "empty",
+            Self::TitleTooLong => "too_long",
+            Self::TitleControlCharacter => "control_character",
+            Self::SourceUrlTooLong => "too_long",
+            Self::SourceUrlCharacters => "invalid_character",
+            Self::SourceUrlScheme => "unsupported_scheme",
+            Self::SourceUrlHost => "missing_host",
+            Self::UnknownState => "unknown_state",
+            Self::InvalidStatus => "invalid_status",
+            Self::InvalidOrder => "invalid_order",
+            Self::NegativeProgress => "negative_count",
+        }
     }
 }
-
-impl fmt::Display for DomainValidationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} {}", self.field, self.message)
-    }
-}
-
-impl Error for DomainValidationError {}
 
 #[cfg(test)]
 mod tests {

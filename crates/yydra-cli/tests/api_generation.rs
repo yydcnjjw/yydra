@@ -334,7 +334,7 @@ impl Fixture {
     let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     yydra_build::generate_api(include_bytes!("../../../fixture.json"), &yydra_build::ApiBuild {
         frontend: &manifest.join("../../frontend"), out_dir: &std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()),
-    }).unwrap();
+    }).unwrap_or_else(|error| { eprintln!("{error}"); std::process::exit(1) });
 }
 "#).unwrap();
         assert_success(

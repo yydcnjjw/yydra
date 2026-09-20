@@ -19,6 +19,8 @@ path = "src/bin/migrate.rs"
 auth-fixture = ["yydra-auth/test-provider"]
 
 [dependencies]
+snafu.workspace = true
+sqlx.workspace = true
 yydra-auth.workspace = true
 axum.workspace = true
 product-application = { package = "__PRODUCT_ID__-application", path = "../application" }

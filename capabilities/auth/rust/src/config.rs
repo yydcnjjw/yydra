@@ -24,9 +24,9 @@ impl AuthConfig {
         native_return: &str,
         development: bool,
     ) -> Result<Self, AuthError> {
-        let public_url = Url::parse(public_url).map_err(|_| AuthError::configuration())?;
-        let web_return = Url::parse(web_return).map_err(|_| AuthError::configuration())?;
-        let native_return = Url::parse(native_return).map_err(|_| AuthError::configuration())?;
+        let public_url = Url::parse(public_url).map_err(AuthError::configuration_source)?;
+        let web_return = Url::parse(web_return).map_err(AuthError::configuration_source)?;
+        let native_return = Url::parse(native_return).map_err(AuthError::configuration_source)?;
         for url in [&public_url, &web_return] {
             if !url.username().is_empty()
                 || url.password().is_some()
@@ -84,7 +84,7 @@ impl AuthConfig {
     /// Controlled integration fixtures only; production builds expose no endpoint override.
     #[cfg(any(test, feature = "test-provider"))]
     pub fn test_provider(mut self, base_url: &str) -> Result<Self, AuthError> {
-        let url = Url::parse(base_url).map_err(|_| AuthError::configuration())?;
+        let url = Url::parse(base_url).map_err(AuthError::configuration_source)?;
         if url.scheme() != "http"
             || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
         {
@@ -92,15 +92,15 @@ impl AuthConfig {
         }
         self.authorize_url = url
             .join("authorize")
-            .map_err(|_| AuthError::configuration())?
+            .map_err(AuthError::configuration_source)?
             .to_string();
         self.token_url = url
             .join("token")
-            .map_err(|_| AuthError::configuration())?
+            .map_err(AuthError::configuration_source)?
             .to_string();
         self.user_url = url
             .join("user")
-            .map_err(|_| AuthError::configuration())?
+            .map_err(AuthError::configuration_source)?
             .to_string();
         Ok(self)
     }

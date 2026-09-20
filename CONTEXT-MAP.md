@@ -28,7 +28,10 @@
 
 - [Aggregate Capabilities and adopt moon](./docs/adr/0012-aggregate-capabilities-and-adopt-moon.md): accepted; capability directories, moon entrypoints, explicit source consumers, and retained product-owned policies
 
+- [Model failures at their owning boundary with SNAFU](./docs/adr/0013-model-errors-with-snafu.md): accepted; typed module errors, public error boundaries, safe diagnostics and transaction failure preservation; implementation in progress
+
 ## Historical research and validation
+
 
 - [Wiki home](https://github.com/yydcnjjw/yydra/wiki/Home): research and dated validation records; current context and ADR authority remains above
 - [Research index](https://github.com/yydcnjjw/yydra/wiki/Research-Index): dated decision inputs and pointers to subsequent decisions and implementation

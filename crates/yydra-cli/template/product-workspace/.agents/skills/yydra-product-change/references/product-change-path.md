@@ -57,3 +57,14 @@ constraints, rollback, locking, concurrency, or query behavior are material.
   `frontend/e2e/product-presentation.accessibility.spec.ts`. Assert the actual
   semantic role, accessible name, state, focus, and recovery surface rather than
   an implementation-only selector.
+
+Use SNAFU errors owned by the domain rule or application use case. Keep concrete
+causes and operation context. A persisted value failing restoration is technical,
+not invalid user input. Retain both original and rollback errors and treat a
+failed commit as outcome unknown; never automatically retry the write.
+
+HTTP uses shared `yydra-http` RFC 9457 responses. Return public `field`/`code`
+violations, and correlate `requestId` with `x-request-id` and one safe technical
+log. Do not expose or log arbitrary source Display/Debug. Clients recover using
+`type` and violation codes; human details are not identifiers. Keep 401 session
+recovery separate from 403 authorization/CSRF rejection.

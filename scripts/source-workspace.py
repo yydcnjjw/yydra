@@ -32,14 +32,16 @@ def main():
          "--product-id", "source-reader", "--product-source-license", "MIT"], ROOT)
     manifest = destination / "Cargo.toml"
     lines = manifest.read_text().splitlines()
-    rust = ROOT / "capabilities/auth/rust"
+    rust_sources = {"yydra-auth": ROOT / "capabilities/auth/rust",
+                    "yydra-http": ROOT / "crates/yydra-http"}
     manifest.write_text("\n".join(
-        "yydra-auth = { path = " + json.dumps(str(rust), ensure_ascii=False) + " }"
-        if line.startswith("yydra-auth = ") else line for line in lines) + "\n")
+        next((name + " = { path = " + json.dumps(str(path), ensure_ascii=False) + " }"
+              for name, path in rust_sources.items() if line.startswith(name + " = ")), line)
+        for line in lines) + "\n")
     cargo_lock = destination / "Cargo.lock"
     entries = cargo_lock.read_text().split("[[package]]")
     for index, entry in enumerate(entries):
-        if '\nname = "yydra-auth"\n' in entry:
+        if any(f'\nname = "{name}"\n' in entry for name in rust_sources):
             entries[index] = "\n".join(line for line in entry.split("\n")
                                         if not line.startswith(("source = ", "checksum = ")))
     cargo_lock.write_text("[[package]]".join(entries))

@@ -2,12 +2,13 @@
 
 //! Explicit, disposable framework source consumers. Ordinary products use registries.
 
+module_errors!("SOURCE_WORKSPACE", [VersionMismatch => "SOURCE_WORKSPACE_VERSION_MISMATCH", LocationInvalid => "SOURCE_WORKSPACE_LOCATION_INVALID", PathEscape => "SOURCE_WORKSPACE_PATH_ESCAPE"], []);
+
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -20,6 +21,7 @@ struct Record {
 
 pub(crate) struct Sources {
     pub rust: PathBuf,
+    pub http: PathBuf,
     pub auth: PathBuf,
     pub settings: PathBuf,
 }
@@ -33,25 +35,40 @@ pub(crate) fn read(root: &Path) -> Result<Option<Sources>> {
     };
     let record: Record = serde_json::from_slice(&bytes).context("parse source Workspace record")?;
     if record.schema_version != 1 || record.distribution_version != crate::DISTRIBUTION_VERSION {
-        bail!("source Workspace version mismatch; regenerate with the current framework checkout");
+        fail!(
+            VersionMismatch,
+            "source Workspace version mismatch; regenerate with the current framework checkout"
+        );
     }
     let framework = record
         .framework_root
         .canonicalize()
         .context("locate source framework checkout")?;
     if !record.framework_root.is_absolute() || root.canonicalize()?.starts_with(&framework) {
-        bail!("source Workspace must be outside its framework checkout");
+        fail!(
+            LocationInvalid,
+            "source Workspace must be outside its framework checkout"
+        );
     }
     let sources = Sources {
         rust: framework.join("capabilities/auth/rust").canonicalize()?,
+        http: framework.join("crates/yydra-http").canonicalize()?,
         auth: framework.join("capabilities/auth/expo").canonicalize()?,
         settings: framework
             .join("capabilities/client-settings/typescript")
             .canonicalize()?,
     };
-    for path in [&sources.rust, &sources.auth, &sources.settings] {
+    for path in [
+        &sources.rust,
+        &sources.http,
+        &sources.auth,
+        &sources.settings,
+    ] {
         if !path.starts_with(&framework) {
-            bail!("source Capability path escapes the selected framework checkout");
+            fail!(
+                PathEscape,
+                "source Capability path escapes the selected framework checkout"
+            );
         }
     }
     Ok(Some(sources))

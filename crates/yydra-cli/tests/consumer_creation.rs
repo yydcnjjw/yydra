@@ -730,7 +730,8 @@ printf '%s:%s\n' "$PWD" "$*" >> "$YYDRA_TOOL_LOG"
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON Line event"))
         .collect::<Vec<_>>();
     for event in &events {
-        assert_eq!(event["schemaVersion"], 1);
+        assert_eq!(event["schemaVersion"], 2);
+        assert!(event.get("reasonCode").is_some());
         assert!(event["phase"].is_string());
         assert!(event["code"].is_string());
         assert!(event["severity"].is_string());
@@ -1119,9 +1120,9 @@ fn migration_add_rejects_incompatible_existing_version_histories_without_writing
             .expect("reject incompatible history");
         assert!(!output.status.success(), "accepted {case} history");
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&output.stdout).contains(expected),
+            "JSONL diagnostics: {}",
+            String::from_utf8_lossy(&output.stdout)
         );
         assert!(
             !workspace
@@ -2044,7 +2045,7 @@ fn doctor_checks_authentication_package_versions_sources_and_checksums() {
             .unwrap();
         assert!(!output.status.success(), "doctor accepted {case}");
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("authentication package drift"),
+            String::from_utf8_lossy(&output.stderr).contains("package drift"),
             "{case}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -2058,38 +2059,44 @@ fn source_workspace_requires_explicit_matching_paths_and_locked_identities() {
     let framework = sandbox.path().join("framework-🚀");
     fs::create_dir(&framework).unwrap();
     let framework = framework.canonicalize().unwrap();
-    let rust = framework.join("capabilities/auth/rust");
-    fs::create_dir_all(&rust).unwrap();
-    fs::write(
-        rust.join("Cargo.toml"),
-        "[package]\nname = \"yydra-auth\"\nversion = \"0.6.0-dev.1\"\n",
-    )
-    .unwrap();
     let workspace = sandbox.path().join("source-reader");
     create_with_flags(&workspace, "Source Reader", "source-reader");
     let manifest = workspace.join("Cargo.toml");
     let mut cargo: toml::Value = toml::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
-    cargo["workspace"]["dependencies"]["yydra-auth"] = toml::Value::Table(
-        [(
-            "path".to_owned(),
-            toml::Value::String(rust.to_str().unwrap().to_owned()),
-        )]
-        .into_iter()
-        .collect(),
-    );
-    fs::write(&manifest, toml::to_string(&cargo).unwrap()).unwrap();
     let cargo_lock = workspace.join("Cargo.lock");
     let mut lock: toml::Value = toml::from_str(&fs::read_to_string(&cargo_lock).unwrap()).unwrap();
-    let auth = lock["package"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|entry| entry["name"].as_str() == Some("yydra-auth"))
-        .unwrap()
-        .as_table_mut()
+    for (name, relative) in [
+        ("yydra-auth", "capabilities/auth/rust"),
+        ("yydra-http", "crates/yydra-http"),
+    ] {
+        let source = framework.join(relative);
+        fs::create_dir_all(&source).unwrap();
+        let entry = lock["package"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["name"].as_str() == Some(name))
+            .unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"{}\"\n",
+                entry["version"].as_str().unwrap()
+            ),
+        )
         .unwrap();
-    auth.remove("source");
-    auth.remove("checksum");
+        cargo["workspace"]["dependencies"][name] = toml::Value::Table(
+            [(
+                "path".to_owned(),
+                toml::Value::String(source.to_str().unwrap().to_owned()),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        entry.as_table_mut().unwrap().remove("source");
+        entry.as_table_mut().unwrap().remove("checksum");
+    }
+    fs::write(&manifest, toml::to_string(&cargo).unwrap()).unwrap();
     fs::write(&cargo_lock, toml::to_string(&lock).unwrap()).unwrap();
     let package = workspace.join("frontend/package.json");
     let npm_lock = workspace.join("frontend/package-lock.json");
@@ -2152,12 +2159,12 @@ fn source_workspace_requires_explicit_matching_paths_and_locked_identities() {
         ("missing mode", record.clone(), None),
         ("unknown mode", record.clone(), Some(b"{\"schema_version\":99,\"distribution_version\":\"0.6.0\",\"framework_root\":\"/wrong\"}".to_vec())),
         ("Cargo identity", cargo_lock.clone(), Some(fs::read_to_string(&cargo_lock).unwrap().replace(
-            "name = \"yydra-auth\"\nversion = \"0.6.0-dev.1\"", "name = \"yydra-auth\"\nversion = \"0.0.0\"").into_bytes())),
+            "name = \"yydra-auth\"\nversion = \"0.6.0-dev.2\"", "name = \"yydra-auth\"\nversion = \"0.0.0\"").into_bytes())),
         ("npm path", package.clone(), Some(fs::read_to_string(&package).unwrap().replace("file:", "file:/wrong/").into_bytes())),
         ("npm identity", npm_lock.clone(), Some(fs::read_to_string(&npm_lock).unwrap().replace("\"link\":true", "\"link\":false").into_bytes())),
     ] {
         let original = fs::read(&path).unwrap();
-        if let Some(bytes) = replacement { assert_ne!(bytes, original); fs::write(&path, bytes).unwrap(); }
+        if let Some(bytes) = replacement { assert!(bytes != original, "fixture must change {label}"); fs::write(&path, bytes).unwrap(); }
         else { fs::remove_file(&path).unwrap(); }
         let before = byte_inventory(&workspace);
         let output = doctor();
@@ -2870,4 +2877,49 @@ fn write_executable(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write executable fixture");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
         .expect("set executable fixture mode");
+}
+
+#[cfg(unix)]
+#[test]
+fn json_failure_separates_step_from_reason_and_reports_once() {
+    let sandbox = tempdir().unwrap();
+    let workspace = sandbox.path().join("reason-reader");
+    create_with_flags(&workspace, "Reason Reader", "reason-reader");
+    let bin = sandbox.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    write_executable(
+        &bin.join("cargo"),
+        "#!/bin/sh\necho 'tool detail' >&2\nexit 9\n",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_yydra"))
+        .args(["--message-format=json", "internal", "setup"])
+        .arg(&workspace)
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let events: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let failures: Vec<_> = events
+        .iter()
+        .filter(|event| event["status"] == "fail")
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["schemaVersion"], 2);
+    assert_eq!(failures[0]["code"], "SETUP_CARGO_FETCH");
+    assert_eq!(failures[0]["reasonCode"], "PROCESS_EXIT_FAILED");
+    assert!(
+        !failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("tool detail")
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("tool detail")
+    );
 }

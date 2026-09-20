@@ -171,6 +171,35 @@ impl ReadingQueueApplication for FixtureReadingQueue {
         command: CreateReadingEntryCommand,
     ) -> ApplicationFuture<'a, Result<ReadingQueueEntry, CreateReadingEntryError>> {
         Box::pin(async move {
+            use product_application::StorageCause;
+            use product_domain::DomainValidationError;
+            match command.title.as_str() {
+                "" => return Err(DomainValidationError::EmptyTitle.into()),
+                "fixture-corrupt" => {
+                    return Err(CreateReadingEntryError::Storage {
+                        operation: "restore",
+                        source: StorageCause::Persistence {
+                            source: product_persistence_postgres::PersistenceError::CorruptDomain {
+                                source: DomainValidationError::EmptyTitle,
+                            },
+                        },
+                        backtrace: None,
+                    });
+                }
+                "fixture-rollback" => {
+                    return Err(
+                        CreateReadingEntryError::from(DomainValidationError::EmptyTitle)
+                            .with_rollback(Err(sqlx::Error::PoolClosed)),
+                    );
+                }
+                "fixture-commit" => {
+                    return Err(CreateReadingEntryError::CommitOutcomeUnknown {
+                        source: sqlx::Error::PoolClosed,
+                        backtrace: None,
+                    });
+                }
+                _ => {}
+            }
             Ok(ReadingQueueEntry {
                 id: "opaque-contract-entry".to_owned(),
                 title: command.title,
@@ -186,12 +215,13 @@ impl ReadingQueueApplication for FixtureReadingQueue {
     ) -> ApplicationFuture<'a, Result<ReadingQueuePage, ListReadingEntriesError>> {
         Box::pin(async move {
             if query.cursor.as_deref() == Some("invalid") {
-                return Err(ListReadingEntriesError::InvalidCursor);
+                return Err(ListReadingEntriesError::InvalidCursor {
+                    source: product_application::CursorCodecError::InvalidEnvelope,
+                });
             }
             if query.status.as_deref() == Some("invented") {
                 return Err(ListReadingEntriesError::InvalidInput {
-                    field: "status",
-                    message: "must be all, queued, or completed",
+                    source: product_domain::DomainValidationError::InvalidStatus,
                 });
             }
             Ok(ReadingQueuePage {
@@ -214,8 +244,19 @@ impl ReadingQueueApplication for FixtureReadingQueue {
             match command.id.as_str() {
                 "missing" => Err(ChangeReadingEntryStateError::NotFound { id: command.id }),
                 "conflict" => Err(ChangeReadingEntryStateError::Conflict {
-                    current: ReadingQueueEntryState::Completed,
-                    requested: command.target,
+                    source: {
+                        use product_domain::{
+                            ReadingEntry, ReadingEntryId, ReadingEntryTitle, SourceUrl,
+                        };
+                        let mut entry = ReadingEntry::restore(
+                            ReadingEntryId::parse("fixture").unwrap(),
+                            ReadingEntryTitle::parse("fixture").unwrap(),
+                            SourceUrl::parse("https://example.test").unwrap(),
+                            "completed",
+                        )
+                        .unwrap();
+                        entry.complete().unwrap_err()
+                    },
                 }),
                 _ => Ok(ReadingQueueEntry {
                     id: command.id,
@@ -268,7 +309,7 @@ async fn invalid_requests_transitions_and_auth_have_stable_problem_semantics() {
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
         unauthorized.headers()[header::WWW_AUTHENTICATE],
-        "Bearer realm=\"yydra-framework-contract\""
+        "Bearer realm=\"yydra-product\""
     );
     assert_problem_type(
         unauthorized,
@@ -431,7 +472,7 @@ async fn conformance_fixture_rejects_undocumented_status_content_type_and_body()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .header(header::CONTENT_TYPE, "application/problem+json")
         .body(Body::from(
-            r#"{"type":"https://yydra.dev/problems/example","title":"Example","status":500}"#,
+            r#"{"type":"https://yydra.dev/problems/example","title":"Example","status":500,"requestId":"fixture-request"}"#,
         ))
         .expect("build declared Problem fixture");
     assert_response_contract(&document, operation, declared_problem)
@@ -778,4 +819,47 @@ fn is_exact_decimal(value: &str) -> bool {
         && fraction.is_none_or(|fraction| {
             !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
         })
+}
+
+#[tokio::test]
+async fn rule_context_and_transaction_failures_control_public_mapping() {
+    for (title, expected) in [
+        ("", 422),
+        ("fixture-corrupt", 500),
+        ("fixture-rollback", 500),
+        ("fixture-commit", 500),
+    ] {
+        let response = fixture_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/reading-queue/entries")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"title": title, "sourceUrl": "https://example.test"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected, "{title}");
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["requestId"], request_id);
+        if expected == 422 {
+            assert_eq!(
+                body["violations"],
+                serde_json::json!([{"field":"title","code":"empty"}])
+            );
+        } else {
+            assert_eq!(body["type"], "https://yydra.dev/problems/internal");
+            assert!(body.get("violations").is_none());
+            assert!(body.get("detail").is_none());
+        }
+    }
 }

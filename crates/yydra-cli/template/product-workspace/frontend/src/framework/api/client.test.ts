@@ -167,6 +167,7 @@ describe("Framework Public API facade", () => {
   it("uses structured conflict and authentication Problems without parsing prose", async () => {
     const conflict = {
       type: "https://yydra.dev/problems/reading-entry-transition-conflict",
+      requestId: "test-request",
       title: "arbitrary display prose",
       status: 409,
     };
@@ -210,6 +211,7 @@ describe("Framework Public API facade", () => {
         new Response(
           JSON.stringify({
             type: "https://yydra.dev/problems/authentication-required",
+            requestId: "test-request",
             title: "display only",
             status: 401,
           }),
@@ -228,6 +230,7 @@ describe("Framework Public API facade", () => {
       kind: "problem",
       problem: {
         type: "https://yydra.dev/problems/authentication-required",
+        requestId: "test-request",
         status: 401,
       },
     });
@@ -240,6 +243,7 @@ describe("Framework Public API facade", () => {
         new Response(
           JSON.stringify({
             type: "https://yydra.dev/problems/authentication-required",
+            requestId: "test-request",
             title: "Authentication required",
             status: 401,
           }),
@@ -261,6 +265,7 @@ describe("Framework Public API facade", () => {
       Response.json(
         {
           type: "https://yydra.dev/problems/invalid-reading-entry",
+          requestId: "test-request",
           title: "Invalid reading entry",
           status: 422,
           detail: "title must not be empty",
@@ -316,7 +321,7 @@ describe("Framework Public API facade", () => {
       type: "https://yydra.dev/problems/example",
       title: "Example failure",
       status: 500,
-      traceId: "trace-public",
+      requestId: "request-public",
       additiveExtension: "accepted",
     };
     const client = createPublicApiClient({

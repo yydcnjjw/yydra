@@ -111,6 +111,7 @@ _Avoid_: GitHub login, provider access token, cross-product session
 
 **Product Domain**:
 The product-specific concepts, rules, and state transitions that distinguish one Product Workspace from another and remain expressed as normal source code.
+Its rule rejections describe disallowed product operations; dependency failures and damaged stored state are separate operational failures.
 _Avoid_: Capability, infrastructure, application code
 
 **Product Presentation**:

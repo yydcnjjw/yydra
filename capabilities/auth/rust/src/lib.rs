@@ -3,6 +3,9 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod error;
+pub use error::{AuthError, ErrorKind};
+pub use yydra_http::ProblemDetails;
 #[cfg(feature = "test-provider")]
 pub mod test_provider;
 pub use config::AuthConfig;
@@ -94,7 +97,7 @@ impl AuthnBackend for Backend {
         .set_pkce_verifier(PkceCodeVerifier::new(credentials.verifier))
         .request_async(&self.0.http)
         .await
-        .map_err(|_| AuthError::provider())?;
+        .map_err(|source| AuthError::provider_source("provider.exchange_token", source))?;
         #[derive(Deserialize)]
         struct GitHubIdentity {
             id: u64,
@@ -108,12 +111,12 @@ impl AuthnBackend for Backend {
             .header("X-GitHub-Api-Version", "2026-03-10")
             .send()
             .await
-            .map_err(|_| AuthError::provider())?
+            .map_err(|source| AuthError::provider_source("provider.fetch_identity", source))?
             .error_for_status()
-            .map_err(|_| AuthError::provider())?
+            .map_err(|source| AuthError::provider_source("provider.identity_status", source))?
             .json::<GitHubIdentity>()
             .await
-            .map_err(|_| AuthError::provider())?;
+            .map_err(|source| AuthError::provider_source("provider.decode_identity", source))?;
         if identity.id == 0 {
             return Err(AuthError::provider());
         }
@@ -167,7 +170,7 @@ impl AuthService {
             .timeout(std::time::Duration::from_secs(15))
             .user_agent("yydra-auth")
             .build()
-            .map_err(|_| AuthError::configuration())?;
+            .map_err(AuthError::configuration_source)?;
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -201,19 +204,24 @@ impl AuthService {
         let cors = CorsLayer::new()
             .allow_origin(origin)
             .allow_credentials(true)
-            .expose_headers([header::WWW_AUTHENTICATE])
+            .expose_headers([
+                header::WWW_AUTHENTICATE,
+                header::HeaderName::from_static("x-request-id"),
+            ])
             .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::OPTIONS])
             .allow_headers([
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 header::HeaderName::from_static("x-yydra-csrf"),
             ]);
-        product
-            .merge(routes)
-            .layer(middleware::from_fn_with_state(self.clone(), identity))
-            .layer(auth)
-            .layer(middleware::from_fn_with_state(self.clone(), transport))
-            .layer(cors)
+        yydra_http::request_context(
+            product
+                .merge(routes)
+                .layer(middleware::from_fn_with_state(self.clone(), identity))
+                .layer(auth)
+                .layer(middleware::from_fn_with_state(self.clone(), transport))
+                .layer(cors),
+        )
     }
 
     async fn account(&self, id: &str) -> Result<Option<Account>, AuthError> {
@@ -245,7 +253,7 @@ impl AuthService {
         session
             .logout()
             .await
-            .map_err(|_| AuthError::unavailable())?;
+            .map_err(|source| AuthError::session("session.logout", source))?;
         Ok(())
     }
 
@@ -259,7 +267,7 @@ impl AuthService {
         session
             .login(account)
             .await
-            .map_err(|_| AuthError::unavailable())?;
+            .map_err(|source| AuthError::session("session.login", source))?;
         let expires_at =
             OffsetDateTime::now_utc() + Duration::seconds(self.config.lifetime_seconds);
         session
@@ -269,7 +277,7 @@ impl AuthService {
             .session
             .save()
             .await
-            .map_err(|_| AuthError::unavailable())?;
+            .map_err(|source| AuthError::session("session.save", source))?;
         let id = session
             .session
             .id()
@@ -432,7 +440,7 @@ async fn start(
         .session
         .insert("github_binding", &binding)
         .await
-        .map_err(|_| AuthError::unavailable())?;
+        .map_err(|source| AuthError::session("session.store_binding", source))?;
     let client = BasicClient::new(ClientId::new(config.client_id.clone().expect("available")))
         .set_auth_uri(AuthUrl::new(config.authorize_url.clone()).expect("fixed URL"))
         .set_redirect_uri(RedirectUrl::new(config.callback()).expect("validated callback"));
@@ -471,7 +479,7 @@ async fn callback(
         .session
         .get::<String>("github_binding")
         .await
-        .map_err(|_| AuthError::unavailable())?
+        .map_err(|source| AuthError::session("session.load_binding", source))?
         .ok_or_else(AuthError::invalid)?;
     let attempt = sqlx::query_as::<_, Attempt>("DELETE FROM yydra_auth_attempts WHERE state_hash = $1 AND binding_hash = $2 AND expires_at > CURRENT_TIMESTAMP RETURNING verifier, native_challenge")
         .bind(hash(&state)).bind(hash(&binding)).fetch_optional(&service.pool).await?.ok_or_else(AuthError::invalid)?;
@@ -479,7 +487,7 @@ async fn callback(
         .session
         .remove_value("github_binding")
         .await
-        .map_err(|_| AuthError::unavailable())?;
+        .map_err(|source| AuthError::session("session.remove_binding", source))?;
     if query.error.is_some() {
         return Ok(login_failure(
             &service.config,
@@ -498,7 +506,8 @@ async fn callback(
         .await
     {
         Ok(Some(account)) => account,
-        _ => {
+        Err(source) => return Err(AuthError::session("session.authenticate", source)),
+        Ok(None) => {
             return Ok(login_failure(
                 &service.config,
                 attempt.native_challenge.is_some(),
@@ -554,8 +563,8 @@ impl SessionView {
 
 #[utoipa::path(get, path = "/api/v1/auth/session", operation_id = "getProductSession", tag = "auth",
     responses((status = 200, description = "Current product session", body = SessionView, content_type = "application/json"),
-    (status = 401, description = "Invalid credentials or transport", body = AuthProblem, content_type = "application/problem+json"),
-    (status = 503, description = "Session service unavailable", body = AuthProblem, content_type = "application/problem+json")))]
+    (status = 401, description = "Invalid credentials or transport", body = ProblemDetails, content_type = "application/problem+json"),
+    (status = 503, description = "Session service unavailable", body = ProblemDetails, content_type = "application/problem+json")))]
 async fn current_session(
     State(service): State<AuthService>,
     lease: Option<Extension<Lease>>,
@@ -577,9 +586,9 @@ pub struct LogoutView {
 
 #[utoipa::path(post, path = "/api/v1/auth/logout", operation_id = "logoutProductSession", tag = "auth",
     responses((status = 200, description = "Current session revoked", body = LogoutView, content_type = "application/json"),
-    (status = 401, description = "Invalid credentials or transport", body = AuthProblem, content_type = "application/problem+json"),
-    (status = 403, description = "CSRF verification failed", body = AuthProblem, content_type = "application/problem+json"),
-    (status = 503, description = "Session service unavailable", body = AuthProblem, content_type = "application/problem+json")))]
+    (status = 401, description = "Invalid credentials or transport", body = ProblemDetails, content_type = "application/problem+json"),
+    (status = 403, description = "CSRF verification failed", body = ProblemDetails, content_type = "application/problem+json"),
+    (status = 503, description = "Session service unavailable", body = ProblemDetails, content_type = "application/problem+json")))]
 async fn logout(
     State(service): State<AuthService>,
     mut session: LoginSession,
@@ -604,9 +613,9 @@ pub struct NativeSessionView {
 #[utoipa::path(post, path = "/api/v1/auth/native/exchange", operation_id = "exchangeNativeHandoff", tag = "auth",
     request_body(content = HandoffRequest, content_type = "application/json"),
     responses((status = 200, description = "Native product session established", body = NativeSessionView, content_type = "application/json"),
-    (status = 400, description = "Invalid or expired handoff", body = AuthProblem, content_type = "application/problem+json"),
-    (status = 401, description = "Ambiguous credentials", body = AuthProblem, content_type = "application/problem+json"),
-    (status = 503, description = "Session service unavailable", body = AuthProblem, content_type = "application/problem+json")))]
+    (status = 400, description = "Invalid or expired handoff", body = ProblemDetails, content_type = "application/problem+json"),
+    (status = 401, description = "Ambiguous credentials", body = ProblemDetails, content_type = "application/problem+json"),
+    (status = 503, description = "Session service unavailable", body = ProblemDetails, content_type = "application/problem+json")))]
 async fn native_exchange(
     State(service): State<AuthService>,
     mut session: LoginSession,
@@ -637,89 +646,59 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     <AuthApi as utoipa::OpenApi>::openapi()
 }
 
-#[derive(Debug, Clone)]
-pub struct AuthError {
-    status: StatusCode,
-    code: &'static str,
-}
-impl AuthError {
-    fn invalid() -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            code: "invalid-auth-request",
-        }
-    }
-    fn forbidden() -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            code: "csrf-verification-failed",
-        }
-    }
-    fn unauthorized() -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            code: "authentication-required",
-        }
-    }
-    fn unavailable() -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "authentication-unavailable",
-        }
-    }
-    fn configuration() -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "authentication-not-configured",
-        }
-    }
-    fn provider() -> Self {
-        Self {
-            status: StatusCode::BAD_GATEWAY,
-            code: "identity-provider-unavailable",
-        }
-    }
-}
-impl fmt::Display for AuthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code)
-    }
-}
-impl std::error::Error for AuthError {}
-impl From<sqlx::Error> for AuthError {
-    fn from(_: sqlx::Error) -> Self {
-        Self::unavailable()
-    }
-}
-#[derive(Serialize, ToSchema)]
-pub struct AuthProblem {
-    #[serde(rename = "type")]
-    pub type_uri: String,
-    pub title: String,
-    pub status: u16,
-}
+// Transport mapping is deliberately separate from the reusable Rust error type.
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let mut response = (
-            self.status,
-            [
-                (header::CONTENT_TYPE, "application/problem+json"),
-                (header::CACHE_CONTROL, "no-store"),
-                (header::REFERRER_POLICY, "no-referrer"),
-            ],
-            Json(AuthProblem {
-                type_uri: format!("https://yydra.dev/problems/{}", self.code),
-                title: self.code.into(),
-                status: self.status.as_u16(),
-            }),
-        )
-            .into_response();
-        if self.status == StatusCode::UNAUTHORIZED {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static("Bearer realm=\"yydra-product\""),
+        let (status, problem, title) = match self.kind() {
+            ErrorKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "invalid-authentication-request",
+                "Invalid authentication request",
+            ),
+            ErrorKind::AuthenticationRequired => (
+                StatusCode::UNAUTHORIZED,
+                "authentication-required",
+                "Authentication required",
+            ),
+            ErrorKind::CsrfRejected => (
+                StatusCode::FORBIDDEN,
+                "csrf-verification-failed",
+                "CSRF verification failed",
+            ),
+            ErrorKind::Configuration => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "authentication-not-configured",
+                "Authentication not configured",
+            ),
+            ErrorKind::ProviderUnavailable => (
+                StatusCode::BAD_GATEWAY,
+                "identity-provider-unavailable",
+                "Identity provider unavailable",
+            ),
+            ErrorKind::Database | ErrorKind::SessionUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "authentication-unavailable",
+                "Authentication unavailable",
+            ),
+        };
+        let mut response = yydra_http::ProblemResponse::new(ProblemDetails::new(
+            status,
+            format!("https://yydra.dev/problems/{problem}"),
+            title,
+        ));
+        if status.is_server_error() {
+            response = response.technical(
+                self.operation(),
+                self.diagnostic_code(),
+                self.to_string(),
+                &self,
             );
         }
+        let mut response = response.into_response();
+        response.headers_mut().insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
         response
     }
 }

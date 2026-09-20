@@ -30,3 +30,12 @@ hosts. Default sessions have a configurable seven-day absolute lifetime.
 
 The `test-provider` feature supplies a loopback-only controlled provider for
 explicit validation builds. Production assembly leaves this feature disabled.
+
+`AuthError::kind()` exposes a non-exhaustive classification; context selectors and
+implementation fields are private. Match `ErrorKind` for recovery and inspect
+`std::error::Error::source()` only for diagnostics. The HTTP adapter maps these
+errors to shared RFC 9457 Problems from `yydra-http`, with a server-generated
+`requestId` and matching `x-request-id` header. Technical failures are reported
+once with safe operation/reason metadata. Ordinary authentication rejection is
+401 with a challenge; origin/CSRF rejection is 403. Provider failures now produce
+an explicit service Problem; user-declined OAuth flows retain their redirect.

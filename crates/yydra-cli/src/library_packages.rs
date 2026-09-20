@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::{fs, path::Path};
+module_errors!("LIBRARY", [IdentityDrift => "LIBRARY_IDENTITY_DRIFT", SourceIdentity => "LIBRARY_SOURCE_IDENTITY_INVALID"], [SourceWorkspace => crate::source_workspace::Error]);
 
-use anyhow::{Context, Result, bail};
+use std::{fs, path::Path};
 
 use crate::TEMPLATE;
 
@@ -19,27 +19,35 @@ fn template_text(path: &str) -> &str {
 pub(crate) fn verify(root: &Path) -> Result<()> {
     let sources = crate::source_workspace::read(root)?;
     let mut expected: toml::Value = toml::from_str(template_text("Cargo.toml.tmpl"))?;
-    if let Some(sources) = &sources {
-        let path = sources.rust.to_str().context("UTF-8 auth source path")?;
-        expected["workspace"]["dependencies"]["yydra-auth"] = toml::Value::Table(
-            [("path".to_owned(), toml::Value::String(path.to_owned()))]
-                .into_iter()
-                .collect(),
-        );
-    }
     let actual: toml::Value = toml::from_str(&fs::read_to_string(root.join("Cargo.toml"))?)?;
-    if actual
-        .get("workspace")
-        .and_then(|v| v.get("dependencies"))
-        .and_then(|v| v.get("yydra-auth"))
-        != expected
+    for name in ["yydra-auth", "yydra-http"] {
+        if let Some(sources) = &sources {
+            let path = if name == "yydra-auth" {
+                &sources.rust
+            } else {
+                &sources.http
+            };
+            let path = path.to_str().context("UTF-8 library source path")?;
+            expected["workspace"]["dependencies"][name] = toml::Value::Table(
+                [("path".to_owned(), toml::Value::String(path.to_owned()))]
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        if actual
             .get("workspace")
             .and_then(|v| v.get("dependencies"))
-            .and_then(|v| v.get("yydra-auth"))
-    {
-        bail!(
-            "authentication package drift: restore the Distribution's exact yydra-auth version and registry"
-        );
+            .and_then(|v| v.get(name))
+            != expected
+                .get("workspace")
+                .and_then(|v| v.get("dependencies"))
+                .and_then(|v| v.get(name))
+        {
+            fail!(
+                IdentityDrift,
+                "library package drift: restore the Distribution's exact {name} version and registry"
+            );
+        }
     }
     let config: toml::Value = toml::from_str(
         &fs::read_to_string(root.join(".cargo/config.toml"))
@@ -51,7 +59,10 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             .get("registries")
             .and_then(|v| v.get("yydra-local"))
     {
-        bail!("authentication package drift: restore the yydra-local registry configuration");
+        fail!(
+            IdentityDrift,
+            "authentication package drift: restore the yydra-local registry configuration"
+        );
     }
     for manifest in [&actual, &config] {
         if manifest
@@ -59,8 +70,18 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             .and_then(toml::Value::as_table)
             .is_some_and(|packages| {
                 packages.iter().any(|(name, spec)| {
-                    name.rsplit('#').next().unwrap_or(name).split(':').next() == Some("yydra-auth")
-                        || spec.get("package").and_then(toml::Value::as_str) == Some("yydra-auth")
+                    ["yydra-auth", "yydra-http"].contains(
+                        &name
+                            .rsplit('#')
+                            .next()
+                            .unwrap_or(name)
+                            .split(':')
+                            .next()
+                            .unwrap_or(""),
+                    ) || spec
+                        .get("package")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|name| ["yydra-auth", "yydra-http"].contains(&name))
                 })
             })
             || manifest
@@ -72,53 +93,66 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
                         .filter_map(toml::Value::as_table)
                         .any(|packages| {
                             packages.iter().any(|(name, spec)| {
-                                name == "yydra-auth"
-                                    || spec.get("package").and_then(toml::Value::as_str)
-                                        == Some("yydra-auth")
+                                ["yydra-auth", "yydra-http"].contains(&name.as_str())
+                                    || spec
+                                        .get("package")
+                                        .and_then(toml::Value::as_str)
+                                        .is_some_and(|name| {
+                                            ["yydra-auth", "yydra-http"].contains(&name)
+                                        })
                             })
                         })
                 })
         {
-            bail!(
+            fail!(
+                IdentityDrift,
                 "authentication package drift: yydra-auth cannot be replaced by a local or Git override"
             );
         }
     }
     let lock: toml::Value = toml::from_str(&fs::read_to_string(root.join("Cargo.lock"))?)?;
     let mut expected_lock: toml::Value = toml::from_str(template_text("Cargo.lock"))?;
-    if let Some(sources) = &sources {
-        let source: toml::Value =
-            toml::from_str(&fs::read_to_string(sources.rust.join("Cargo.toml"))?)?;
-        if source["package"]["name"].as_str() != Some("yydra-auth") {
-            bail!("source auth package identity mismatch");
-        }
-        for entry in expected_lock["package"]
-            .as_array_mut()
-            .context("template Cargo packages")?
-        {
-            if entry["name"].as_str() == Some("yydra-auth") {
-                entry["version"] = source["package"]["version"].clone();
-                let entry = entry.as_table_mut().context("Cargo package table")?;
-                entry.remove("source");
-                entry.remove("checksum");
+    for name in ["yydra-auth", "yydra-http"] {
+        if let Some(sources) = &sources {
+            let path = if name == "yydra-auth" {
+                &sources.rust
+            } else {
+                &sources.http
+            };
+            let source: toml::Value =
+                toml::from_str(&fs::read_to_string(path.join("Cargo.toml"))?)?;
+            if source["package"]["name"].as_str() != Some(name) {
+                fail!(SourceIdentity, "source {name} package identity mismatch");
+            }
+            for entry in expected_lock["package"]
+                .as_array_mut()
+                .context("template Cargo packages")?
+            {
+                if entry["name"].as_str() == Some(name) {
+                    entry["version"] = source["package"]["version"].clone();
+                    let entry = entry.as_table_mut().context("Cargo package table")?;
+                    entry.remove("source");
+                    entry.remove("checksum");
+                }
             }
         }
-    }
-    let auth_entries = |lock: &toml::Value| {
-        lock.get("package")
-            .and_then(toml::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|entry| entry.get("name").and_then(toml::Value::as_str) == Some("yydra-auth"))
-            .map(|entry| {
-                ["name", "version", "source", "checksum"].map(|key| entry.get(key).cloned())
-            })
-            .collect::<Vec<_>>()
-    };
-    if auth_entries(&lock) != auth_entries(&expected_lock) || auth_entries(&lock).len() != 1 {
-        bail!(
-            "authentication package drift: restore the locked yydra-auth version, source and checksum"
-        );
+        let entries = |lock: &toml::Value| {
+            lock.get("package")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|entry| entry.get("name").and_then(toml::Value::as_str) == Some(name))
+                .map(|entry| {
+                    ["name", "version", "source", "checksum"].map(|key| entry.get(key).cloned())
+                })
+                .collect::<Vec<_>>()
+        };
+        if entries(&lock) != entries(&expected_lock) || entries(&lock).len() != 1 {
+            fail!(
+                IdentityDrift,
+                "library package drift: restore the locked {name} version, source and checksum"
+            );
+        }
     }
 
     let package: serde_json::Value =
@@ -136,7 +170,10 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             .collect::<Vec<_>>()
     };
     if scopes(&npmrc) != scopes(template_text("frontend/.npmrc")) {
-        bail!("authentication package drift: restore the @yydra npm registry");
+        fail!(
+            IdentityDrift,
+            "authentication package drift: restore the @yydra npm registry"
+        );
     }
     let npm_lock: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("frontend/package-lock.json"))?)?;
@@ -168,12 +205,18 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
                 || metadata["name"] != name
                 || npm_lock["packages"][resolved]["version"] != metadata["version"]
             {
-                bail!("{label} source dependency drift; regenerate the source Workspace");
+                fail!(
+                    IdentityDrift,
+                    "{label} source dependency drift; regenerate the source Workspace"
+                );
             }
             continue;
         }
         if package["dependencies"][name] != expected_package["dependencies"][name] {
-            bail!("{label} package drift: restore the exact {name} version");
+            fail!(
+                IdentityDrift,
+                "{label} package drift: restore the exact {name} version"
+            );
         }
         let key = format!("node_modules/{name}");
         let entry = &npm_lock["packages"][&key];
@@ -186,7 +229,10 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             || npm_lock["packages"][""]["dependencies"][name]
                 != expected_package["dependencies"][name]
         {
-            bail!("{label} package drift: restore the locked {name} package and integrity");
+            fail!(
+                IdentityDrift,
+                "{label} package drift: restore the locked {name} package and integrity"
+            );
         }
     }
     Ok(())

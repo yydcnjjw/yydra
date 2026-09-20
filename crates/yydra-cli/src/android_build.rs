@@ -2,8 +2,10 @@
 
 //! Local, account-free Android generation and APK assembly for moon product build tasks.
 
+module_errors!("ANDROID", [AndroidReleaseBuildFailed => "ANDROID_RELEASE_BUILD_FAILED", AndroidReleaseDependencyCacheSeedInvalid => "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID", AndroidReleaseOutputMissing => "ANDROID_RELEASE_OUTPUT_MISSING", NativeGenerationDirtyOutput => "NATIVE_GENERATION_DIRTY_OUTPUT", NativeGenerationFailed => "NATIVE_GENERATION_FAILED", NativeGenerationMutatedAuthoredInputs => "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS", NativeGenerationOutputMissing => "NATIVE_GENERATION_OUTPUT_MISSING"], [Workspace => crate::Error, Process => crate::process::Error]);
+
 use crate::{install_shutdown_handler, npm_program};
-use anyhow::{Context, Result};
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -14,19 +16,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-#[derive(Debug)]
-struct BuildError {
-    code: &'static str,
-    message: String,
-}
-impl BuildError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
-    }
-}
 struct BuildContext<'a> {
     root: &'a Path,
     run_dir: &'a Path,
@@ -40,11 +29,11 @@ impl BuildContext<'_> {
         program: &str,
         arguments: &[&str],
         environment: &[(&str, &str)],
-        failure_code: &'static str,
-    ) -> std::result::Result<(), BuildError> {
+        failure_code: ErrorKind,
+    ) -> std::result::Result<(), Error> {
         let output = self.capture(directory, program, arguments, environment)?;
         if !output.status.success() {
-            return Err(BuildError::new(
+            return Err(Error::rejected(
                 failure_code,
                 format!(
                     "{program} {} exited with {}",
@@ -61,7 +50,7 @@ impl BuildContext<'_> {
         program: &str,
         arguments: &[&str],
         environment: &[(&str, &str)],
-    ) -> std::result::Result<std::process::Output, BuildError> {
+    ) -> std::result::Result<std::process::Output, Error> {
         let display = display_command(
             self.root,
             self.run_dir,
@@ -78,12 +67,8 @@ impl BuildContext<'_> {
             .envs(environment.iter().copied())
             .env("CARGO_TARGET_DIR", self.root.join("target"))
             .current_dir(directory);
-        let output = crate::process::capture(command, self.shutdown, None).map_err(|error| {
-            BuildError::new(
-                "ANDROID_BUILD_PROCESS_FAILED",
-                format!("{program}: {error:#}"),
-            )
-        })?;
+        let output = crate::process::capture(command, self.shutdown, None)
+            .map_err(|error| Error::context(program, error))?;
         self.log
             .write_all(&output.stdout)
             .map_err(build_io_failure)?;
@@ -94,8 +79,8 @@ impl BuildContext<'_> {
         Ok(output)
     }
 }
-fn build_io_failure(error: impl std::fmt::Display) -> BuildError {
-    BuildError::new("ANDROID_BUILD_IO_FAILED", error.to_string())
+fn build_io_failure(error: std::io::Error) -> Error {
+    Error::context("file operation failed", error)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,7 +123,7 @@ struct AccountFreeAndroidEnvironment {
 }
 
 impl AccountFreeAndroidEnvironment {
-    fn prepare(run_dir: &Path) -> std::result::Result<Self, BuildError> {
+    fn prepare(run_dir: &Path) -> std::result::Result<Self, Error> {
         let root = run_dir.join("scratch/android-account-free");
         let home = root.join("home");
         let xdg_config_home = root.join("xdg-config");
@@ -199,14 +184,14 @@ impl AccountFreeAndroidEnvironment {
     }
 }
 
-fn seed_gradle_dependency_cache(gradle_user_home: &Path) -> std::result::Result<(), BuildError> {
+fn seed_gradle_dependency_cache(gradle_user_home: &Path) -> std::result::Result<(), Error> {
     let Some(seed) = std::env::var_os("YYDRA_GRADLE_DEPENDENCY_CACHE_SEED") else {
         return Ok(());
     };
     let seed = PathBuf::from(seed);
     if !seed.is_absolute() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "YYDRA_GRADLE_DEPENDENCY_CACHE_SEED must be an absolute path",
         ));
     }
@@ -219,8 +204,8 @@ fn seed_gradle_dependency_cache(gradle_user_home: &Path) -> std::result::Result<
         return if completion_marker.is_file() {
             Ok(())
         } else {
-            Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 format!(
                     "isolated Gradle dependency cache '{}' exists without a completed seed copy",
                     destination.display()
@@ -237,7 +222,7 @@ fn seed_gradle_dependency_cache(gradle_user_home: &Path) -> std::result::Result<
 fn copy_gradle_dependency_cache_tree(
     source: &Path,
     destination: &Path,
-) -> std::result::Result<(), BuildError> {
+) -> std::result::Result<(), Error> {
     preflight_gradle_dependency_cache_tree(source, GradleCacheSeedLimits::DEFAULT)?;
     let mut usage = GradleCacheSeedUsage::default();
     copy_validated_gradle_dependency_cache_tree(
@@ -275,36 +260,33 @@ struct GradleCacheSeedUsage {
 fn preflight_gradle_dependency_cache_tree(
     source: &Path,
     limits: GradleCacheSeedLimits,
-) -> std::result::Result<(u64, u64), BuildError> {
+) -> std::result::Result<(u64, u64), Error> {
     let mut pending = vec![source.to_path_buf()];
     let mut entries = 0_u64;
     let mut files = 0_u64;
     let mut total_bytes = 0_u64;
     while let Some(path) = pending.pop() {
         entries = entries.checked_add(1).ok_or_else(|| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed entry count overflow",
             )
         })?;
         if entries > limits.max_entries {
-            return Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            return Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed exceeds its bounded entry-count limit",
             ));
         }
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                format!(
-                    "inspect Gradle dependency cache seed '{}': {error}",
-                    path.display()
-                ),
+            Error::context(
+                format!("inspect Gradle dependency cache seed '{}'", path.display()),
+                error,
             )
         })?;
         if metadata.file_type().is_symlink() {
-            return Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            return Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 format!(
                     "Gradle dependency cache seed '{}' contains a symlink",
                     path.display()
@@ -313,30 +295,24 @@ fn preflight_gradle_dependency_cache_tree(
         }
         if metadata.is_dir() {
             let directory = fs::read_dir(&path).map_err(|error| {
-                BuildError::new(
-                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                    format!(
-                        "read Gradle dependency cache seed '{}': {error}",
-                        path.display()
-                    ),
+                Error::context(
+                    format!("read Gradle dependency cache seed '{}'", path.display()),
+                    error,
                 )
             })?;
             let remaining = limits.max_entries.saturating_sub(entries);
             let mut children = Vec::new();
             for child in directory {
                 if u64::try_from(children.len()).unwrap_or(u64::MAX) >= remaining {
-                    return Err(BuildError::new(
-                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    return Err(Error::rejected(
+                        ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                         "Gradle dependency cache seed exceeds its bounded entry-count limit",
                     ));
                 }
                 children.push(child.map_err(|error| {
-                    BuildError::new(
-                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                        format!(
-                            "read Gradle dependency cache seed '{}': {error}",
-                            path.display()
-                        ),
+                    Error::context(
+                        format!("read Gradle dependency cache seed '{}'", path.display()),
+                        error,
                     )
                 })?);
             }
@@ -345,8 +321,8 @@ fn preflight_gradle_dependency_cache_tree(
                 let name = child.file_name();
                 if name == OsStr::new("gc.properties") || name.to_string_lossy().ends_with(".lock")
                 {
-                    return Err(BuildError::new(
-                        "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                    return Err(Error::rejected(
+                        ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                         format!(
                             "Gradle dependency cache seed '{}' must omit locks and gc.properties",
                             child.path().display()
@@ -358,8 +334,8 @@ fn preflight_gradle_dependency_cache_tree(
             continue;
         }
         if !metadata.is_file() {
-            return Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            return Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 format!(
                     "Gradle dependency cache seed '{}' contains an unsupported file type",
                     path.display()
@@ -367,14 +343,14 @@ fn preflight_gradle_dependency_cache_tree(
             ));
         }
         files = files.checked_add(1).ok_or_else(|| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed file count overflow",
             )
         })?;
         total_bytes = total_bytes.checked_add(metadata.len()).ok_or_else(|| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed byte count overflow",
             )
         })?;
@@ -382,8 +358,8 @@ fn preflight_gradle_dependency_cache_tree(
             || metadata.len() > limits.max_file_bytes
             || total_bytes > limits.max_total_bytes
         {
-            return Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            return Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 format!(
                     "Gradle dependency cache seed exceeds its bounded copy budget (files {files}/{}, file bytes {}/{}, total bytes {total_bytes}/{})",
                     limits.max_files,
@@ -402,31 +378,31 @@ fn copy_validated_gradle_dependency_cache_tree(
     destination: &Path,
     limits: GradleCacheSeedLimits,
     usage: &mut GradleCacheSeedUsage,
-) -> std::result::Result<(), BuildError> {
+) -> std::result::Result<(), Error> {
     usage.entries = usage.entries.checked_add(1).ok_or_else(|| {
-        BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "Gradle dependency cache seed entry count overflow during copy",
         )
     })?;
     if usage.entries > limits.max_entries {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "Gradle dependency cache seed exceeds its bounded entry-count limit during copy",
         ));
     }
     let metadata = fs::symlink_metadata(source).map_err(|error| {
-        BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        Error::context(
             format!(
-                "inspect Gradle dependency cache seed '{}': {error}",
+                "inspect Gradle dependency cache seed '{}'",
                 source.display()
             ),
+            error,
         )
     })?;
     if metadata.file_type().is_symlink() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             format!(
                 "Gradle dependency cache seed '{}' contains a symlink",
                 source.display()
@@ -436,30 +412,24 @@ fn copy_validated_gradle_dependency_cache_tree(
     if metadata.is_dir() {
         create_private_dir_all(destination).map_err(build_io_failure)?;
         let directory = fs::read_dir(source).map_err(|error| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                format!(
-                    "read Gradle dependency cache seed '{}': {error}",
-                    source.display()
-                ),
+            Error::context(
+                format!("read Gradle dependency cache seed '{}'", source.display()),
+                error,
             )
         })?;
         let remaining = limits.max_entries.saturating_sub(usage.entries);
         let mut children = Vec::new();
         for child in directory {
             if u64::try_from(children.len()).unwrap_or(u64::MAX) >= remaining {
-                return Err(BuildError::new(
-                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                return Err(Error::rejected(
+                    ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                     "Gradle dependency cache seed exceeds its bounded entry-count limit during copy",
                 ));
             }
             children.push(child.map_err(|error| {
-                BuildError::new(
-                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                    format!(
-                        "read Gradle dependency cache seed '{}': {error}",
-                        source.display()
-                    ),
+                Error::context(
+                    format!("read Gradle dependency cache seed '{}'", source.display()),
+                    error,
                 )
             })?);
         }
@@ -467,8 +437,8 @@ fn copy_validated_gradle_dependency_cache_tree(
         for child in children {
             let name = child.file_name();
             if name == OsStr::new("gc.properties") || name.to_string_lossy().ends_with(".lock") {
-                return Err(BuildError::new(
-                    "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+                return Err(Error::rejected(
+                    ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                     format!(
                         "Gradle dependency cache seed '{}' must omit locks and gc.properties",
                         child.path().display()
@@ -485,8 +455,8 @@ fn copy_validated_gradle_dependency_cache_tree(
         return Ok(());
     }
     if !metadata.is_file() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             format!(
                 "Gradle dependency cache seed '{}' contains an unsupported file type",
                 source.display()
@@ -494,24 +464,21 @@ fn copy_validated_gradle_dependency_cache_tree(
         ));
     }
     usage.files = usage.files.checked_add(1).ok_or_else(|| {
-        BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "Gradle dependency cache seed file count overflow during copy",
         )
     })?;
     if usage.files > limits.max_files || metadata.len() > limits.max_file_bytes {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "Gradle dependency cache seed exceeds its bounded file-count or per-file limit during copy",
         ));
     }
     let mut input = File::open(source).map_err(|error| {
-        BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-            format!(
-                "open Gradle dependency cache seed '{}': {error}",
-                source.display()
-            ),
+        Error::context(
+            format!("open Gradle dependency cache seed '{}'", source.display()),
+            error,
         )
     })?;
     let mut output = create_private_file(destination).map_err(build_io_failure)?;
@@ -519,12 +486,9 @@ fn copy_validated_gradle_dependency_cache_tree(
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = input.read(&mut buffer).map_err(|error| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
-                format!(
-                    "read Gradle dependency cache seed '{}': {error}",
-                    source.display()
-                ),
+            Error::context(
+                format!("read Gradle dependency cache seed '{}'", source.display()),
+                error,
             )
         })?;
         if read == 0 {
@@ -532,20 +496,20 @@ fn copy_validated_gradle_dependency_cache_tree(
         }
         let read = u64::try_from(read).unwrap_or(u64::MAX);
         copied = copied.checked_add(read).ok_or_else(|| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed file byte count overflow during copy",
             )
         })?;
         usage.total_bytes = usage.total_bytes.checked_add(read).ok_or_else(|| {
-            BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed total byte count overflow during copy",
             )
         })?;
         if copied > limits.max_file_bytes || usage.total_bytes > limits.max_total_bytes {
-            return Err(BuildError::new(
-                "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+            return Err(Error::rejected(
+                ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
                 "Gradle dependency cache seed grew beyond its bounded byte budget during copy",
             ));
         }
@@ -554,8 +518,8 @@ fn copy_validated_gradle_dependency_cache_tree(
             .map_err(build_io_failure)?;
     }
     if copied != metadata.len() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseDependencyCacheSeedInvalid,
             "Gradle dependency cache seed changed while it was copied",
         ));
     }
@@ -598,12 +562,12 @@ fn account_free_gradle_options(proxy: Option<&str>) -> String {
     options
 }
 
-fn generate_android_host(context: &mut BuildContext<'_>) -> std::result::Result<(), BuildError> {
+fn generate_android_host(context: &mut BuildContext<'_>) -> std::result::Result<(), Error> {
     let frontend = context.root.join("frontend");
     let android = frontend.join("android");
     if android.exists() {
-        return Err(BuildError::new(
-            "NATIVE_GENERATION_DIRTY_OUTPUT",
+        return Err(Error::rejected(
+            ErrorKind::NativeGenerationDirtyOutput,
             "generated frontend/android output existed before clean generation",
         ));
     }
@@ -615,19 +579,19 @@ fn generate_android_host(context: &mut BuildContext<'_>) -> std::result::Result<
         npm_program(),
         &["run", "--ignore-scripts", "generate:android"],
         &environment,
-        "NATIVE_GENERATION_FAILED",
+        ErrorKind::NativeGenerationFailed,
     );
     let authored_after = workspace_inputs(context.root)?;
     if authored_before != authored_after {
-        Err(BuildError::new(
-            "NATIVE_GENERATION_MUTATED_AUTHORED_INPUTS",
+        Err(Error::rejected(
+            ErrorKind::NativeGenerationMutatedAuthoredInputs,
             describe_input_drift(&authored_before, &authored_after),
         ))
     } else if let Err(failure) = command_result {
         Err(failure)
     } else if !complete_android_host(&android) {
-        Err(BuildError::new(
-            "NATIVE_GENERATION_OUTPUT_MISSING",
+        Err(Error::rejected(
+            ErrorKind::NativeGenerationOutputMissing,
             "Expo prebuild succeeded without a complete frontend/android host (required: gradlew, settings.gradle or settings.gradle.kts, and app/build.gradle or app/build.gradle.kts)",
         ))
     } else {
@@ -646,18 +610,15 @@ fn complete_android_host(android: &Path) -> bool {
             .any(|path| android.join(path).is_file())
 }
 
-fn remove_android_host(root: &Path) -> std::result::Result<(), BuildError> {
+fn remove_android_host(root: &Path) -> std::result::Result<(), Error> {
     let android = root.join("frontend/android");
     if !android.exists() {
         return Ok(());
     }
     fs::remove_dir_all(&android).map_err(|error| {
-        BuildError::new(
-            "NATIVE_GENERATION_CLEANUP_FAILED",
-            format!(
-                "remove generated Android host '{}': {error}",
-                android.display()
-            ),
+        Error::context(
+            format!("remove generated Android host '{}'", android.display()),
+            error,
         )
     })
 }
@@ -665,7 +626,7 @@ fn remove_android_host(root: &Path) -> std::result::Result<(), BuildError> {
 /// Generate a fresh native host and retain its release APK in the Product Workspace.
 pub(crate) fn build_android_artifact(root: &Path) -> Result<PathBuf> {
     let shutdown = install_shutdown_handler().context("install Android build shutdown handler")?;
-    let result = (|| -> std::result::Result<PathBuf, BuildError> {
+    (|| -> std::result::Result<PathBuf, Error> {
         let artifact_root = root.join("frontend/.expo/yydra-build");
         create_private_dir_all(&artifact_root).map_err(build_io_failure)?;
         // These fixed files describe this invocation; keep reusable caches intact.
@@ -687,15 +648,14 @@ pub(crate) fn build_android_artifact(root: &Path) -> Result<PathBuf> {
         generate_android_host(&mut context)?;
         let account_free = AccountFreeAndroidEnvironment::prepare(&artifact_root)?;
         assemble_android_release(&mut context, &artifact_root, &account_free.gradle())
-    })();
-    result.map_err(|failure| anyhow::anyhow!("{}: {}", failure.code, failure.message))
+    })()
 }
 
 fn assemble_android_release(
     context: &mut BuildContext<'_>,
     artifact_root: &Path,
     environment: &[(&str, &str)],
-) -> std::result::Result<PathBuf, BuildError> {
+) -> std::result::Result<PathBuf, Error> {
     let android = context.root.join("frontend/android");
     let concurrency_init_path = artifact_root.join("gradle-concurrency.init.gradle");
     write_gradle_concurrency_init_script(&concurrency_init_path)?;
@@ -714,8 +674,8 @@ fn assemble_android_release(
         environment,
     )?;
     if !resolved.status.success() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_BUILD_FAILED",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseBuildFailed,
             format!(
                 "the bounded Gradle release invocation exited with {}: {}",
                 resolved.status,
@@ -725,8 +685,8 @@ fn assemble_android_release(
     }
     let source = android.join("app/build/outputs/apk/release/app-release.apk");
     if !source.is_file() {
-        return Err(BuildError::new(
-            "ANDROID_RELEASE_OUTPUT_MISSING",
+        return Err(Error::rejected(
+            ErrorKind::AndroidReleaseOutputMissing,
             format!(
                 "Gradle succeeded without producing the required release APK at '{}'",
                 source.display()
@@ -736,7 +696,7 @@ fn assemble_android_release(
     Ok(source)
 }
 
-fn write_gradle_concurrency_init_script(path: &Path) -> std::result::Result<(), BuildError> {
+fn write_gradle_concurrency_init_script(path: &Path) -> std::result::Result<(), Error> {
     let mut file = create_private_file(path).map_err(build_io_failure)?;
     file.write_all(
         br#"def isolatedHome = System.getenv('HOME')
@@ -762,7 +722,7 @@ gradle.afterProject { candidate, state ->
     file.flush().map_err(build_io_failure)
 }
 
-fn workspace_inputs(root: &Path) -> std::result::Result<InputInventory, BuildError> {
+fn workspace_inputs(root: &Path) -> std::result::Result<InputInventory, Error> {
     let mut inputs = BTreeMap::new();
     collect_workspace_inputs(root, root, &mut inputs)?;
     Ok(inputs)
@@ -772,18 +732,12 @@ fn collect_workspace_inputs(
     root: &Path,
     directory: &Path,
     inputs: &mut InputInventory,
-) -> std::result::Result<(), BuildError> {
-    let entries = fs::read_dir(directory).map_err(|error| {
-        BuildError::new(
-            "ANDROID_BUILD_INPUT_INVENTORY_FAILED",
-            format!("read '{}': {error}", directory.display()),
-        )
-    })?;
+) -> std::result::Result<(), Error> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| Error::context(format!("read '{}'", directory.display()), error))?;
     for entry in entries {
         let path = entry
-            .map_err(|error| {
-                BuildError::new("ANDROID_BUILD_INPUT_INVENTORY_FAILED", error.to_string())
-            })?
+            .map_err(|error| Error::context("file operation failed", error))?
             .path();
         let relative = path
             .strip_prefix(root)
@@ -791,16 +745,11 @@ fn collect_workspace_inputs(
         if excluded_input(relative) {
             continue;
         }
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            BuildError::new(
-                "ANDROID_BUILD_INPUT_INVENTORY_FAILED",
-                format!("inspect '{}': {error}", path.display()),
-            )
-        })?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| Error::context(format!("inspect '{}'", path.display()), error))?;
         if metadata.file_type().is_symlink() {
-            let target = fs::read_link(&path).map_err(|error| {
-                BuildError::new("ANDROID_BUILD_INPUT_INVENTORY_FAILED", error.to_string())
-            })?;
+            let target = fs::read_link(&path)
+                .map_err(|error| Error::context("file operation failed", error))?;
             inputs.insert(
                 relative.to_path_buf(),
                 InputEntry {
@@ -823,10 +772,7 @@ fn collect_workspace_inputs(
                 InputEntry {
                     kind: InputKind::File,
                     bytes: fs::read(&path).map_err(|error| {
-                        BuildError::new(
-                            "ANDROID_BUILD_INPUT_INVENTORY_FAILED",
-                            format!("read '{}': {error}", path.display()),
-                        )
+                        Error::context(format!("read '{}'", path.display()), error)
                     })?,
                 },
             );
@@ -989,7 +935,7 @@ mod tests {
         let failure = copy_gradle_dependency_cache_tree(&source, &destination)
             .expect_err("lock files must be rejected");
         assert_eq!(
-            failure.code,
+            failure.code(),
             "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
         );
 
@@ -1009,7 +955,7 @@ mod tests {
             let failure = copy_gradle_dependency_cache_tree(&symlink_source, &symlink_destination)
                 .expect_err("symlinks must be rejected");
             assert_eq!(
-                failure.code,
+                failure.code(),
                 "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
             );
         }
@@ -1033,7 +979,10 @@ mod tests {
             },
         )
         .expect_err("file-count overflow must fail closed");
-        assert_eq!(files.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
+        assert_eq!(
+            files.code(),
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
+        );
 
         let bytes = preflight_gradle_dependency_cache_tree(
             &source,
@@ -1045,7 +994,10 @@ mod tests {
             },
         )
         .expect_err("per-file overflow must fail closed");
-        assert_eq!(bytes.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
+        assert_eq!(
+            bytes.code(),
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
+        );
 
         let mut usage = GradleCacheSeedUsage::default();
         let copied = copy_validated_gradle_dependency_cache_tree(
@@ -1060,6 +1012,9 @@ mod tests {
             &mut usage,
         )
         .expect_err("the copy itself must enforce the total-byte budget");
-        assert_eq!(copied.code, "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID");
+        assert_eq!(
+            copied.code(),
+            "ANDROID_RELEASE_DEPENDENCY_CACHE_SEED_INVALID"
+        );
     }
 }

@@ -70,6 +70,7 @@ export interface FrameworkRuntimeDiagnostic {
   failureKind: FrameworkFailureKind;
   operation: string;
   retryable: boolean;
+  requestId?: string;
 }
 
 export type FrameworkDiagnosticSink = (
@@ -122,6 +123,9 @@ export function createFrameworkQueryClient(
       failureKind: frameworkFailureKind(error),
       operation,
       retryable: isTransportFailure(error),
+      ...(isFrameworkFailure(error) && error.kind === "problem"
+        ? { requestId: error.problem.requestId }
+        : {}),
     });
   };
   return new QueryClient({

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+module_errors!("BUILD", [OutputMissing => "BUILD_OUTPUT_MISSING", ChildExited => "BUILD_PROCESS_EXIT_FAILED"], [Workspace => crate::Error, Android => crate::android_build::Error]);
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use serde_json::Value;
 
@@ -41,8 +42,8 @@ pub(crate) fn build(
             Some(&root),
             Some("fix the reported build input or tool failure and rerun `moon run product:build`"),
             || match target {
-                BuildTarget::Server => build_server(&root),
-                BuildTarget::H5 => build_h5(&root),
+                BuildTarget::Server => Ok(build_server(&root)?),
+                BuildTarget::H5 => Ok(build_h5(&root)?),
                 BuildTarget::Android => {
                     run(
                         &root.join("frontend"),
@@ -50,11 +51,12 @@ pub(crate) fn build(
                         &["run", "typecheck"],
                         "BUILD_FRONTEND_TYPECHECK_FAILED",
                     )?;
-                    crate::android_build::build_android_artifact(&root)
+                    Ok(crate::android_build::build_android_artifact(&root)?)
                 }
             },
         )?;
         reporter.emit(Diagnostic {
+            reason_code: None,
             phase,
             code: "BUILD_ARTIFACT_READY",
             severity: "info",
@@ -114,7 +116,10 @@ fn build_h5(root: &Path) -> Result<PathBuf> {
     )?;
     let output = frontend.join("dist");
     if !output.join("index.html").is_file() {
-        bail!("BUILD_H5_OUTPUT_MISSING: H5 export did not produce dist/index.html");
+        fail!(
+            OutputMissing,
+            "BUILD_H5_OUTPUT_MISSING: H5 export did not produce dist/index.html"
+        );
     }
     Ok(output)
 }
@@ -126,7 +131,8 @@ fn run(root: &Path, program: &str, arguments: &[&str], code: &str) -> Result<Out
         .output()
         .with_context(|| format!("{code}: start {program}"))?;
     if !output.status.success() {
-        bail!(
+        fail!(
+            ChildExited,
             "{code}: {program} exited with {}\n{}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),

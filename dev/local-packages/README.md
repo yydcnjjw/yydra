@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Local development packages
 
-This development Distribution consumes `yydra-auth`, `@yydra/auth`, and
+This development Distribution consumes `yydra-http`, `yydra-auth`, `@yydra/auth`, and
 `@yydra/client-settings` through local package registries. Source remains in
-`capabilities/auth/rust`, `capabilities/auth/expo`, and `capabilities/client-settings/typescript`.
+`crates/yydra-http`, `capabilities/auth/rust`, `capabilities/auth/expo`, and
+`capabilities/client-settings/typescript`.
 `yydra-build` retains its bundled source snapshot.
 
 Prerequisites: Linux, Docker Engine with Compose, Python 3.11+, the repository's
@@ -23,7 +24,8 @@ To publish only one package, select it explicitly, for example:
 python3 scripts/local-packages.py --package @yydra/client-settings publish
 ```
 
-The default `publish` command handles all three packages. A selected publication
+The default `publish` command handles all four packages, publishing `yydra-http` before
+`yydra-auth`. When selecting Rust packages individually, use that same order. A selected publication
 preserves the other packages' recorded identities and staging directories.
 Cargo is at `http://127.0.0.1:18081`; npm is at `http://127.0.0.1:4873`.
 It does not proxy upstream dependencies or publish to public registries.

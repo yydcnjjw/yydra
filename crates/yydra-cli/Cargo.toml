@@ -29,7 +29,7 @@ name = "yydra"
 path = "src/main.rs"
 
 [dependencies]
-anyhow.workspace = true
+snafu.workspace = true
 clap.workspace = true
 ctrlc.workspace = true
 hex.workspace = true
