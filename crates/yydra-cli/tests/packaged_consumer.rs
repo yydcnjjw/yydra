@@ -79,6 +79,7 @@ fn packaged_cli_preserves_its_lock_and_installs_through_the_exact_locked_path() 
     }
     for relative in [
         "src/lib.rs",
+        "src/error.rs",
         "Cargo.toml.tmpl",
         "README.md",
         "LICENSE-MIT",

@@ -11,6 +11,8 @@ name = "product_transport_http"
 path = "src/lib.rs"
 
 [dependencies]
+snafu.workspace = true
+yydra-http.workspace = true
 yydra-auth.workspace = true
 axum.workspace = true
 product-application = { package = "__PRODUCT_ID__-application", path = "../application" }
@@ -20,6 +22,9 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
+product-persistence-postgres = { package = "__PRODUCT_ID__-persistence-postgres", path = "../persistence-postgres" }
+product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
 yydra-auth = { workspace = true, features = ["test-provider"] }
 tokio.workspace = true
 tower.workspace = true

@@ -17,10 +17,12 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use include_dir::{Dir, DirEntry, File, include_dir};
 use sha2::{Digest, Sha256};
+
+#[macro_use]
+mod error_support;
 
 mod android_build;
 mod doctor;
@@ -28,6 +30,8 @@ mod library_packages;
 mod process;
 mod product_build;
 mod source_workspace;
+
+module_errors!("CLI", [InvalidInput => "CLI_INVALID_INPUT", DestinationInvalid => "WORKSPACE_DESTINATION_INVALID", WorkspaceInvalid => "WORKSPACE_INVALID", SnapshotDrift => "WORKSPACE_SNAPSHOT_DRIFT", LockModified => "DEPENDENCY_LOCK_MODIFIED", MigrationInvalid => "MIGRATION_INVALID", Cancelled => "PROCESS_CANCELLED", ChildExited => "PROCESS_EXIT_FAILED", TaskPanicked => "OUTPUT_FORWARDER_PANICKED", NoInput => "INTERACTIVE_INPUT_MISSING"], [Process => crate::process::Error, SourceWorkspace => crate::source_workspace::Error, Libraries => crate::library_packages::Error, ProductBuild => crate::product_build::Error, Android => crate::android_build::Error, Doctor => crate::doctor::Error]);
 
 const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEMPLATE_IDENTITY: &str = "yydra-v0-product-workspace";
@@ -125,9 +129,30 @@ enum MigrationCommand {
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let reporter = Reporter::new(cli.message_format);
+    match execute(cli, &reporter) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            if !reporter.failed.get() {
+                reporter.emit(Diagnostic {
+                    phase: "command",
+                    code: "COMMAND_FAILED",
+                    reason_code: Some(error.code()),
+                    severity: "error",
+                    status: "fail",
+                    message: &error.report(),
+                    location: None,
+                    remediation: None,
+                });
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn execute(cli: Cli, reporter: &Reporter) -> Result<()> {
     match cli.command {
         Command::New {
             destination,
@@ -150,19 +175,21 @@ fn main() -> Result<()> {
                 || create_workspace(&destination, &input),
             )
         }
-        Command::Doctor { workspace, target } => doctor::diagnose(&workspace, target, &reporter),
+        Command::Doctor { workspace, target } => {
+            doctor::diagnose(&workspace, target, reporter).map_err(Into::into)
+        }
         Command::Internal { command } => match command {
-            InternalCommand::Setup { workspace } => setup(&workspace, &reporter),
-            InternalCommand::Dev { workspace } => dev(&workspace, &reporter),
+            InternalCommand::Setup { workspace } => setup(&workspace, reporter),
+            InternalCommand::Dev { workspace } => dev(&workspace, reporter),
             InternalCommand::Build { workspace, target } => {
-                product_build::build(&workspace, target, &reporter)
+                product_build::build(&workspace, target, reporter).map_err(Into::into)
             }
         },
         Command::Db { command } => match command {
-            DbCommand::Migrate { workspace } => db_migrate(&workspace, &reporter),
+            DbCommand::Migrate { workspace } => db_migrate(&workspace, reporter),
             DbCommand::Migration { command } => match command {
                 MigrationCommand::Add { name, workspace } => {
-                    db_migration_add(&workspace, &name, &reporter)
+                    db_migration_add(&workspace, &name, reporter)
                 }
             },
         },
@@ -179,6 +206,7 @@ pub(crate) enum MessageFormat {
 #[serde(rename_all = "camelCase")]
 struct StructuredDiagnosticEvent<'a> {
     schema_version: u64,
+    reason_code: Option<&'a str>,
     phase: &'a str,
     code: &'a str,
     severity: &'a str,
@@ -189,6 +217,7 @@ struct StructuredDiagnosticEvent<'a> {
 }
 
 struct Diagnostic<'a> {
+    reason_code: Option<&'a str>,
     phase: &'a str,
     code: &'a str,
     severity: &'a str,
@@ -200,11 +229,15 @@ struct Diagnostic<'a> {
 
 struct Reporter {
     format: MessageFormat,
+    failed: std::cell::Cell<bool>,
 }
 
 impl Reporter {
     fn new(format: MessageFormat) -> Self {
-        Self { format }
+        Self {
+            format,
+            failed: std::cell::Cell::new(false),
+        }
     }
 
     fn phase<T>(
@@ -216,6 +249,7 @@ impl Reporter {
         action: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         self.emit(Diagnostic {
+            reason_code: None,
             phase,
             code,
             severity: "info",
@@ -227,6 +261,7 @@ impl Reporter {
         match action() {
             Ok(value) => {
                 self.emit(Diagnostic {
+                    reason_code: None,
                     phase,
                     code,
                     severity: "info",
@@ -238,8 +273,9 @@ impl Reporter {
                 Ok(value)
             }
             Err(error) => {
-                let message = format!("{error:#}");
+                let message = error.report();
                 self.emit(Diagnostic {
+                    reason_code: Some(error.code()),
                     phase,
                     code,
                     severity: "error",
@@ -254,9 +290,13 @@ impl Reporter {
     }
 
     fn emit(&self, diagnostic: Diagnostic<'_>) {
+        if diagnostic.severity == "error" && diagnostic.status == "fail" {
+            self.failed.set(true);
+        }
         if self.format == MessageFormat::Json {
             let event = StructuredDiagnosticEvent {
-                schema_version: 1,
+                schema_version: 2,
+                reason_code: diagnostic.reason_code,
                 phase: diagnostic.phase,
                 code: diagnostic.code,
                 severity: diagnostic.severity,
@@ -275,8 +315,13 @@ impl Reporter {
                 .map(|path| format!(" location={}", path.display()))
                 .unwrap_or_default();
             eprintln!(
-                "[{}] {} code={}: {}{}",
-                diagnostic.phase, diagnostic.status, diagnostic.code, diagnostic.message, location
+                "[{}] {} code={} reason={}: {}{}",
+                diagnostic.phase,
+                diagnostic.status,
+                diagnostic.code,
+                diagnostic.reason_code.unwrap_or("none"),
+                diagnostic.message,
+                location
             );
             if let Some(remediation) = diagnostic.remediation {
                 eprintln!("[{}] remediation: {remediation}", diagnostic.phase);
@@ -287,8 +332,13 @@ impl Reporter {
                 .map(|path| format!(" location={}", path.display()))
                 .unwrap_or_default();
             println!(
-                "[{}] {} code={}: {}{}",
-                diagnostic.phase, diagnostic.status, diagnostic.code, diagnostic.message, location
+                "[{}] {} code={} reason={}: {}{}",
+                diagnostic.phase,
+                diagnostic.status,
+                diagnostic.code,
+                diagnostic.reason_code.unwrap_or("none"),
+                diagnostic.message,
+                location
             );
         }
     }
@@ -323,7 +373,7 @@ fn prompt(label: &str) -> Result<String> {
         .context("read interactive answer")?
         == 0
     {
-        bail!("no interactive answer received for {label}");
+        fail!(NoInput, "no interactive answer received for {label}");
     }
     Ok(value)
 }
@@ -339,34 +389,45 @@ impl NormalizedInput {
     fn new(product_name: &str, product_id: &str, product_source_license: &str) -> Result<Self> {
         let product_name = product_name.trim();
         if product_name.is_empty() {
-            bail!("product name must not be empty");
+            fail!(InvalidInput, "product name must not be empty");
         }
         if product_name.chars().any(char::is_control) {
-            bail!("product name must not contain control characters");
+            fail!(
+                InvalidInput,
+                "product name must not contain control characters"
+            );
         }
 
         let product_id = product_id.trim();
         validate_product_id(product_id)?;
         let product_source_license = product_source_license.trim();
         if product_source_license.chars().any(char::is_control) {
-            bail!("product source license must not contain control characters");
+            fail!(
+                InvalidInput,
+                "product source license must not contain control characters"
+            );
         }
         let product_source_license = product_source_license
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
         if product_source_license.is_empty() {
-            bail!("product source license must not be empty");
+            fail!(InvalidInput, "product source license must not be empty");
         }
         if !product_source_license.is_ascii() {
-            bail!("product source license must be an ASCII SPDX expression");
+            fail!(
+                InvalidInput,
+                "product source license must be an ASCII SPDX expression"
+            );
         }
         if product_source_license.len() > 256 {
-            bail!("product source license must be at most 256 characters");
+            fail!(
+                InvalidInput,
+                "product source license must be at most 256 characters"
+            );
         }
-        if let Err(error) = spdx::Expression::parse(&product_source_license) {
-            bail!("product source license must be a valid SPDX expression: {error}");
-        }
+        spdx::Expression::parse(&product_source_license)
+            .context("product source license must be a valid SPDX expression")?;
         Ok(Self {
             product_name: product_name.to_owned(),
             product_id: product_id.to_owned(),
@@ -384,7 +445,8 @@ fn validate_product_id(value: &str) -> Result<()> {
         && value.as_bytes()[0].is_ascii_lowercase()
         && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric();
     if !valid {
-        bail!(
+        fail!(
+            InvalidInput,
             "product id must start with a lowercase letter, end with a letter or digit, contain only lowercase ASCII letters, digits, or internal hyphens, and be at most 63 characters"
         );
     }
@@ -439,13 +501,15 @@ fn inspect_destination(destination: &Path) -> Result<()> {
             if entries.next().is_none() {
                 Ok(())
             } else {
-                bail!(
+                fail!(
+                    DestinationInvalid,
                     "destination '{}' is not empty; Distribution creation never merges or overwrites",
                     destination.display()
                 )
             }
         }
-        Ok(_) => bail!(
+        Ok(_) => fail!(
+            DestinationInvalid,
             "destination '{}' already exists and is not an empty directory; Distribution creation never merges or overwrites",
             destination.display()
         ),
@@ -477,7 +541,10 @@ fn reserve_stage(parent: &Path, destination_name: &str) -> Result<PathBuf> {
             }
         }
     }
-    bail!("could not reserve a unique staging directory")
+    fail!(
+        DestinationInvalid,
+        "could not reserve a unique staging directory"
+    )
 }
 
 struct RenderContext<'a> {
@@ -890,20 +957,23 @@ fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspace
         .context("Workspace Origin Record has invalid distribution version")?;
 
     if origin.distribution_version != DISTRIBUTION_VERSION {
-        bail!(
+        fail!(
+            WorkspaceInvalid,
             "distribution mismatch; {}",
             distribution_install_remediation(&origin.distribution_version)
         );
     }
     if origin.schema_version != 1 {
-        bail!(
+        fail!(
+            WorkspaceInvalid,
             "origin schema mismatch: expected 1, found {}; {}",
             origin.schema_version,
             distribution_install_remediation(DISTRIBUTION_VERSION)
         );
     }
     if origin.template_identity != TEMPLATE_IDENTITY {
-        bail!(
+        fail!(
+            WorkspaceInvalid,
             "template identity mismatch: expected {TEMPLATE_IDENTITY}, found {}; {}",
             origin.template_identity,
             distribution_install_remediation(DISTRIBUTION_VERSION)
@@ -911,7 +981,8 @@ fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspace
     }
     let expected_template = template_digest();
     if origin.template_sha256 != expected_template {
-        bail!(
+        fail!(
+            WorkspaceInvalid,
             "template digest mismatch for Distribution {DISTRIBUTION_VERSION}; {}",
             distribution_install_remediation(DISTRIBUTION_VERSION)
         );
@@ -926,10 +997,14 @@ fn verify_workspace_origin_details(workspace: &Path) -> Result<VerifiedWorkspace
         || normalized.product_id != origin.product_id
         || normalized.product_source_license != origin.product_source_license
     {
-        bail!("Workspace Origin Record creation inputs are not normalized");
+        fail!(
+            WorkspaceInvalid,
+            "Workspace Origin Record creation inputs are not normalized"
+        );
     }
     if origin.creation_inputs_sha256 != creation_inputs_digest(&normalized, &expected_template) {
-        bail!(
+        fail!(
+            WorkspaceInvalid,
             "Workspace Origin Record creation fingerprint mismatch; restore the reviewed generated record from version control"
         );
     }
@@ -955,7 +1030,8 @@ fn verify_snapshot_authorities_with_origin(
         let actual = fs::read(&path)
             .with_context(|| format!("read exact Distribution snapshot '{}'", path.display()))?;
         if actual != expected {
-            bail!(
+            fail!(
+                SnapshotDrift,
                 "exact Distribution snapshot drift at '{relative}'; restore its reviewed bytes from the yydra-cli {DISTRIBUTION_VERSION} package"
             );
         }
@@ -968,7 +1044,8 @@ fn verify_snapshot_authorities_with_origin(
         )
     })?;
     if actual_inventory != distribution_inventory_json()? {
-        bail!(
+        fail!(
+            SnapshotDrift,
             "committed generated inventory drift at '.yydra/distribution-inventory.json'; restore the reviewed generated file from version control"
         );
     }
@@ -1003,12 +1080,16 @@ fn verify_snapshot_authorities_with_origin(
         )
     })?;
     if actual_policy != expected_policy {
-        bail!(
+        fail!(
+            SnapshotDrift,
             "committed generated provenance drift at '.yydra/product-source-license.toml'; restore the reviewed generated file from version control"
         );
     }
     if origin.product_source_license != normalized.product_source_license {
-        bail!("Workspace provenance license does not match its normalized Origin Record")
+        fail!(
+            SnapshotDrift,
+            "Workspace provenance license does not match its normalized Origin Record"
+        )
     }
     Ok(())
 }
@@ -1040,14 +1121,16 @@ fn verify_build_support_snapshot(
         } else if metadata.is_file() {
             actual.insert(relative, fs::read(path)?);
         } else {
-            bail!(
+            fail!(
+                SnapshotDrift,
                 "exact Distribution snapshot drift at '{}'; unsupported library snapshot",
                 relative.display()
             );
         }
     }
     if &actual != expected {
-        bail!(
+        fail!(
+            SnapshotDrift,
             "exact Distribution snapshot drift at '.yydra/build-support'; restore the complete reviewed library sources"
         );
     }
@@ -1114,9 +1197,9 @@ fn setup(workspace: &Path, reporter: &Reporter) -> Result<()> {
         (Ok(()), Ok(())) => Ok(()),
         (Err(command_error), Ok(())) => Err(command_error),
         (Ok(()), Err(integrity_error)) => Err(integrity_error),
-        (Err(command_error), Err(integrity_error)) => Err(integrity_error).with_context(|| {
-            format!("setup command also failed before lock verification: {command_error:#}")
-        }),
+        (Err(command_error), Err(integrity_error)) => {
+            Err(command_error.with_cleanup(integrity_error))
+        }
     }
 }
 
@@ -1134,7 +1217,8 @@ fn verify_and_restore_locks(locks: &[(&Path, &[u8])]) -> Result<()> {
         drifted.push(path.display().to_string());
     }
     if !drifted.is_empty() {
-        bail!(
+        fail!(
+            LockModified,
             "setup tool changed committed lock file(s); original bytes restored: {}",
             drifted.join(", ")
         );
@@ -1201,7 +1285,10 @@ fn next_migration_version(migrations: &Path) -> Result<i64> {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             if entry.path().extension() == Some(OsStr::new("sql")) {
-                bail!("migration SQL filename is not valid UTF-8");
+                fail!(
+                    MigrationInvalid,
+                    "migration SQL filename is not valid UTF-8"
+                );
             }
             continue;
         };
@@ -1212,16 +1299,25 @@ fn next_migration_version(migrations: &Path) -> Result<i64> {
             continue;
         };
         if description.is_empty() {
-            bail!("migration filename '{name}' has an empty description");
+            fail!(
+                MigrationInvalid,
+                "migration filename '{name}' has an empty description"
+            );
         }
         let version = version
             .parse::<i64>()
             .with_context(|| format!("migration filename '{name}' has an invalid version"))?;
         if version <= 0 {
-            bail!("migration filename '{name}' must use a positive version");
+            fail!(
+                MigrationInvalid,
+                "migration filename '{name}' must use a positive version"
+            );
         }
         if !versions.insert(version) {
-            bail!("migration history contains duplicate version {version}");
+            fail!(
+                MigrationInvalid,
+                "migration history contains duplicate version {version}"
+            );
         }
     }
     versions
@@ -1241,7 +1337,8 @@ fn validate_migration_name(name: &str) -> Result<()> {
         && name.as_bytes()[0].is_ascii_lowercase()
         && name.as_bytes()[name.len() - 1].is_ascii_alphanumeric();
     if !valid {
-        bail!(
+        fail!(
+            MigrationInvalid,
             "migration name must start with a lowercase letter, end with a letter or digit, contain only lowercase ASCII letters, digits, or internal underscores, and be at most 63 characters"
         );
     }
@@ -1308,6 +1405,7 @@ fn dev(workspace: &Path, reporter: &Reporter) -> Result<()> {
         Ok(child) => child,
         Err(error) => {
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1319,6 +1417,7 @@ fn dev(workspace: &Path, reporter: &Reporter) -> Result<()> {
             terminate_child(&mut backend)
                 .context("terminate backend after frontend start failure")?;
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1334,6 +1433,7 @@ fn dev(workspace: &Path, reporter: &Reporter) -> Result<()> {
     loop {
         if shutdown.load(Ordering::SeqCst) {
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1345,6 +1445,7 @@ fn dev(workspace: &Path, reporter: &Reporter) -> Result<()> {
             terminate_child(&mut frontend).context("terminate frontend during shutdown")?;
             terminate_child(&mut backend).context("terminate backend during shutdown")?;
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1407,6 +1508,7 @@ fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) ->
     loop {
         if shutdown.load(Ordering::SeqCst) {
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1417,6 +1519,7 @@ fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) ->
             });
             terminate_child(&mut migration).context("terminate migration during shutdown")?;
             reporter.emit(Diagnostic {
+                reason_code: None,
                 phase: "dev.shutdown",
                 code: "DEV_PEER_SHUTDOWN",
                 severity: "info",
@@ -1432,6 +1535,7 @@ fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) ->
                 .context("terminate descendants after migration child exit")?;
             if status.success() {
                 reporter.emit(Diagnostic {
+                    reason_code: None,
                     phase: "dev.migration",
                     code: "DEV_MIGRATION",
                     severity: "info",
@@ -1449,6 +1553,7 @@ fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) ->
                     .map_or_else(|| "signal".to_owned(), |code| code.to_string())
             );
             reporter.emit(Diagnostic {
+                reason_code: Some(ErrorKind::ChildExited.code()),
                 phase: "dev.migration",
                 code: "DEV_MIGRATION",
                 severity: "error",
@@ -1459,7 +1564,7 @@ fn run_dev_migration(root: &Path, reporter: &Reporter, shutdown: &AtomicBool) ->
                     "verify DATABASE_URL and run `yydra db migrate` for focused diagnostics",
                 ),
             });
-            bail!(message);
+            fail!(ChildExited, "{message}");
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -1475,6 +1580,7 @@ fn spawn_reported_dev_child(
     reporter: &Reporter,
 ) -> Result<ManagedChild> {
     reporter.emit(Diagnostic {
+        reason_code: None,
         phase,
         code,
         severity: "info",
@@ -1486,8 +1592,9 @@ fn spawn_reported_dev_child(
     match spawn_dev_child(directory, program, arguments, reporter) {
         Ok(child) => Ok(child),
         Err(error) => {
-            let message = format!("could not spawn {child_name} child: {error:#}");
+            let message = format!("could not spawn {child_name} child: {}", error.report());
             reporter.emit(Diagnostic {
+            reason_code: Some(error.code()),
                 phase,
                 code,
                 severity: "error",
@@ -1597,7 +1704,7 @@ fn join_child_output(child: &mut ManagedChild) -> Result<()> {
     };
     forwarder
         .join()
-        .map_err(|_| anyhow::anyhow!("child output forwarder panicked"))
+        .map_err(|_| failure!(TaskPanicked, "child output forwarder panicked"))
 }
 
 fn forward_child_output(stdout: &mut impl Read) {
@@ -1730,6 +1837,7 @@ fn dev_child_exited(
             .map_or_else(|| "signal".to_owned(), |code| code.to_string())
     );
     reporter.emit(Diagnostic {
+            reason_code: Some(ErrorKind::ChildExited.code()),
         phase: &format!("dev.{}", exit.name),
         code: exit.code,
         severity: "error",
@@ -1741,6 +1849,7 @@ fn dev_child_exited(
         ),
     });
     reporter.emit(Diagnostic {
+        reason_code: None,
         phase: "dev.shutdown",
         code: "DEV_PEER_SHUTDOWN",
         severity: "info",
@@ -1752,6 +1861,7 @@ fn dev_child_exited(
     terminate_child(exited).context("terminate descendants of exited development child")?;
     terminate_child(peer).context("terminate remaining development child")?;
     reporter.emit(Diagnostic {
+        reason_code: None,
         phase: "dev.shutdown",
         code: "DEV_PEER_SHUTDOWN",
         severity: "info",
@@ -1760,7 +1870,7 @@ fn dev_child_exited(
         location: exit.location.parent(),
         remediation: None,
     });
-    bail!(message)
+    fail!(ChildExited, "{message}")
 }
 
 fn terminate_child(child: &mut ManagedChild) -> Result<()> {
@@ -1856,7 +1966,8 @@ fn run_process(
         if shutdown.load(Ordering::SeqCst) {
             terminate_child(&mut child)
                 .with_context(|| format!("terminate {program} after shutdown request"))?;
-            bail!(
+            fail!(
+                Cancelled,
                 "shutdown requested while running {program} {}",
                 arguments.join(" ")
             );
@@ -1865,7 +1976,8 @@ fn run_process(
             terminate_child(&mut child)
                 .with_context(|| format!("terminate descendants after {program} exit"))?;
             if !status.success() {
-                bail!(
+                fail!(
+                    ChildExited,
                     "{program} {} exited with {}",
                     arguments.join(" "),
                     status
@@ -1888,7 +2000,8 @@ pub(crate) fn find_workspace_root(start: &Path) -> Result<PathBuf> {
             return Ok(candidate.to_path_buf());
         }
     }
-    bail!(
+    fail!(
+        WorkspaceInvalid,
         "no .yydra/origin.toml found at or above '{}'",
         start.display()
     )

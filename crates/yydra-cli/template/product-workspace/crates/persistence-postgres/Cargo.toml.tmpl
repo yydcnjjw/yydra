@@ -11,5 +11,6 @@ name = "product_persistence_postgres"
 path = "src/lib.rs"
 
 [dependencies]
+snafu.workspace = true
 product-domain = { package = "__PRODUCT_ID__-domain", path = "../domain" }
 sqlx.workspace = true

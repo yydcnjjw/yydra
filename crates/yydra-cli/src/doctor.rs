@@ -2,14 +2,14 @@
 
 //! Read-only Workspace and development-tool diagnostics.
 
+module_errors!("DOCTOR", [ToolVersion => "TOOL_VERSION_INVALID", DependenciesMissing => "FRONTEND_DEPENDENCIES_MISSING", Cancelled => "PROCESS_CANCELLED", RequiredFailures => "DOCTOR_REQUIRED_FAILURES", ChildExited => "PROCESS_EXIT_FAILED", NoVersion => "TOOL_VERSION_MISSING", SdkConflict => "ANDROID_SDK_CONFLICT", SdkMissing => "ANDROID_SDK_MISSING", ComponentMissing => "ANDROID_COMPONENT_MISSING"], [Workspace => crate::Error, Process => crate::process::Error, SourceWorkspace => crate::source_workspace::Error]);
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-
-use anyhow::{Context, Result, bail};
 
 use crate::product_build::BuildTarget;
 use crate::{
@@ -32,7 +32,7 @@ pub(crate) fn diagnose(
     };
     doctor.report("doctor.verify", "DOCTOR_WORKSPACE_VERIFY", true,
         "restore the reported authority or install the exact CLI version named by the Workspace Origin Record",
-        verify_workspace(&root).and_then(|_| Ok(if crate::source_workspace::read(&root)?.is_some() {
+        verify_workspace(&root).map_err(Error::from).and_then(|_| Ok(if crate::source_workspace::read(&root)?.is_some() {
             "Framework source Workspace; local paths match, registry consumption is not verified".to_owned()
         } else {
             "Workspace origin and Distribution snapshots match".to_owned()
@@ -57,7 +57,10 @@ pub(crate) fn diagnose(
                     .and_then(|value| semver::Version::parse(value).ok())
                     .is_some_and(|version| version.pre.as_str() == "nightly")
             {
-                bail!("expected the Workspace's nightly toolchain; observed {version}");
+                fail!(
+                    ToolVersion,
+                    "expected the Workspace's nightly toolchain; observed {version}"
+                );
             }
             Ok(version)
         });
@@ -87,7 +90,7 @@ pub(crate) fn diagnose(
                         .to_owned(),
                 )
             } else {
-                Err(anyhow::anyhow!("frontend dependencies are not installed"))
+                Err(failure!(DependenciesMissing, "frontend dependencies are not installed"))
             },
         );
     }
@@ -110,6 +113,7 @@ pub(crate) fn diagnose(
     }
     if shutdown.load(Ordering::SeqCst) {
         reporter.emit(Diagnostic {
+            reason_code: Some(ErrorKind::Cancelled.code()),
             phase: "doctor.summary",
             code: "DOCTOR_CANCELLED",
             severity: "error",
@@ -118,10 +122,11 @@ pub(crate) fn diagnose(
             location: Some(&root),
             remediation: None,
         });
-        bail!("doctor was cancelled");
+        fail!(Cancelled, "doctor was cancelled");
     }
     let failures = doctor.failures;
     reporter.emit(Diagnostic {
+            reason_code: (failures != 0).then_some(ErrorKind::RequiredFailures.code()),
         phase: "doctor.summary", code: "DOCTOR_SUMMARY",
         severity: if failures == 0 { "info" } else { "error" },
         status: if failures == 0 { "pass" } else { "fail" },
@@ -129,7 +134,10 @@ pub(crate) fn diagnose(
         location: Some(&root), remediation: None,
     });
     if failures != 0 {
-        bail!("doctor found {failures} required environment or Workspace problems");
+        fail!(
+            RequiredFailures,
+            "doctor found {failures} required environment or Workspace problems"
+        );
     }
     Ok(())
 }
@@ -160,10 +168,10 @@ impl Doctor<'_> {
         );
         let text = text.trim();
         if !output.status.success() {
-            bail!("tool exited with {}: {text}", output.status);
+            fail!(ChildExited, "tool exited with {}: {text}", output.status);
         }
         if text.is_empty() {
-            bail!("tool returned no version information");
+            fail!(NoVersion, "tool returned no version information");
         }
         Ok(text.to_owned())
     }
@@ -176,6 +184,7 @@ impl Doctor<'_> {
         remediation: &str,
         result: Result<String>,
     ) {
+        let reason_code = result.as_ref().err().map(Error::code);
         let (status, severity, message, remediation) = match result {
             Ok(message) => ("pass", "info", message, None),
             Err(error) => {
@@ -185,12 +194,13 @@ impl Doctor<'_> {
                 (
                     if required { "fail" } else { "warning" },
                     if required { "error" } else { "warning" },
-                    format!("{error:#}"),
+                    error.report(),
                     Some(remediation),
                 )
             }
         };
         self.reporter.emit(Diagnostic {
+            reason_code,
             phase,
             code,
             severity,
@@ -216,13 +226,14 @@ impl Doctor<'_> {
                 "install a JDK compatible with the Expo/React Native Android build and correct JAVA_HOME or PATH", result);
         }
         let sdk = android_sdk_root();
-        let result = sdk
-            .as_ref()
-            .map(|path| format!("Android SDK: {}", path.display()))
-            .map_err(|error| anyhow::anyhow!("{error:#}"));
+        let result = sdk.map(|path| (format!("Android SDK: {}", path.display()), path));
+        let (result, sdk) = match result {
+            Ok((message, path)) => (Ok(message), Some(path)),
+            Err(error) => (Err(error), None),
+        };
         self.report("doctor.android-sdk", "DOCTOR_ANDROID_SDK", true,
             "set ANDROID_HOME to the installed Android SDK; ANDROID_SDK_ROOT, when set, must identify the same directory", result);
-        let Ok(sdk) = sdk else {
+        let Some(sdk) = sdk else {
             return;
         };
         let adb = self.probe(
@@ -284,7 +295,10 @@ fn android_sdk_root() -> Result<PathBuf> {
             .zip(fs::canonicalize(legacy).ok())
             .is_none_or(|(a, b)| a != b)
     {
-        bail!("ANDROID_HOME and ANDROID_SDK_ROOT must resolve to the same installed SDK");
+        fail!(
+            SdkConflict,
+            "ANDROID_HOME and ANDROID_SDK_ROOT must resolve to the same installed SDK"
+        );
     }
     // The account-free build replaces HOME, so the SDK must be explicit.
     let path = home
@@ -292,7 +306,11 @@ fn android_sdk_root() -> Result<PathBuf> {
         .map(PathBuf::from)
         .context("set ANDROID_HOME explicitly so the isolated Android build can locate the SDK")?;
     if !path.is_dir() {
-        bail!("Android SDK directory does not exist: {}", path.display());
+        fail!(
+            SdkMissing,
+            "Android SDK directory does not exist: {}",
+            path.display()
+        );
     }
     Ok(path)
 }
@@ -307,7 +325,8 @@ fn installed_components(directory: &Path, marker: &str) -> Result<String> {
         .collect::<Vec<_>>();
     versions.sort();
     if versions.is_empty() {
-        bail!(
+        fail!(
+            ComponentMissing,
             "no installed component containing {marker} in {}",
             directory.display()
         );

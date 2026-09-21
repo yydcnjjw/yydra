@@ -147,6 +147,7 @@ describe("Reading Queue Product Presentation", () => {
           status: 503,
           title: "Unavailable",
           type: "https://yydra.dev/problems/unavailable",
+          requestId: "test-request",
         },
       },
       "The Product service could not load this queue.",
@@ -194,6 +195,7 @@ describe("Reading Queue Product Presentation", () => {
               status: 422,
               title: "Invalid Reading Entry",
               type: "https://yydra.dev/problems/invalid-reading-entry",
+              requestId: "test-request",
             },
           };
         }),

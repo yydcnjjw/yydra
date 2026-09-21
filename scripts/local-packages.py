@@ -60,7 +60,7 @@ def main():
     default_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
     parser.add_argument("--state-dir", type=Path, default=default_data / "yydra/local-packages")
     parser.add_argument("--project", default="yydra-local-packages")
-    parser.add_argument("--package", choices=["all", "yydra-auth", "@yydra/auth", "@yydra/client-settings"], default="all",
+    parser.add_argument("--package", choices=["all", "yydra-http", "yydra-auth", "@yydra/auth", "@yydra/client-settings"], default="all",
                         help="package to publish (default: all)")
     parser.add_argument("command", choices=["up", "status", "publish", "down"])
     args = parser.parse_args()
@@ -110,7 +110,7 @@ def main():
         raise RuntimeError("state-dir must be outside a Git checkout for reproducible packages")
     staging = state / "staging"
     staging.mkdir(exist_ok=True)
-    selected = {"yydra-auth", "@yydra/auth", "@yydra/client-settings"} if args.package == "all" else {args.package}
+    selected = {"yydra-http", "yydra-auth", "@yydra/auth", "@yydra/client-settings"} if args.package == "all" else {args.package}
     template = ROOT / "crates/yydra-cli/template/product-workspace"
     template_npm = json.loads((template / "frontend/package.json").read_text().replace("__PRODUCT_SOURCE_LICENSE_TOML__", '\"MIT\"'))
     npm_packages = []
@@ -128,39 +128,46 @@ def main():
             shutil.rmtree(npm)
         shutil.copytree(source, npm, ignore=shutil.ignore_patterns("node_modules", ".git"))
         npm_packages.append((npm, package["name"], package["version"]))
-    if "yydra-auth" in selected:
-        cargo = staging / "yydra-auth"
+    archives = state / "archives"
+    archives.mkdir(exist_ok=True)
+    result = {}
+    # Publish the shared HTTP dependency before the Auth library. Each archive is
+    # staged outside Git, so its identity does not depend on the source commit.
+    for name, relative in [("yydra-http", "crates/yydra-http"),
+                           ("yydra-auth", "capabilities/auth/rust")]:
+        if name not in selected:
+            continue
+        cargo = staging / name
         if cargo.exists():
             shutil.rmtree(cargo)
-        shutil.copytree(ROOT / "capabilities/auth/rust", cargo, ignore=shutil.ignore_patterns("target", ".git"))
+        shutil.copytree(ROOT / relative, cargo, ignore=shutil.ignore_patterns("target", ".git"))
+        manifest_path = cargo / "Cargo.toml"
+        manifest = manifest_path.read_text()
+        # The standalone publication graph uses the exact registry dependency.
+        manifest_path.write_text(manifest.replace('path = "../../../crates/yydra-http", ', ""))
         shutil.copyfile(ROOT / "Cargo.lock", cargo / "Cargo.lock")
-        rust_version = tomllib.loads((cargo / "Cargo.toml").read_text())["package"]["version"]
-        rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"]["yydra-auth"]["version"]
+        rust_version = tomllib.loads(manifest)["package"]["version"]
+        rust_pin = tomllib.loads((template / "Cargo.toml.tmpl").read_text())["workspace"]["dependencies"][name]["version"]
         if "-dev." not in rust_version:
             raise RuntimeError("local publishing requires explicit -dev.N package versions")
         if rust_pin != "=" + rust_version:
             raise RuntimeError("package versions and Product Workspace template pins disagree")
-    archives = state / "archives"
-    archives.mkdir(exist_ok=True)
-    result = {}
-    if "yydra-auth" in selected:
         env["CARGO_TARGET_DIR"] = str(state / "cargo-target")
         env["CARGO_REGISTRIES_YYDRA_LOCAL_TOKEN"] = credentials["cargo_token"]
         cargo_args = ["--config", str(ROOT / ".cargo/config.toml")]
-        # Prune other workspace members while retaining the root lock's dependency versions.
         run(["cargo", "+nightly", *cargo_args, "update", "--workspace"], cwd=cargo, env=env)
         run(["cargo", "+nightly", *cargo_args, "package", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
-        crate = state / "cargo-target/package" / f"yydra-auth-{rust_version}.crate"
+        crate = state / "cargo-target/package" / f"{name}-{rust_version}.crate"
         crate_sha = hashlib.sha256(crate.read_bytes()).hexdigest()
-        index = request(CARGO_URL + "/api/v1/crates/yy/dr/yydra-auth")
+        index = request(CARGO_URL + "/api/v1/crates/yy/dr/" + name)
         existing = next((json.loads(line) for line in (index or b"").splitlines()
                          if json.loads(line)["vers"] == rust_version), None)
         if existing and existing["cksum"] != crate_sha:
-            raise RuntimeError("yydra-auth version already has different bytes; choose a new dev version")
+            raise RuntimeError(f"{name} version already has different bytes; choose a new dev version")
         if not existing:
             run(["cargo", "+nightly", *cargo_args, "publish", "--locked", "--registry", "yydra-local"], cwd=cargo, env=env)
         shutil.copyfile(crate, archives / crate.name)
-        result["yydra-auth"] = {"version": rust_version, "sha256": crate_sha}
+        result[name] = {"version": rust_version, "sha256": crate_sha}
     if npm_packages:
         npmrc = state / "publish.npmrc"
         write_private(npmrc, f"registry={NPM_URL}/\n//127.0.0.1:4873/:_authToken={credentials['npm_token']}\n")

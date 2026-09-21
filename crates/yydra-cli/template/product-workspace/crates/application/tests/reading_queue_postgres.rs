@@ -30,7 +30,8 @@ fn all_entries_query() -> ListReadingEntriesQuery {
 #[tokio::test]
 #[ignore = "requires an isolated migrated PostgreSQL database prepared explicitly for integration tests"]
 async fn applied_migration_history_rejects_mutation_and_deletion() {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
     apply_migrations(&database_url)
         .await
         .expect("apply compiled migrations");
@@ -107,7 +108,8 @@ async fn applied_migration_history_rejects_mutation_and_deletion() {
 #[tokio::test]
 #[ignore = "requires an isolated migrated PostgreSQL database prepared explicitly for integration tests"]
 async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
     apply_migrations(&database_url)
         .await
         .expect("apply compiled migrations");
@@ -266,7 +268,8 @@ async fn reading_queue_use_cases_commit_success_and_rollback_failures() {
 #[tokio::test]
 #[ignore = "requires an isolated migrated PostgreSQL database prepared explicitly for integration tests"]
 async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_together() {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
     apply_migrations(&database_url)
         .await
         .expect("apply compiled migrations");
@@ -361,7 +364,10 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
         })
         .await
         .expect_err("progress failure must reject the whole orchestration");
-    assert!(matches!(failure, ChangeReadingEntryStateError::Storage(_)));
+    assert!(matches!(
+        failure,
+        ChangeReadingEntryStateError::Storage { .. }
+    ));
     assert_eq!(
         list.execute(all_entries_query())
             .await
@@ -389,7 +395,8 @@ async fn cross_domain_orchestration_keeps_progress_synchronous_and_rolls_back_to
 #[tokio::test]
 #[ignore = "requires an isolated migrated PostgreSQL database prepared explicitly for integration tests"]
 async fn read_committed_row_lock_serializes_conflicting_commands_without_retry() {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
     apply_migrations(&database_url)
         .await
         .expect("apply compiled migrations");
@@ -509,7 +516,8 @@ async fn read_committed_row_lock_serializes_conflicting_commands_without_retry()
 #[tokio::test]
 #[ignore = "requires an isolated migrated PostgreSQL database prepared explicitly for integration tests"]
 async fn reading_queue_keyset_pages_preserve_order_filter_context_and_termination() {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL for a disposable test database");
     apply_migrations(&database_url)
         .await
         .expect("apply compiled migrations");
@@ -609,7 +617,7 @@ async fn reading_queue_keyset_pages_preserve_order_filter_context_and_terminatio
         .expect_err("a cursor cannot cross filter context");
     assert!(matches!(
         context_mismatch,
-        ListReadingEntriesError::InvalidCursor
+        ListReadingEntriesError::InvalidCursor { .. }
     ));
 
     let newest = list

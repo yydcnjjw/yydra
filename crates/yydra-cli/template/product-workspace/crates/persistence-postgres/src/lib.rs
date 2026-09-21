@@ -4,9 +4,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::error::Error;
-use std::fmt;
-use std::io;
+use snafu::Snafu;
 
 use product_domain::{
     DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryOrder,
@@ -31,7 +29,7 @@ impl Database {
         Ok(Self { pool })
     }
 
-    pub async fn verify_compiled_migrations(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn verify_compiled_migrations(&self) -> Result<(), MigrationError> {
         let applied = sqlx::query_as::<_, AppliedMigration>(
             "SELECT version, checksum, success FROM _sqlx_migrations ORDER BY version",
         )
@@ -233,9 +231,7 @@ pub async fn load_reading_progress(
         (Some(value), _) => value,
         (None, false) => 0,
         (None, true) => {
-            return Err(PersistenceError::InvariantUnavailable(
-                "reading progress for the account is missing",
-            ));
+            return Err(PersistenceError::InvariantUnavailable);
         }
     };
     ReadingProgress::restore(completed_entries).map_err(Into::into)
@@ -258,13 +254,11 @@ pub async fn adjust_reading_progress(
     .bind(account_id)
     .fetch_optional(connection)
     .await?
-    .ok_or(PersistenceError::InvariantUnavailable(
-        "reading progress could not apply the transition",
-    ))?;
+    .ok_or(PersistenceError::InvariantUnavailable)?;
     ReadingProgress::restore(completed_entries).map_err(Into::into)
 }
 
-pub async fn apply_migrations(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn apply_migrations(database_url: &str) -> Result<(), MigrationError> {
     let database = Database::connect(database_url, 1).await?;
     MIGRATOR.run(&database.pool).await?;
     Ok(())
@@ -273,42 +267,33 @@ pub async fn apply_migrations(database_url: &str) -> Result<(), Box<dyn std::err
 fn verify_history(
     applied: &[AppliedMigration],
     expected: &[ExpectedMigration],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), MigrationError> {
     if applied.len() < expected.len() {
-        return Err(io::Error::other(format!(
-            "database migration history is missing {} compiled migration(s)",
-            expected.len() - applied.len()
-        ))
-        .into());
+        return Err(MigrationError::Missing {
+            count: expected.len() - applied.len(),
+        });
     }
     if applied.len() > expected.len() {
-        return Err(io::Error::other(format!(
-            "database migration history contains {} unknown migration(s)",
-            applied.len() - expected.len()
-        ))
-        .into());
+        return Err(MigrationError::Unknown {
+            count: applied.len() - expected.len(),
+        });
     }
     for (applied, expected) in applied.iter().zip(expected) {
         if !applied.success {
-            return Err(io::Error::other(format!(
-                "database migration {} is not successful",
-                applied.version
-            ))
-            .into());
+            return Err(MigrationError::Unsuccessful {
+                version: applied.version,
+            });
         }
         if applied.version != expected.version {
-            return Err(io::Error::other(format!(
-                "database migration version {} is incompatible with compiled version {}",
-                applied.version, expected.version
-            ))
-            .into());
+            return Err(MigrationError::Version {
+                actual: applied.version,
+                expected: expected.version,
+            });
         }
         if applied.checksum != expected.checksum {
-            return Err(io::Error::other(format!(
-                "database migration {} checksum differs from compiled source",
-                expected.version
-            ))
-            .into());
+            return Err(MigrationError::Checksum {
+                version: expected.version,
+            });
         }
     }
     Ok(())
@@ -375,52 +360,53 @@ impl TryFrom<ReadingEntryRow> for ReadingEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum PersistenceError {
-    Database(sqlx::Error),
-    CorruptDomain(DomainValidationError),
+    #[snafu(context(false), display("PostgreSQL operation failed"))]
+    Database { source: sqlx::Error },
+    #[snafu(context(false), display("persisted Product Domain state is invalid"))]
+    CorruptDomain { source: DomainValidationError },
+    #[snafu(display("reading entry changed after it was locked"))]
     ConcurrentChange,
-    InvariantUnavailable(&'static str),
+    #[snafu(display("reading progress invariant is unavailable"))]
+    InvariantUnavailable,
 }
-
-impl fmt::Display for PersistenceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl PersistenceError {
+    pub fn code(&self) -> &'static str {
         match self {
-            Self::Database(error) => write!(formatter, "PostgreSQL operation failed: {error}"),
-            Self::CorruptDomain(error) => {
-                write!(
-                    formatter,
-                    "persisted Product Domain state is invalid: {error}"
-                )
-            }
-            Self::ConcurrentChange => {
-                formatter.write_str("reading entry changed after it was locked")
-            }
-            Self::InvariantUnavailable(message) => formatter.write_str(message),
+            Self::Database {
+                source: sqlx::Error::PoolTimedOut,
+            } => "DATABASE_POOL_TIMEOUT",
+            Self::Database {
+                source: sqlx::Error::Io(_),
+            } => "DATABASE_IO",
+            Self::Database { .. } => "DATABASE_FAILED",
+            Self::CorruptDomain { .. } => "PERSISTED_DOMAIN_INVALID",
+            Self::ConcurrentChange => "PERSISTED_CONCURRENT_CHANGE",
+            Self::InvariantUnavailable => "PERSISTED_INVARIANT_UNAVAILABLE",
         }
     }
 }
 
-impl Error for PersistenceError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Database(error) => Some(error),
-            Self::CorruptDomain(error) => Some(error),
-            Self::ConcurrentChange | Self::InvariantUnavailable(_) => None,
-        }
-    }
-}
-
-impl From<sqlx::Error> for PersistenceError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Database(error)
-    }
-}
-
-impl From<DomainValidationError> for PersistenceError {
-    fn from(error: DomainValidationError) -> Self {
-        Self::CorruptDomain(error)
-    }
+#[derive(Debug, Snafu)]
+#[snafu(context(suffix(MigrationContext)))]
+pub enum MigrationError {
+    #[snafu(context(false), display("migration database access failed"))]
+    Database { source: sqlx::Error },
+    #[snafu(context(false), display("applying database migrations failed"))]
+    Apply { source: sqlx::migrate::MigrateError },
+    #[snafu(display("database migration history is missing {count} compiled migration(s)"))]
+    Missing { count: usize },
+    #[snafu(display("database migration history contains {count} unknown migration(s)"))]
+    Unknown { count: usize },
+    #[snafu(display("database migration {version} is not successful"))]
+    Unsuccessful { version: i64 },
+    #[snafu(display(
+        "database migration version {actual} is incompatible with compiled version {expected}"
+    ))]
+    Version { actual: i64, expected: i64 },
+    #[snafu(display("database migration {version} checksum differs from compiled source"))]
+    Checksum { version: i64 },
 }
 
 #[cfg(test)]

@@ -461,3 +461,25 @@ explicit ownership migration; it must not assign them to the first login.
 
 Use a disposable provider fixture for automated login tests. A fixture result
 is not evidence that a real GitHub App's registration or consent flow was tested.
+
+## Typed failure contracts
+
+Rust errors use SNAFU. Domain errors describe business-rule rejections; each
+application use case owns its technical errors and concrete source chain.
+Corrupt persisted values return an internal failure. Rollback failures retain
+both errors; commit failures are outcome unknown and writes are never retried
+automatically. Post-commit failure events retain a source for diagnostics while
+keeping their lossy, non-retry behavior.
+
+HTTP errors use RFC 9457 with `type` as the machine identifier, a required
+server-generated `requestId` (also `x-request-id`), and optional `violations`
+containing public field names and rule codes. Technical errors are logged once
+with safe metadata. Never parse `title` or `detail` or serialize raw source errors.
+Authentication and product routes share these semantics. Framework client failure
+diagnostics retain the request ID without logging response details or input.
+
+CLI JSONL now uses `schemaVersion: 2`: `code` identifies the step and `reasonCode`
+identifies its typed failure (null for ordinary progress). This breaks schema 1
+consumers. The new HTTP schema also requires regenerating clients; old AuthProblem
+and optional traceId shapes are replaced by shared ProblemDetails and requestId.
+Local child-tool logs remain tool output and are distinct from redacted API logs.

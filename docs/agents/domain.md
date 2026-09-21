@@ -59,3 +59,18 @@ If a necessary concept is absent, reconsider whether it belongs to the project o
 ## Flag ADR conflicts
 
 If proposed work contradicts an existing ADR, surface the conflict explicitly instead of silently overriding it.
+
+## Error ownership
+
+Follow [ADR 0013](../adr/0013-model-errors-with-snafu.md). Product Domain errors
+name violated business rules. Application use cases retain concrete sources,
+operation context, rollback failures and unknown commit outcomes. Persistence
+restoration errors are technical failures even if they wrap a domain rule.
+Use SNAFU; do not flatten causes to strings or branch on Display text. Expose
+matchable business variants, and opaque errors with non-exhaustive kinds from
+reusable libraries. Context selectors remain private.
+
+HTTP adapters own status/type mapping and safe field/code violations; `yydra-http`
+owns formatting, request correlation and one final technical-failure report.
+Expected rejections do not log at error level. Do not log raw SQL values, provider
+errors, credentials or payloads. A failed mutation has no implicit retry.

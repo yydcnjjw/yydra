@@ -2,6 +2,8 @@
 
 //! Capture subprocess output without pipe deadlocks; bound probes and reap cancelled children.
 
+module_errors!("PROCESS", [Cancelled => "PROCESS_CANCELLED", Timeout => "PROCESS_TIMEOUT"], []);
+
 use std::io::{Read, Seek};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,15 +13,13 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use anyhow::{Context, Result, bail};
-
 pub(crate) fn capture(
     mut command: Command,
     shutdown: &AtomicBool,
     timeout: Option<Duration>,
 ) -> Result<Output> {
     if shutdown.load(Ordering::SeqCst) {
-        bail!("cancelled before starting tool");
+        fail!(Cancelled, "cancelled before starting tool");
     }
     let mut stdout = tempfile::tempfile().context("create stdout capture")?;
     let mut stderr = tempfile::tempfile().context("create stderr capture")?;
@@ -33,10 +33,10 @@ pub(crate) fn capture(
     let started = Instant::now();
     let status = loop {
         if shutdown.load(Ordering::SeqCst) {
-            bail!("cancelled while running tool");
+            fail!(Cancelled, "cancelled while running tool");
         }
         if timeout.is_some_and(|limit| started.elapsed() >= limit) {
-            bail!("tool exceeded its diagnostic timeout");
+            fail!(Timeout, "tool exceeded its diagnostic timeout");
         }
         if let Some(status) = child.child.try_wait().context("wait for tool")? {
             child.disarm();
@@ -73,9 +73,7 @@ impl CapturedChild {
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(std::io::Error::other(format!(
-                    "place child in Windows Job Object: {error:#}"
-                )));
+                return Err(std::io::Error::other(error));
             }
         };
         Ok(Self {
@@ -173,7 +171,7 @@ mod tests {
             Some(Duration::from_millis(50)),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("timeout"));
+        assert_eq!(error.code(), "PROCESS_TIMEOUT");
         thread::sleep(Duration::from_millis(300));
         assert!(!marker.exists(), "a timed-out tool left background work");
     }

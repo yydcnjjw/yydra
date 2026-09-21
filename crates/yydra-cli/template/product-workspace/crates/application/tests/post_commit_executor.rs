@@ -54,6 +54,16 @@ async fn wait_for_outcome(
         loop {
             let event = events.recv().await.expect("post-commit event");
             if event.task_name == name && event.outcome == outcome {
+                if outcome == PostCommitTaskOutcome::Failed {
+                    use std::error::Error;
+                    let cause = event
+                        .failure
+                        .as_ref()
+                        .expect("task cause retained")
+                        .source()
+                        .unwrap();
+                    assert!(cause.downcast_ref::<io::Error>().is_some());
+                }
                 return;
             }
         }

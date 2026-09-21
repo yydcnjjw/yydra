@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Json, Router};
@@ -23,6 +23,8 @@ use utoipa::{IntoParams, PartialSchema, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use yydra_auth::Principal;
+use yydra_http::FieldViolation;
+pub use yydra_http::ProblemDetails;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,23 +75,6 @@ pub struct FrameworkContractCreate {
 pub struct FrameworkContractPatch {
     #[schema(nullable = true)]
     pub nullable_note: Option<String>,
-}
-
-/// RFC 9457 Problem Details shared by declared public failures.
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ProblemDetails {
-    #[serde(rename = "type")]
-    #[schema(rename = "type")]
-    pub type_uri: String,
-    pub title: String,
-    pub status: u16,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    pub detail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    pub trace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -214,141 +199,121 @@ fn authorize(principal: Option<Extension<Principal>>) -> Result<String, ProblemR
         .ok_or_else(ProblemResponse::unauthorized)
 }
 
-struct ProblemResponse {
-    status: StatusCode,
-    body: ProblemDetails,
-}
-
+struct ProblemResponse(Box<yydra_http::ProblemResponse>);
 impl ProblemResponse {
-    fn invalid(detail: String) -> Self {
-        Self {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/invalid-reading-entry".to_owned(),
-                title: "Invalid reading entry".to_owned(),
-                status: StatusCode::UNPROCESSABLE_ENTITY.as_u16(),
-                detail: Some(detail),
-                trace_id: None,
-            },
-        }
+    fn problem(status: StatusCode, name: &str, title: &str) -> Self {
+        Self(Box::new(yydra_http::ProblemResponse::new(
+            ProblemDetails::new(status, format!("https://yydra.dev/problems/{name}"), title),
+        )))
     }
-
+    fn invalid(field: &str, code: &str, message: &str) -> Self {
+        let mut body = ProblemDetails::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "https://yydra.dev/problems/invalid-reading-entry",
+            "Invalid reading entry",
+        );
+        body.detail = Some(format!("{field} {message}"));
+        body.violations.push(FieldViolation {
+            field: field.into(),
+            code: code.into(),
+        });
+        Self(Box::new(yydra_http::ProblemResponse::new(body)))
+    }
     fn invalid_json() -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/invalid-request-body".to_owned(),
-                title: "Invalid request body".to_owned(),
-                status: StatusCode::BAD_REQUEST.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        Self::problem(
+            StatusCode::BAD_REQUEST,
+            "invalid-request-body",
+            "Invalid request body",
+        )
     }
-
     fn invalid_reading_queue_query() -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/invalid-reading-queue-query".to_owned(),
-                title: "Invalid Reading Queue query".to_owned(),
-                status: StatusCode::BAD_REQUEST.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        Self::invalid_query_field("query", "invalid")
     }
-
+    fn invalid_query_field(field: &str, code: &str) -> Self {
+        let mut body = ProblemDetails::new(
+            StatusCode::BAD_REQUEST,
+            "https://yydra.dev/problems/invalid-reading-queue-query",
+            "Invalid Reading Queue query",
+        );
+        body.violations.push(FieldViolation {
+            field: field.into(),
+            code: code.into(),
+        });
+        Self(Box::new(yydra_http::ProblemResponse::new(body)))
+    }
     fn invalid_reading_queue_cursor() -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/invalid-reading-queue-cursor".to_owned(),
-                title: "Invalid Reading Queue cursor".to_owned(),
-                status: StatusCode::BAD_REQUEST.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        let mut body = ProblemDetails::new(
+            StatusCode::BAD_REQUEST,
+            "https://yydra.dev/problems/invalid-reading-queue-cursor",
+            "Invalid Reading Queue cursor",
+        );
+        body.violations.push(FieldViolation {
+            field: "cursor".into(),
+            code: "invalid".into(),
+        });
+        Self(Box::new(yydra_http::ProblemResponse::new(body)))
     }
-
     fn not_found() -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/reading-entry-not-found".to_owned(),
-                title: "Reading entry not found".to_owned(),
-                status: StatusCode::NOT_FOUND.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        Self::problem(
+            StatusCode::NOT_FOUND,
+            "reading-entry-not-found",
+            "Reading entry not found",
+        )
     }
-
     fn conflict() -> Self {
-        Self {
-            status: StatusCode::CONFLICT,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/reading-entry-transition-conflict".to_owned(),
-                title: "Reading entry transition conflict".to_owned(),
-                status: StatusCode::CONFLICT.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        Self::problem(
+            StatusCode::CONFLICT,
+            "reading-entry-transition-conflict",
+            "Reading entry transition conflict",
+        )
     }
-
     fn unauthorized() -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/authentication-required".to_owned(),
-                title: "Authentication required".to_owned(),
-                status: StatusCode::UNAUTHORIZED.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+        Self::problem(
+            StatusCode::UNAUTHORIZED,
+            "authentication-required",
+            "Authentication required",
+        )
     }
-
-    fn internal() -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            body: ProblemDetails {
-                type_uri: "https://yydra.dev/problems/internal".to_owned(),
-                title: "Internal service failure".to_owned(),
-                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                detail: None,
-                trace_id: None,
-            },
-        }
+    fn internal<E: std::error::Error + snafu::ErrorCompat + 'static>(
+        operation: &'static str,
+        context: String,
+        error: &E,
+    ) -> Self {
+        let response = Self::problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "Internal service failure",
+        );
+        Self(Box::new(response.0.technical(
+            operation,
+            "PRODUCT_OPERATION_FAILED",
+            context,
+            error,
+        )))
     }
 }
-
 impl IntoResponse for ProblemResponse {
     fn into_response(self) -> Response {
-        let unauthorized = self.status == StatusCode::UNAUTHORIZED;
-        let mut response = (
-            self.status,
-            [(header::CONTENT_TYPE, "application/problem+json")],
-            Json(self.body),
-        )
-            .into_response();
-        if unauthorized {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static("Bearer realm=\"yydra-framework-contract\""),
-            );
-        }
-        response
+        self.0.into_response()
     }
 }
 
-async fn health(State(service): State<HealthService>) -> Result<Json<HealthResponse>, StatusCode> {
-    let status = service
-        .check()
-        .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+async fn health(
+    State(service): State<HealthService>,
+) -> Result<Json<HealthResponse>, ProblemResponse> {
+    let status = service.check().await.map_err(|error| {
+        let response = ProblemResponse::problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Service unavailable",
+        );
+        ProblemResponse(Box::new(response.0.technical(
+            "health.database",
+            "DATABASE_HEALTH_FAILED",
+            "database health check failed",
+            &error,
+        )))
+    })?;
     Ok(Json(HealthResponse {
         status: status.status,
         database: status.database,
@@ -430,10 +395,14 @@ async fn create_reading_queue_entry(
         })
         .await
         .map_err(|error| match error {
-            CreateReadingEntryError::InvalidInput { field, message } => {
-                ProblemResponse::invalid(format!("{field} {message}"))
+            CreateReadingEntryError::InvalidInput { source } => {
+                ProblemResponse::invalid(source.field(), source.code(), source.message())
             }
-            CreateReadingEntryError::Storage(_) => ProblemResponse::internal(),
+            error => ProblemResponse::internal(
+                "reading_queue.create",
+                error.diagnostic_context(),
+                &error,
+            ),
         })?;
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
@@ -471,13 +440,21 @@ async fn list_reading_queue_entries(
         })
         .await
         .map_err(|error| match error {
-            ListReadingEntriesError::InvalidInput { .. } => {
+            ListReadingEntriesError::InvalidInput { source } => {
+                ProblemResponse::invalid_query_field(source.field(), source.code())
+            }
+            ListReadingEntriesError::InvalidLimit => {
+                ProblemResponse::invalid_query_field("limit", "out_of_range")
+            }
+            ListReadingEntriesError::InvalidAuthorizationScope => {
                 ProblemResponse::invalid_reading_queue_query()
             }
-            ListReadingEntriesError::InvalidCursor => {
+            ListReadingEntriesError::InvalidCursor { .. } => {
                 ProblemResponse::invalid_reading_queue_cursor()
             }
-            ListReadingEntriesError::Storage(_) => ProblemResponse::internal(),
+            error => {
+                ProblemResponse::internal("reading_queue.list", error.diagnostic_context(), &error)
+            }
         })?;
     Ok(Json(ReadingQueueResponse {
         entries: page.entries.into_iter().map(Into::into).collect(),
@@ -527,12 +504,16 @@ async fn change_reading_queue_entry_state(
         })
         .await
         .map_err(|error| match error {
-            ChangeReadingEntryStateError::InvalidInput { field, message } => {
-                ProblemResponse::invalid(format!("{field} {message}"))
+            ChangeReadingEntryStateError::InvalidInput { source } => {
+                ProblemResponse::invalid(source.field(), source.code(), source.message())
             }
             ChangeReadingEntryStateError::NotFound { .. } => ProblemResponse::not_found(),
             ChangeReadingEntryStateError::Conflict { .. } => ProblemResponse::conflict(),
-            ChangeReadingEntryStateError::Storage(_) => ProblemResponse::internal(),
+            error => ProblemResponse::internal(
+                "reading_queue.change",
+                error.diagnostic_context(),
+                &error,
+            ),
         })?;
     Ok(Json(entry.into()))
 }
@@ -583,14 +564,12 @@ pub fn public_routes() -> OpenApiRouter<ReadingQueueHttpState> {
 }
 
 /// Deterministic, normalized Public API Contract derived from `public_routes`.
-pub fn normalized_openapi_json() -> Result<String, serde_json::Error> {
+pub fn normalized_openapi_json() -> Result<String, OpenApiExportError> {
     let openapi = public_routes().into_openapi();
     let value = serde_json::to_value(openapi)?;
     let mut bytes = serde_json::to_vec_pretty(&value)?;
     bytes.push(b'\n');
-    String::from_utf8(bytes).map_err(|error| {
-        serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-    })
+    Ok(String::from_utf8(bytes).expect("serialized JSON is UTF-8"))
 }
 
 pub fn router(service: HealthService, reading_queue: ReadingQueueService) -> Router {
@@ -601,4 +580,10 @@ pub fn router(service: HealthService, reading_queue: ReadingQueueService) -> Rou
         .route("/health", get(health))
         .merge(public_router.with_state::<HealthService>(()))
         .with_state(service)
+}
+
+#[derive(Debug, snafu::Snafu)]
+#[snafu(context(false), display("serializing the public API contract failed"))]
+pub struct OpenApiExportError {
+    source: serde_json::Error,
 }

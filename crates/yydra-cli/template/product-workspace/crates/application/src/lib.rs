@@ -6,8 +6,9 @@
 
 pub mod post_commit;
 
-use std::error::Error;
-use std::fmt;
+use snafu::Snafu;
+mod errors;
+pub use errors::*;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,13 +17,13 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, KeyInit, Mac};
 use product_domain::{
-    DomainValidationError, ReadingEntry, ReadingEntryId, ReadingEntryOrder, ReadingEntryState,
-    ReadingEntryStatusFilter, ReadingEntryTitle, SourceUrl,
+    ReadingEntry, ReadingEntryId, ReadingEntryOrder, ReadingEntryState, ReadingEntryStatusFilter,
+    ReadingEntryTitle, SourceUrl,
 };
 use product_persistence_postgres::{
-    Database, PersistenceError, ReadingEntryPagePosition, adjust_reading_progress,
-    insert_reading_entry, list_reading_entries_page, load_reading_progress,
-    lock_reading_entry_for_update, update_reading_entry_state,
+    Database, ReadingEntryPagePosition, adjust_reading_progress, insert_reading_entry,
+    list_reading_entries_page, load_reading_progress, lock_reading_entry_for_update,
+    update_reading_entry_state,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -45,10 +46,14 @@ impl HealthService {
         Self { database }
     }
 
-    pub async fn check(&self) -> Result<HealthStatus, Box<dyn std::error::Error>> {
+    pub async fn check(&self) -> Result<HealthStatus, HealthError> {
         Ok(HealthStatus {
             status: "ready",
-            database: self.database.schema_name().await?,
+            database: self
+                .database
+                .schema_name()
+                .await
+                .map_err(|source| HealthError { source })?,
         })
     }
 }
@@ -153,9 +158,9 @@ impl CursorCodec {
             authorization_scope: context.authorization_scope.clone(),
             position: position.clone(),
         })
-        .map_err(|_| CursorCodecError)?;
-        let mut mac =
-            HmacSha256::new_from_slice(&self.signing_key).map_err(|_| CursorCodecError)?;
+        .map_err(|source| CursorCodecError::Json { source })?;
+        let mut mac = HmacSha256::new_from_slice(&self.signing_key)
+            .map_err(|source| CursorCodecError::SigningKey { source })?;
         mac.update(&payload);
         let signature = mac.finalize().into_bytes();
         Ok(format!(
@@ -171,27 +176,28 @@ impl CursorCodec {
         context: &ReadingQueueCursorContext,
     ) -> Result<ReadingQueueCursorPosition, CursorCodecError> {
         if cursor.is_empty() || cursor.len() > MAX_CURSOR_LENGTH {
-            return Err(CursorCodecError);
+            return Err(CursorCodecError::InvalidEnvelope);
         }
         let mut parts = cursor.split('.');
-        let version = parts.next().ok_or(CursorCodecError)?;
-        let payload = parts.next().ok_or(CursorCodecError)?;
-        let signature = parts.next().ok_or(CursorCodecError)?;
+        let version = parts.next().ok_or(CursorCodecError::InvalidEnvelope)?;
+        let payload = parts.next().ok_or(CursorCodecError::InvalidEnvelope)?;
+        let signature = parts.next().ok_or(CursorCodecError::InvalidEnvelope)?;
         if parts.next().is_some() || version != format!("v{CURSOR_VERSION}") {
-            return Err(CursorCodecError);
+            return Err(CursorCodecError::InvalidEnvelope);
         }
         let payload = URL_SAFE_NO_PAD
             .decode(payload)
-            .map_err(|_| CursorCodecError)?;
+            .map_err(|source| CursorCodecError::Base64 { source })?;
         let signature = URL_SAFE_NO_PAD
             .decode(signature)
-            .map_err(|_| CursorCodecError)?;
-        let mut mac =
-            HmacSha256::new_from_slice(&self.signing_key).map_err(|_| CursorCodecError)?;
+            .map_err(|source| CursorCodecError::Base64 { source })?;
+        let mut mac = HmacSha256::new_from_slice(&self.signing_key)
+            .map_err(|source| CursorCodecError::SigningKey { source })?;
         mac.update(&payload);
-        mac.verify_slice(&signature).map_err(|_| CursorCodecError)?;
+        mac.verify_slice(&signature)
+            .map_err(|source| CursorCodecError::Signature { source })?;
         let payload: ReadingQueueCursorPayload =
-            serde_json::from_slice(&payload).map_err(|_| CursorCodecError)?;
+            serde_json::from_slice(&payload).map_err(|source| CursorCodecError::Json { source })?;
         if payload.version != CURSOR_VERSION
             || payload.status != context.status.as_str()
             || payload.sort != context.order.as_str()
@@ -202,36 +208,32 @@ impl CursorCodec {
             || payload.position.created_at.chars().any(char::is_control)
             || ReadingEntryId::parse(payload.position.id.clone()).is_err()
         {
-            return Err(CursorCodecError);
+            return Err(CursorCodecError::InvalidEnvelope);
         }
         Ok(payload.position)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
+#[snafu(display("cursor signing key must contain at least {MIN_CURSOR_SIGNING_KEY_LENGTH} bytes"))]
 pub struct CursorConfigurationError;
 
-impl fmt::Display for CursorConfigurationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "cursor signing key must contain at least {MIN_CURSOR_SIGNING_KEY_LENGTH} bytes"
-        )
-    }
+#[derive(Debug, Snafu)]
+#[snafu(context(suffix(CursorContext)))]
+pub enum CursorCodecError {
+    #[snafu(display("cursor envelope or query binding is invalid"))]
+    InvalidEnvelope,
+    #[snafu(display("cursor page position is missing"))]
+    MissingPosition,
+    #[snafu(display("cursor JSON encoding is invalid"))]
+    Json { source: serde_json::Error },
+    #[snafu(display("cursor base64 encoding is invalid"))]
+    Base64 { source: base64::DecodeError },
+    #[snafu(display("cursor signing key is invalid"))]
+    SigningKey { source: hmac::digest::InvalidLength },
+    #[snafu(display("cursor signature is invalid"))]
+    Signature { source: hmac::digest::MacError },
 }
-
-impl Error for CursorConfigurationError {}
-
-#[derive(Debug)]
-struct CursorCodecError;
-
-impl fmt::Display for CursorCodecError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("reading queue cursor is invalid")
-    }
-}
-
-impl Error for CursorCodecError {}
 
 #[derive(Clone)]
 pub struct CreateReadingEntry {
@@ -253,24 +255,21 @@ impl CreateReadingEntry {
             .database
             .begin()
             .await
-            .map_err(CreateReadingEntryError::storage)?;
+            .map_err(|source| CreateReadingEntryError::storage("begin", source))?;
         let entry =
             match insert_reading_entry(&mut transaction, &command.account_id, &title, &source_url)
                 .await
             {
                 Ok(entry) => entry,
                 Err(error) => {
-                    transaction
-                        .rollback()
-                        .await
-                        .map_err(CreateReadingEntryError::storage)?;
-                    return Err(CreateReadingEntryError::storage(error));
+                    return Err(CreateReadingEntryError::storage("execute", error)
+                        .with_rollback(transaction.rollback().await));
                 }
             };
         transaction
             .commit()
             .await
-            .map_err(CreateReadingEntryError::storage)?;
+            .map_err(CreateReadingEntryError::commit)?;
         Ok(entry.into())
     }
 }
@@ -312,24 +311,18 @@ impl ListReadingEntries {
         query: ListReadingEntriesQuery,
     ) -> Result<ReadingQueuePage, ListReadingEntriesError> {
         let status = ReadingEntryStatusFilter::parse(query.status.as_deref())
-            .map_err(ListReadingEntriesError::invalid_input)?;
+            .map_err(ListReadingEntriesError::from)?;
         let order = ReadingEntryOrder::parse(query.sort.as_deref())
-            .map_err(ListReadingEntriesError::invalid_input)?;
+            .map_err(ListReadingEntriesError::from)?;
         let limit = query.limit.unwrap_or(DEFAULT_READING_QUEUE_PAGE_SIZE);
         if !(1..=MAX_READING_QUEUE_PAGE_SIZE).contains(&limit) {
-            return Err(ListReadingEntriesError::InvalidInput {
-                field: "limit",
-                message: "must be between 1 and 50",
-            });
+            return Err(ListReadingEntriesError::InvalidLimit);
         }
         if query.authorization_scope.is_empty()
             || query.authorization_scope.len() > 256
             || query.authorization_scope.chars().any(char::is_control)
         {
-            return Err(ListReadingEntriesError::InvalidInput {
-                field: "authorization",
-                message: "contains an invalid authorization scope",
-            });
+            return Err(ListReadingEntriesError::InvalidAuthorizationScope);
         }
         let context = ReadingQueueCursorContext {
             status,
@@ -342,7 +335,7 @@ impl ListReadingEntries {
             .as_deref()
             .map(|cursor| self.cursor_codec.decode(cursor, &context))
             .transpose()
-            .map_err(|_| ListReadingEntriesError::InvalidCursor)?;
+            .map_err(|source| ListReadingEntriesError::InvalidCursor { source })?;
         let after = after.map(|position| ReadingEntryPagePosition {
             created_at: position.created_at,
             id: position.id,
@@ -351,16 +344,13 @@ impl ListReadingEntries {
             .database
             .begin()
             .await
-            .map_err(ListReadingEntriesError::storage)?;
+            .map_err(|source| ListReadingEntriesError::storage("begin", source))?;
         if let Err(error) = sqlx::query("SET TRANSACTION READ ONLY")
             .execute(&mut *transaction)
             .await
         {
-            transaction
-                .rollback()
-                .await
-                .map_err(ListReadingEntriesError::storage)?;
-            return Err(ListReadingEntriesError::storage(error));
+            return Err(ListReadingEntriesError::storage("execute", error)
+                .with_rollback(transaction.rollback().await));
         }
         let mut items = match list_reading_entries_page(
             &mut transaction,
@@ -374,11 +364,8 @@ impl ListReadingEntries {
         {
             Ok(items) => items,
             Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(ListReadingEntriesError::storage)?;
-                return Err(ListReadingEntriesError::storage(error));
+                return Err(ListReadingEntriesError::storage("execute", error)
+                    .with_rollback(transaction.rollback().await));
             }
         };
         let has_next_page = items.len() > usize::from(limit);
@@ -388,7 +375,7 @@ impl ListReadingEntries {
         transaction
             .commit()
             .await
-            .map_err(ListReadingEntriesError::storage)?;
+            .map_err(ListReadingEntriesError::commit)?;
         let next_cursor = if has_next_page {
             let position = items
                 .last()
@@ -396,11 +383,16 @@ impl ListReadingEntries {
                     created_at: item.position.created_at.clone(),
                     id: item.position.id.clone(),
                 })
-                .ok_or_else(|| ListReadingEntriesError::storage(CursorCodecError))?;
+                .ok_or_else(|| {
+                    ListReadingEntriesError::storage(
+                        "encode_cursor",
+                        CursorCodecError::MissingPosition,
+                    )
+                })?;
             Some(
                 self.cursor_codec
                     .encode(&context, &position)
-                    .map_err(ListReadingEntriesError::storage)?,
+                    .map_err(|source| ListReadingEntriesError::storage("encode_cursor", source))?,
             )
         } else {
             None
@@ -438,25 +430,19 @@ impl ChangeReadingEntryStateAndRecordProgress {
             .database
             .begin()
             .await
-            .map_err(ChangeReadingEntryStateError::storage)?;
+            .map_err(|source| ChangeReadingEntryStateError::storage("begin", source))?;
         let mut entry =
             match lock_reading_entry_for_update(&mut transaction, &command.account_id, &id).await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => {
-                    transaction
-                        .rollback()
-                        .await
-                        .map_err(ChangeReadingEntryStateError::storage)?;
-                    return Err(ChangeReadingEntryStateError::NotFound {
+                    let error = ChangeReadingEntryStateError::NotFound {
                         id: id.as_str().to_owned(),
-                    });
+                    };
+                    return Err(error.with_rollback(transaction.rollback().await));
                 }
                 Err(error) => {
-                    transaction
-                        .rollback()
-                        .await
-                        .map_err(ChangeReadingEntryStateError::storage)?;
-                    return Err(ChangeReadingEntryStateError::storage(error));
+                    return Err(ChangeReadingEntryStateError::storage("execute", error)
+                        .with_rollback(transaction.rollback().await));
                 }
             };
         let transition = match command.target {
@@ -464,24 +450,14 @@ impl ChangeReadingEntryStateAndRecordProgress {
             ReadingQueueEntryState::Queued => entry.reopen(),
         };
         if let Err(error) = transition {
-            let conflict = ChangeReadingEntryStateError::Conflict {
-                current: error.current().into(),
-                requested: error.requested().into(),
-            };
-            transaction
-                .rollback()
-                .await
-                .map_err(ChangeReadingEntryStateError::storage)?;
-            return Err(conflict);
+            let conflict = ChangeReadingEntryStateError::Conflict { source: error };
+            return Err(conflict.with_rollback(transaction.rollback().await));
         }
         if let Err(error) =
             update_reading_entry_state(&mut transaction, &command.account_id, &entry).await
         {
-            transaction
-                .rollback()
-                .await
-                .map_err(ChangeReadingEntryStateError::storage)?;
-            return Err(ChangeReadingEntryStateError::storage(error));
+            return Err(ChangeReadingEntryStateError::storage("execute", error)
+                .with_rollback(transaction.rollback().await));
         }
         let completed_delta = match command.target {
             ReadingQueueEntryState::Completed => 1,
@@ -490,16 +466,13 @@ impl ChangeReadingEntryStateAndRecordProgress {
         if let Err(error) =
             adjust_reading_progress(&mut transaction, &command.account_id, completed_delta).await
         {
-            transaction
-                .rollback()
-                .await
-                .map_err(ChangeReadingEntryStateError::storage)?;
-            return Err(ChangeReadingEntryStateError::storage(error));
+            return Err(ChangeReadingEntryStateError::storage("execute", error)
+                .with_rollback(transaction.rollback().await));
         }
         transaction
             .commit()
             .await
-            .map_err(ChangeReadingEntryStateError::storage)?;
+            .map_err(ChangeReadingEntryStateError::commit)?;
         Ok(entry.into())
     }
 }
@@ -529,203 +502,28 @@ impl GetReadingProgress {
             .database
             .begin()
             .await
-            .map_err(GetReadingProgressError::storage)?;
+            .map_err(|source| GetReadingProgressError::storage("begin", source))?;
         if let Err(error) = sqlx::query("SET TRANSACTION READ ONLY")
             .execute(&mut *transaction)
             .await
         {
-            transaction
-                .rollback()
-                .await
-                .map_err(GetReadingProgressError::storage)?;
-            return Err(GetReadingProgressError::storage(error));
+            return Err(GetReadingProgressError::storage("execute", error)
+                .with_rollback(transaction.rollback().await));
         }
         let progress = match load_reading_progress(&mut transaction, account_id).await {
             Ok(progress) => progress,
             Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(GetReadingProgressError::storage)?;
-                return Err(GetReadingProgressError::storage(error));
+                return Err(GetReadingProgressError::storage("execute", error)
+                    .with_rollback(transaction.rollback().await));
             }
         };
         transaction
             .commit()
             .await
-            .map_err(GetReadingProgressError::storage)?;
+            .map_err(GetReadingProgressError::commit)?;
         Ok(ReadingProgressView {
             completed_entries: progress.completed_entries(),
         })
-    }
-}
-
-#[derive(Debug)]
-pub enum CreateReadingEntryError {
-    InvalidInput {
-        field: &'static str,
-        message: &'static str,
-    },
-    Storage(Box<dyn Error + Send + Sync>),
-}
-
-impl CreateReadingEntryError {
-    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
-        Self::Storage(Box::new(error))
-    }
-}
-
-impl From<DomainValidationError> for CreateReadingEntryError {
-    fn from(error: DomainValidationError) -> Self {
-        Self::InvalidInput {
-            field: error.field(),
-            message: error.message(),
-        }
-    }
-}
-
-impl fmt::Display for CreateReadingEntryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidInput { field, message } => write!(formatter, "{field} {message}"),
-            Self::Storage(_) => formatter.write_str("reading entry storage failed"),
-        }
-    }
-}
-
-impl Error for CreateReadingEntryError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::InvalidInput { .. } => None,
-            Self::Storage(error) => Some(error.as_ref()),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ListReadingEntriesError {
-    InvalidInput {
-        field: &'static str,
-        message: &'static str,
-    },
-    InvalidCursor,
-    Storage(Box<dyn Error + Send + Sync>),
-}
-
-impl ListReadingEntriesError {
-    fn invalid_input(error: DomainValidationError) -> Self {
-        Self::InvalidInput {
-            field: error.field(),
-            message: error.message(),
-        }
-    }
-
-    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
-        Self::Storage(Box::new(error))
-    }
-}
-
-impl fmt::Display for ListReadingEntriesError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidInput { field, message } => write!(formatter, "{field} {message}"),
-            Self::InvalidCursor => formatter.write_str("reading queue cursor is invalid"),
-            Self::Storage(_) => formatter.write_str("reading queue storage failed"),
-        }
-    }
-}
-
-impl Error for ListReadingEntriesError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Storage(error) => Some(error.as_ref()),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum GetReadingProgressError {
-    Storage(Box<dyn Error + Send + Sync>),
-}
-
-impl GetReadingProgressError {
-    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
-        Self::Storage(Box::new(error))
-    }
-}
-
-impl fmt::Display for GetReadingProgressError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("reading progress storage failed")
-    }
-}
-
-impl Error for GetReadingProgressError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Storage(error) => Some(error.as_ref()),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ChangeReadingEntryStateError {
-    InvalidInput {
-        field: &'static str,
-        message: &'static str,
-    },
-    NotFound {
-        id: String,
-    },
-    Conflict {
-        current: ReadingQueueEntryState,
-        requested: ReadingQueueEntryState,
-    },
-    Storage(Box<dyn Error + Send + Sync>),
-}
-
-impl ChangeReadingEntryStateError {
-    fn storage(error: impl Error + Send + Sync + 'static) -> Self {
-        Self::Storage(Box::new(error))
-    }
-}
-
-impl From<DomainValidationError> for ChangeReadingEntryStateError {
-    fn from(error: DomainValidationError) -> Self {
-        Self::InvalidInput {
-            field: error.field(),
-            message: error.message(),
-        }
-    }
-}
-
-impl fmt::Display for ChangeReadingEntryStateError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidInput { field, message } => write!(formatter, "{field} {message}"),
-            Self::NotFound { id } => write!(formatter, "reading entry {id} was not found"),
-            Self::Conflict { current, requested } => write!(
-                formatter,
-                "cannot transition reading entry from {current:?} to {requested:?}"
-            ),
-            Self::Storage(_) => formatter.write_str("reading entry transition storage failed"),
-        }
-    }
-}
-
-impl Error for ChangeReadingEntryStateError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Storage(error) => Some(error.as_ref()),
-            _ => None,
-        }
-    }
-}
-
-impl From<PersistenceError> for ListReadingEntriesError {
-    fn from(error: PersistenceError) -> Self {
-        Self::storage(error)
     }
 }
 
